@@ -76,6 +76,25 @@ def envelope_shape_error(payload: Any) -> str:
         return (
             f"the response page is a {type(payload).__name__}, not a JSON object"
         )
+    # MANAGER REVIEW MR-1, THE FIFTH WAY TO FAIL TO KNOW. Both documented row
+    # containers can be present at once, and `_rows_of` picks 'data' and
+    # silently discards 'results'. `{"data": [], "results": [...20 real rows...]}`
+    # therefore produced rows_seen=0, rows_unreadable=0, no shape error, and a
+    # confident NO_AWARD_SPACE - "there is no award to buy on this date" - over a
+    # payload carrying twenty bookable rows. Choosing one of two containers that
+    # DISAGREE is a guess, and a guess is not knowledge. This is checked BEFORE
+    # the loop below so that the disagreement cannot be resolved by luck of key
+    # order.
+    present = [k for k in ("data", "results") if isinstance(payload.get(k), list)]
+    if len(present) == 2 and payload["data"] != payload["results"]:
+        return (
+            f"the response carried BOTH a 'data' list ({len(payload['data'])} "
+            f"rows) and a 'results' list ({len(payload['results'])} rows) and "
+            f"they are not the same rows. There is no way to tell which one is "
+            f"the answer, so neither is read. Picking one would be a guess, and a "
+            f"guess about which container holds the availability is not a finding "
+            f"about award space"
+        )
     for key in ("data", "results"):
         if key not in payload:
             continue
@@ -155,8 +174,14 @@ class RawSearchResult:
     # The daily call budget ran out before or during this fetch. NOT DATA. See
     # the refusal to cache it in `search_raw` (finding H-1).
     budget_exhausted: bool = False
-    # Set when the response said there is more and gave no way to ask for it.
+    # Set when we saw only PART of the result set: the response said there is
+    # more and gave no way to ask for it, an offset that did not advance, the
+    # page cap, or the daily budget breaking mid-pagination.
     incomplete: bool = False
+    # WHY it is incomplete, as data rather than as prose buried in
+    # `pagination_note`. MR-1: `LiveLegOutcome.result_incomplete` requires a
+    # reason, and the reason has to come from the layer that stopped.
+    incomplete_reason: str = ""
 
     @property
     def rows_seen(self) -> int:
@@ -666,6 +691,13 @@ class SeatsClient:
         # implicit: returning page one as if it were the whole result set is a
         # silent undercount.
         self.last_pagination_note: str = ""
+        # MANAGER REVIEW MR-1. `RawSearchResult.incomplete` was set and then
+        # reached nothing: the client never exposed it, so `live_trip.query_leg`
+        # could not read it and `LiveLegOutcome` had no field for it. Coverage
+        # travelled only inside the prose of `pagination_note`, which
+        # `NO_AWARD_SPACE.render()` never read. These two carry it as DATA.
+        self.last_incomplete: bool = False
+        self.last_incomplete_reason: str = ""
         self.last_pages_fetched: int = 0
         self.last_rows_seen: int = 0
         self.last_rows_skipped: int = 0
@@ -810,6 +842,12 @@ class SeatsClient:
                     request=request,
                     request_key=key,
                     cache_path=hit.path,
+                    # MR-1. A truncated result set that was cached used to come
+                    # back with incomplete=False, because the flag was never
+                    # persisted - so the SECOND run of a truncated query lost the
+                    # coverage warning entirely and reported a clean finding.
+                    incomplete=bool(hit.meta.get("incomplete", False)),
+                    incomplete_reason=str(hit.meta.get("incomplete_reason", "")),
                 )
 
         pages: List[Dict[str, Any]] = []
@@ -819,12 +857,21 @@ class SeatsClient:
         pages_fetched = 0
         budget_exhausted = False
         incomplete = False
+        # MR-1: kept SEPARATE from pagination_notes. pagination_notes is prose
+        # for a human; this is the machine-readable coverage reason that has to
+        # reach LiveLegOutcome.incomplete_reason.
+        incomplete_reasons: List[str] = []
 
         try:
             for page in range(1, self.MAX_PAGES + 1):
                 if self._budget_remaining() <= 0:
                     budget_exhausted = True
                     incomplete = True
+                    incomplete_reasons.append(
+                        f"the {self.DAILY_CALL_CAP} calls/day Seats.aero budget "
+                        f"was exhausted at page {page}, so pagination stopped "
+                        f"before the result set was exhausted."
+                    )
                     pagination_notes.append(
                         f"STOPPED at page {page}: the {self.DAILY_CALL_CAP} "
                         f"calls/day Seats.aero budget is exhausted. The result "
@@ -861,6 +908,10 @@ class SeatsClient:
                         # the API just told us, and main.py only reddens output
                         # that carries the INCOMPLETE marker.
                         incomplete = True
+                        incomplete_reasons.append(
+                            f"pagination stopped after page {page} because "
+                            f"{stall_reason}."
+                        )
                         pagination_notes.append(
                             f"STOPPED after page {page}: {stall_reason}. The "
                             f"result below is INCOMPLETE - it is page "
@@ -894,6 +945,10 @@ class SeatsClient:
                     break
             else:
                 incomplete = True
+                incomplete_reasons.append(
+                    f"the {self.MAX_PAGES}-page safety cap was reached while the "
+                    f"API was still reporting more results."
+                )
                 pagination_notes.append(
                     f"STOPPED at the {self.MAX_PAGES}-page safety cap while the "
                     f"API was still reporting more results. The result below is "
@@ -918,6 +973,7 @@ class SeatsClient:
             cache_path=None,
             budget_exhausted=budget_exhausted,
             incomplete=incomplete,
+            incomplete_reason="; ".join(incomplete_reasons),
         )
 
         # FINDING H-1: A BUDGET FAILURE IS NOT DATA AND IS NEVER ARCHIVED.
@@ -955,6 +1011,10 @@ class SeatsClient:
                         "leg_id": leg_id,
                         "trip_id": trip_id,
                         "rows_seen": sum(len(_rows_of(p)) for p in pages),
+                        # MR-1: coverage is part of the response's provenance and
+                        # must survive the round trip through the cache.
+                        "incomplete": result.incomplete,
+                        "incomplete_reason": result.incomplete_reason,
                     },
                 )
             except OSError as e:
@@ -1074,6 +1134,8 @@ class SeatsClient:
         """
         self.last_error = None
         self.last_pagination_note = ""
+        self.last_incomplete = False
+        self.last_incomplete_reason = ""
         self.last_pages_fetched = 0
         self.last_rows_seen = 0
         self.last_rows_skipped = 0
@@ -1100,6 +1162,12 @@ class SeatsClient:
             self.last_snapshot_name = entry.get("snapshot_name")
             self.last_fetched_at = entry.get("fetched_at")
             self.last_request_key = entry.get("request_key", "")
+            # MR-1. The in-process short-circuit replays a PARSED result. If the
+            # bytes behind it were truncated, the replay is truncated too, and
+            # dropping the flag here would make the second call in a process
+            # report a clean finding where the first reported an incomplete one.
+            self.last_incomplete = bool(entry.get("incomplete", False))
+            self.last_incomplete_reason = str(entry.get("incomplete_reason", ""))
             self.last_served_from_cache = True
             self.last_pagination_note = (
                 f"served from the IN-PROCESS cache; no API call made. The bytes "
@@ -1138,6 +1206,8 @@ class SeatsClient:
         self.last_request_key = raw.request_key
         self.last_budget_exhausted = raw.budget_exhausted
         self.last_manifest_key = raw.manifest_key
+        self.last_incomplete = raw.incomplete
+        self.last_incomplete_reason = raw.incomplete_reason
 
         pagination_notes = [raw.pagination_note] if raw.pagination_note else []
         if parsed.rows_without_availability:
@@ -1174,6 +1244,8 @@ class SeatsClient:
                 "fetched_at": raw.fetched_at or datetime.now(timezone.utc),
                 "request_key": raw.request_key,
                 "pagination_note": self.last_pagination_note,
+                "incomplete": raw.incomplete,
+                "incomplete_reason": raw.incomplete_reason,
             }
         return self._filter(awards, airlines)
 

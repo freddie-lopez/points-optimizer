@@ -94,8 +94,44 @@ def test_ex_gb_row_beats_the_generic_ba_row(table):
     ex_uk = table.resolve(BA, "BA", "NA-EU", "J", "GB")
     generic = table.resolve(BA, "BA", "NA-EU", "J", "US")
     assert ex_uk.amount_point == 900.0
-    assert generic.amount_point == 800.0
-    assert ex_uk.amount_point > generic.amount_point
+    # 800.0 was the dep=* MODELED row. A US departure now matches a MORE
+    # SPECIFIC dep=US row seeded from the 2026-09-09 research (JFK->LHR one-way
+    # J at $748), so the generic row is no longer what answers this lookup. The
+    # property under test - a more specific row wins, and no two rows are
+    # blended - is unchanged and is what the assertions below check.
+    # `resolve` defaults to is_round_trip=True and the dep=US row is a ONE-WAY
+    # row, so the round-trip lookup doubles it: 748 -> 1496, disclosed in notes.
+    # Asked for what it actually is, the row's own number comes back verbatim.
+    assert generic.amount_point == 1496.0
+    assert "BASIS CONVERTED" in generic.notes
+    ow = table.resolve(BA, "BA", "NA-EU", "J", "US", is_round_trip=False)
+    assert ow.amount_point == 748.0
+    assert ow.confidence == "sourced"
+    assert "dep=US" in generic.matched_rule
+
+    # WHAT THIS TEST NO LONGER ASSERTS, AND WHY.
+    #
+    # It used to assert `ex_uk.amount_point > generic.amount_point` - the ex-UK
+    # row is the worst case in the model. That is now FALSE ($900 round-trip
+    # against $1,496), and it is false for a reason worth writing down rather
+    # than asserting around: the dep=US row is SOURCED (2026-09-09 research) and
+    # the dep=GB row is still the v1 architect's MODELED guess. Seeding one side
+    # and not the other is what inverted them.
+    #
+    # The ex-GB row cannot be corrected in this round. Its sourced replacement -
+    # BA Club LHR<->NYC round-trip J at GBP850, which is roughly $1,150 and does
+    # sit above the US figure - is quoted in GBP, and `SurchargeTable.validate`
+    # now REFUSES a non-USD row because the scorer adds amount_point into a USD
+    # total without converting it. So the honest state today is: the ex-GB row is
+    # the least-well-evidenced row in the table and is probably an UNDERESTIMATE.
+    #
+    # The property this test actually exists to defend is specificity, not
+    # magnitude, and that is what it checks now.
+    assert ex_uk.matched_rule != generic.matched_rule
+    assert ex_uk.confidence == "modeled", (
+        "the ex-GB row is still modeled; if this ever becomes 'sourced', "
+        "re-derive the magnitude relationship above rather than assuming it"
+    )
     assert "dep=GB" in ex_uk.matched_rule
 
 
@@ -114,7 +150,21 @@ def test_iberia_is_a_much_lower_band_on_the_same_avios(table):
     ei = table.resolve(EI, "EI", "NA-EU", "J", "US")
     assert ib.amount_point == 175.0
     assert ei.amount_point == 150.0
-    assert ba.amount_point - ib.amount_point >= 600
+
+    # THE OLD ASSERTION WAS `ba - ib >= 600` AND IT WAS COMPARING TWO BASES.
+    # `ba` is now a ONE-WAY row ($748) and `ib` has always been a ROUND-TRIP row
+    # ($175), so their raw difference ($573) is not a quantity that means
+    # anything - it was only ever >= 600 because both happened to be modeled
+    # round-trip rows. Comparing like with like is what the feature actually
+    # claims, so both sides are resolved to the same basis before subtracting.
+    ba_rt = table.resolve(BA, "BA", "NA-EU", "J", "US", is_round_trip=True)
+    ib_rt = table.resolve(IB, "IB", "NA-EU", "J", "US", is_round_trip=True)
+    assert ba_rt.basis == ib_rt.basis == "round_trip"
+    assert ba_rt.amount_point - ib_rt.amount_point >= 600
+
+    # And the ratio, which is the sentence the tool actually wants to say:
+    # the same Avios on the same route region costs multiples more through BA.
+    assert ba_rt.amount_point / ib_rt.amount_point >= 5
 
 
 def test_united_is_a_confirmed_zero_at_every_specificity(table):
@@ -215,8 +265,14 @@ def test_captured_wins_even_when_carrier_is_unknown(table):
 
 
 def test_ranges_are_preserved_not_collapsed_to_a_midpoint(table):
-    est = table.resolve(BA, "BA", "NA-EU", "J", "US")
-    assert (est.amount_low, est.amount_point, est.amount_high) == (600.0, 800.0, 1000.0)
+    # Was (600, 800, 1000) from the dep=* modeled row; a US departure now
+    # matches the sourced dep=US row. Both endpoints are real observations -
+    # $508 US-West-Coast->LHR and $748 JFK->LHR, both one-way J - so the point
+    # value is still one row's number verbatim and NOT a midpoint of anything,
+    # which is the property this test exists to hold.
+    est = table.resolve(BA, "BA", "NA-EU", "J", "US", is_round_trip=False)
+    assert (est.amount_low, est.amount_point, est.amount_high) == (508.0, 748.0, 1050.0)
+    assert est.amount_point != (est.amount_low + est.amount_high) / 2
     assert est.is_range
 
 
@@ -243,8 +299,33 @@ def _blanket_map(rm):
 
 
 def test_production_table_validates(table, rm):
-    warnings = table.validate(_blanket_map(rm), today=date(2026, 9, 8))
+    # The reference "today" moved from 2026-09-08 to 2026-09-09 when the sourced
+    # surcharge research landed: rows verified 2026-09-09 are legitimately in the
+    # future relative to the old frozen date, and `validate` correctly rejects a
+    # verified_on it thinks has not happened yet. The date this test freezes is
+    # "the day the newest row in the production table was verified", which is
+    # what makes the assertion meaningful; it is NOT date.today(), so the suite
+    # stays deterministic.
+    warnings = table.validate(_blanket_map(rm), today=date(2026, 9, 9))
     assert warnings == []
+
+
+def test_no_row_claims_to_have_been_verified_in_the_future(table):
+    """
+    The freshness check above is pinned to a frozen date, so on its own it can
+    never catch a row dated after real today. This one can, and it is the reason
+    pinning the frozen date forward is safe.
+    """
+    from datetime import date as _date
+
+    today = _date.today()
+    for rule in table.rules:
+        assert rule.verified_on is not None, rule.describe()
+        assert rule.verified_on <= today, (
+            f"{rule.describe()}: verified_on {rule.verified_on} is after today "
+            f"({today}). A row cannot have been checked on a day that has not "
+            f"happened."
+        )
 
 
 def test_every_row_has_a_source_and_verified_on(table):

@@ -156,7 +156,21 @@ class Award:
     # already divided out of the integer-cents field. `cash_component` is the
     # USD conversion and is ONLY meaningful when cash_component_known is True.
     # An unconvertible currency degrades to unknown - never to 0.0.
-    cash_component_known: bool = True
+    #
+    # MANAGER REVIEW MR-5. THIS DEFAULT USED TO BE `True`, WHICH IS THE UNSAFE
+    # VALUE. An honesty flag must not default to "yes, I know". A Google-badge
+    # award built with `cash_component=0.0` and no tax data was therefore a
+    # KNOWN zero and rendered `$0.00` in the HTML export with no marker - which
+    # is precisely v0's bug, silence rendering as a confirmed free, in a
+    # codebase whose own comment two files away reads "`cash_surcharge: 0.0`
+    # with no flag is silence, not a real zero". It sat on the
+    # --origin/--destination single-route path, which the adversarial round
+    # never attacked.
+    #
+    # `False` is the safe default: an Award nobody has told about taxes does not
+    # know its cash component. Every construction site that DOES know now says
+    # so explicitly, so the answer is stated rather than inherited.
+    cash_component_known: bool = False
     cash_component_source_amount: Optional[float] = None
     cash_component_currency: str = "USD"
     cash_component_note: str = ""
@@ -449,7 +463,14 @@ class Strategy:
     # unsupported tax currency, or no tax figure at all). `total_value` is then
     # a LOWER BOUND, not a total: the missing cash can only push it up. Scoring
     # an unconvertible tax as $0 is the v0 surcharge bug wearing a new hat.
-    cash_cost_known: bool = True
+    #
+    # MR-5, SAME SHAPE ONE LAYER UP. This default was `True` for the same reason
+    # Award.cash_component_known was, and is unsafe for the same reason: a
+    # Strategy built without stating its answer claimed to know its cash side
+    # and `export_html` rendered a bare `$0.00`. `optimizer` always passes it
+    # explicitly; the default is what protects every OTHER construction site,
+    # including v5's.
+    cash_cost_known: bool = False
     cash_cost_note: str = ""
 
     @property
@@ -649,7 +670,7 @@ class PointsProvenance(str, Enum):
 
 class LiveQueryState(str, Enum):
     """
-    What actually happened when this leg was queried. SIX internal states.
+    What actually happened when this leg was queried. SEVEN internal states.
 
     The split that matters is NO_AWARD_SPACE vs everything else. All the others
     surface as PointsProvenance.UNAVAILABLE, and they must never be rendered
@@ -668,11 +689,26 @@ class LiveQueryState(str, Enum):
     REFUSES to build NO_AWARD_SPACE whenever a row was seen and could not be
     parsed. The difference between "the calendar is empty" and "we could not
     read the calendar" is the entire product.
+
+    ANSWERED_INCOMPLETE IS THE SEVENTH STATE AND IT WAS ADDED BECAUSE THE
+    PROJECT MADE ITS SIGNATURE MISTAKE A FOURTH TIME (manager review MR-1). The
+    sixth state stopped "answered, unreadable". It did not stop "answered,
+    readable, and we only saw part of it": a payload of
+    `{"data": [], "hasMore": true}` - the server saying there is more and giving
+    us no way to ask for it - produced zero awards, zero unreadable rows, and
+    `NO_AWARD_SPACE`, rendered BYTE-IDENTICALLY to a genuinely empty, complete
+    answer. One page of an admittedly truncated result set was empty and we
+    announced "there is no award to buy on this date".
+
+    Coverage is a THIRD axis, independent of reachability and readability. It
+    lives on `result_incomplete`, not only in this enum, because a BUDGET_EXHAUSTED
+    or an OK result can also be partial.
     """
 
     OK = "ok"                            # answered, >=1 award parsed
-    NO_AWARD_SPACE = "no_award_space"    # answered, 0 awards. A FINDING.
+    NO_AWARD_SPACE = "no_award_space"    # answered, READ IN FULL, 0 awards. A FINDING.
     ANSWERED_UNREADABLE = "answered_unreadable"  # answered, unparseable. NOT a finding.
+    ANSWERED_INCOMPLETE = "answered_incomplete"  # answered + readable + TRUNCATED, 0 awards. NOT a finding.
     API_ERROR = "api_error"              # never answered. NOT a finding.
     NOT_QUERIED = "not_queried"          # hotel leg, no IATA, or --live off
     BUDGET_EXHAUSTED = "budget_exhausted"  # cap hit mid-trip. NOT a finding.
@@ -724,6 +760,91 @@ class LiveLegOutcome:
     Not by a convention, not by a code review checklist, and not by an `assert`
     (which `python -O` deletes). A ValueError, because this is the one rule in
     the codebase that must survive every optimisation flag.
+
+    ==================================================================
+    THE EXHAUSTIVE LIST OF WAYS THIS TOOL CAN FAIL TO KNOW SOMETHING
+    ABOUT A LEG'S AWARD SPACE
+    ==================================================================
+
+    Written down because three consecutive fix rounds each closed ONE INSTANCE
+    of "we could not get usable data, so we said there is nothing there" and
+    none of them enumerated the class. v2 fixed the parser instance, v4 fixed
+    the unreadable-row / budget / wrong-envelope instances, and the Manager then
+    found a fourth on the pagination axis in fifteen minutes. The list below is
+    the answer to "where else does this shape appear?", asked once, in full.
+
+    A leg's knowledge has FOUR INDEPENDENT AXES. A failure on any one of them
+    means "we do not know", and each axis has its OWN FIELD with its OWN
+    INVARIANT, because a state enum alone cannot express two simultaneous
+    failures (a budget break mid-pagination is both a budget failure AND a
+    coverage failure, and the answer must say both).
+
+    AXIS 1 - DID WE ASK?
+      (1) We never asked at all: hotel leg, missing IATA codes, --live off, or
+          no client. -> state NOT_QUERIED, field `note`.
+          INVARIANT: NOT_QUERIED with an empty `note` raises. A leg that says
+          "not queried" without saying why is a shrug the reader cannot audit,
+          and render() would have supplied a plausible DEFAULT reason that may
+          be false.
+
+    AXIS 2 - DID WE GET AN ANSWER?
+      (2) We asked and the transport failed: DNS, TLS, timeout, 4xx, 5xx,
+          unparseable JSON at the envelope level. -> state API_ERROR, field
+          `error`.
+          INVARIANT: API_ERROR with no `error` raises; API_ERROR with
+          `awards_parsed` raises.
+      (3) We never sent the request because OUR OWN daily call cap was spent.
+          A fact about us, not about the calendar. -> state BUDGET_EXHAUSTED,
+          field `error` (+ `result_incomplete` when the cap hit MID-pagination).
+          INVARIANT: same as (2), and a budget failure is never cached or
+          archived, so it can never be replayed as an observation (finding H-1).
+
+    AXIS 3 - COULD WE READ THE ANSWER WE GOT?
+      (4) The API answered and the parser could not read the rows: a date format
+          it rejects, a row that is not an object, a cabin marked available with
+          an unreadable price, a page whose envelope is the wrong shape.
+          -> state ANSWERED_UNREADABLE, fields `rows_unreadable`,
+          `unreadable_reasons`.
+          INVARIANT: NO_AWARD_SPACE with any `rows_unreadable` raises
+          (finding C-1). ANSWERED_UNREADABLE with zero `rows_unreadable` also
+          raises - it is not a parse failure, so say which state it is.
+      (5) The page carried TWO documented row containers and they disagree:
+          `{"data": [], "results": [...20 real rows...]}`. We read `data`,
+          saw nothing, discarded twenty bookable rows and called it a finding.
+          Choosing one of two containers is a GUESS, and a guess is not
+          knowledge. -> routed to ANSWERED_UNREADABLE by
+          `envelope_shape_error`, so invariant (4) covers it.
+          Found while writing this list (manager review MR-1's "fifth way").
+
+    AXIS 4 - DID WE SEE ALL OF THE ANSWER?
+      (6) The API answered, every row was readable, and WE ONLY SAW PART OF THE
+          RESULT SET: `hasMore` with no cursor and no advancing offset, a skip
+          that does not move, the 25-page safety cap hit while the server was
+          still reporting more, or the daily budget breaking mid-pagination.
+          -> field `result_incomplete` + `incomplete_reason`, and when it
+          leaves us with zero awards, state ANSWERED_INCOMPLETE.
+          INVARIANT: NO_AWARD_SPACE with `result_incomplete` raises. This is
+          MR-1. `result_incomplete` with an empty `incomplete_reason` also
+          raises - a truncation nobody can explain is not auditable.
+          `_truncation_clause()` is appended to EVERY render, unconditionally,
+          exactly the way `_skipped_clause()` now is, because the previous
+          version of this fix left the marker on `pagination_note`, which
+          NO_AWARD_SPACE.render() never read.
+
+    AXIS 5 - IS THE ANSWER STILL TRUE? (freshness, not coverage)
+      (7) The bytes are a replay of an older fetch. -> fields
+          `served_from_cache`, `cache_fetched_at`.
+          INVARIANT: `served_from_cache` with no `cache_fetched_at` raises. An
+          answer of unknown age is not an answer about today, and render() used
+          to print the literal string "fetched None".
+
+    HOW TO EXTEND THIS. If you find an eighth way, it does NOT get to be a new
+    branch inside some renderer. It gets: a FIELD on this dataclass, a `raise`
+    in `__post_init__` forbidding the combination that would let it be reported
+    as a finding, an unconditional clause in `render()`, and a numbered entry
+    above. `is_a_finding_about_award_space` is a WHITELIST for the same reason -
+    a new state cannot silently default to "yes, this tells you about award
+    space".
     """
 
     leg_id: str
@@ -752,6 +873,15 @@ class LiveLegOutcome:
     unreadable_reasons: List[str] = field(default_factory=list)
     # POPULATED IFF state is API_ERROR / BUDGET_EXHAUSTED / ANSWERED_UNREADABLE
     error: str = ""
+    # AXIS 4, THE COVERAGE FIELD (manager review MR-1). True when we saw only
+    # part of the result set. Deliberately a FIELD and not merely a state,
+    # because coverage is orthogonal to reachability: a BUDGET_EXHAUSTED or an
+    # OK outcome can also be partial, and a state enum cannot say two things.
+    # Set from RawSearchResult.incomplete, which existed and reached nothing.
+    result_incomplete: bool = False
+    # Why the result set was truncated. Required whenever the flag is set: a
+    # truncation nobody can explain is not auditable.
+    incomplete_reason: str = ""
     pagination_note: str = ""
     snapshot_path: Optional[Path] = None
     served_from_cache: bool = False
@@ -810,6 +940,66 @@ class LiveLegOutcome:
                     f"bug this project has now made three times. Use "
                     f"LiveQueryState.ANSWERED_UNREADABLE."
                 )
+            # MANAGER REVIEW MR-1. THE FOURTH INSTANCE, ON THE COVERAGE AXIS.
+            # Every row we saw was readable, and we did not see every row. An
+            # empty page of a truncated result set is not an empty result set.
+            # Without this clause `{"data": [], "hasMore": true}` rendered
+            # BYTE-IDENTICALLY to a genuinely empty, complete answer.
+            if self.result_incomplete:
+                raise ValueError(
+                    f"{self.leg_id}: NO_AWARD_SPACE on an INCOMPLETE result set "
+                    f"({self.incomplete_reason or 'no reason recorded'}). We saw "
+                    f"one part of the answer, that part was empty, and announcing "
+                    f"'there is no award to buy on this date' asserts something "
+                    f"about the part we never saw. That is the failure-as-finding "
+                    f"bug for the FOURTH time, on a new axis. Use "
+                    f"LiveQueryState.ANSWERED_INCOMPLETE."
+                )
+        # AXIS 4's own invariant, independent of state: the flag must be
+        # explicable, or the unconditional render clause has nothing to print.
+        if self.result_incomplete and not self.incomplete_reason:
+            raise ValueError(
+                f"{self.leg_id}: result_incomplete is set with no "
+                f"incomplete_reason. A truncation that cannot say what stopped it "
+                f"is not auditable, and _truncation_clause() would print an empty "
+                f"warning."
+            )
+        if self.state is LiveQueryState.ANSWERED_INCOMPLETE:
+            if not self.result_incomplete:
+                raise ValueError(
+                    f"{self.leg_id}: ANSWERED_INCOMPLETE without result_incomplete "
+                    f"is a contradiction. If the result set was whole, this is "
+                    f"NO_AWARD_SPACE (a finding) or OK."
+                )
+            if self.error:
+                raise ValueError(
+                    f"{self.leg_id}: ANSWERED_INCOMPLETE means the API ANSWERED "
+                    f"and we READ what it sent. An error here ({self.error!r}) "
+                    f"would be an API failure wearing a coverage failure's "
+                    f"clothes. Use API_ERROR."
+                )
+            if self.awards_parsed:
+                raise ValueError(
+                    f"{self.leg_id}: ANSWERED_INCOMPLETE with "
+                    f"{self.awards_parsed} awards parsed should be OK. Awards we "
+                    f"found are found; the truncation is reported by "
+                    f"result_incomplete, which OK also carries."
+                )
+        # AXIS 1. A leg that says "not queried" must say why, or render() will
+        # supply a plausible DEFAULT reason that may not be the true one.
+        if self.state is LiveQueryState.NOT_QUERIED and not self.note:
+            raise ValueError(
+                f"{self.leg_id}: NOT_QUERIED with no note. Say why this leg was "
+                f"never asked about - a shrug the reader cannot audit is not an "
+                f"answer, and the renderer must not invent the reason."
+            )
+        # AXIS 5. An answer of unknown age is not an answer about today.
+        if self.served_from_cache and self.cache_fetched_at is None:
+            raise ValueError(
+                f"{self.leg_id}: served_from_cache with no cache_fetched_at. The "
+                f"age of a replayed answer is part of the answer; without it "
+                f"render() prints the literal string 'fetched None'."
+            )
         if self.state is LiveQueryState.OK and not self.awards_parsed:
             raise ValueError(
                 f"{self.leg_id}: OK with zero awards parsed is NO_AWARD_SPACE. "
@@ -870,13 +1060,45 @@ class LiveLegOutcome:
             f"{', '.join(parts)}{why}."
         )
 
+    def _truncation_clause(self) -> str:
+        """
+        Whether we saw the whole answer. NEVER omitted. Sibling of _skipped_clause.
+
+        MANAGER REVIEW MR-1. The previous fix round put the INCOMPLETE marker on
+        `pagination_note`, and `NO_AWARD_SPACE.render()` never read
+        `pagination_note` - which is verbatim the structural complaint the Tester
+        made in C-1. Fixing an instance by writing the truth somewhere nothing
+        prints is not fixing it. This clause is appended by `render()` to EVERY
+        state, unconditionally, so no branch can be added that forgets it.
+        """
+        if not self.result_incomplete:
+            return ""
+        return (
+            f" COVERAGE IS INCOMPLETE: {self.incomplete_reason} Everything above "
+            f"is true ONLY of the part of the result set we actually saw. It is "
+            f"NOT a statement about the part we did not see, and it does NOT rule "
+            f"out award space there."
+        )
+
     def render(self) -> str:
         """
         The line the user reads. An error and an absence NEVER share wording.
 
         This is the single place where a state becomes prose, so the two cannot
         drift into looking alike.
+
+        The two coverage clauses are appended ONCE, at the bottom, to whatever
+        the state branch returned - not inside the branches. A branch cannot
+        forget a clause it does not write.
         """
+        return (
+            self._render_state()
+            + self._skipped_clause()
+            + self._truncation_clause()
+        )
+
+    def _render_state(self) -> str:
+        """The state-specific prose only. Callers want `render()`."""
         where = self.queried.describe() if self.queried else "(not queried)"
         if self.state is LiveQueryState.OK:
             cached = (
@@ -888,7 +1110,6 @@ class LiveLegOutcome:
                 f"Seats.aero returned {self.awards_parsed} award(s) for {where} "
                 f"({self.awards_on_leg_date} on the leg's own date, "
                 f"{self.awards_off_date} on other dates){cached}."
-                + self._skipped_clause()
             )
         if self.state is LiveQueryState.NO_AWARD_SPACE:
             return (
@@ -896,7 +1117,18 @@ class LiveLegOutcome:
                 f"(searched {where}, {self.rows_seen} rows). THIS IS A FINDING: "
                 f"the API answered, every row it sent was READ SUCCESSFULLY, and "
                 f"the answer is that there is no award to buy on this date."
-                + self._skipped_clause()
+            )
+        if self.state is LiveQueryState.ANSWERED_INCOMPLETE:
+            # MR-1. This wording exists so that it can NEVER be mistaken for the
+            # NO_AWARD_SPACE branch above. Same zero awards, opposite meaning.
+            return (
+                f"Seats.aero ANSWERED for {where} and we READ every row it sent "
+                f"({self.rows_seen} rows), and found no award - but the result "
+                f"set was TRUNCATED and we never saw the rest of it. THIS IS NOT "
+                f"A FINDING: an empty page of an incomplete answer says NOTHING "
+                f"about whether award space exists on this date. It is a "
+                f"PAGINATION failure on our side, reported as ours, not as the "
+                f"calendar's."
             )
         if self.state is LiveQueryState.ANSWERED_UNREADABLE:
             return (
@@ -908,7 +1140,6 @@ class LiveLegOutcome:
                 f"on our side - the same shape of bug as reading `cost` from a "
                 f"payload that calls it `YMileageCost` - and it is reported as "
                 f"ours, not as the calendar's."
-                + self._skipped_clause()
             )
         if self.state is LiveQueryState.API_ERROR:
             return (
@@ -922,7 +1153,9 @@ class LiveLegOutcome:
                 f"FAILURE, not a finding. NOTHING is known about award space "
                 f"on {where}."
             )
-        return f"Not queried: {self.note or 'live mode did not apply to this leg'}."
+        # `self.note` is guaranteed non-empty by __post_init__ for NOT_QUERIED,
+        # so there is no default reason to invent here any more.
+        return f"Not queried: {self.note}."
 
 
 @dataclass

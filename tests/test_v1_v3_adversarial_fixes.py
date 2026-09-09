@@ -855,8 +855,9 @@ def test_M2_the_production_table_is_validated_by_default_table():
     table = default_table()
     assert table.rules, "the production table loaded"
     assert blanket_no_yq_map().get("Air Canada Aeroplan") is True
-    # Idempotent, and still clean.
-    table.validate(blanket_no_yq_map(), today=date(2026, 9, 8))
+    # Idempotent, and still clean. Frozen date moved to 2026-09-09 with the
+    # sourced surcharge rows; see test_production_table_validates.
+    table.validate(blanket_no_yq_map(), today=date(2026, 9, 9))
 
 
 @patch("src.seats_client.requests.get")

@@ -1,0 +1,17 @@
+departure_country,band,distance_min_miles,distance_max_miles,cabin_class,cabins,rate,currency,effective_from,effective_to,source,verified_on,notes
+GB,DOMESTIC,0,0,reduced,Y,8.00,GBP,2026-04-01,2027-03-31,https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty,2026-09-09,UK domestic departure. Band is set by distance from London to the DESTINATION COUNTRY'S CAPITAL, not to the destination airport.
+GB,DOMESTIC,0,0,standard,"W,J,F",16.00,GBP,2026-04-01,2027-03-31,https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty,2026-09-09,Standard rate is every cabin above the lowest with seat pitch >= 40in.
+GB,A,0,2000,reduced,Y,15.00,GBP,2026-04-01,2027-03-31,https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty,2026-09-09,Band A: capital-to-capital distance 0-2000 miles. Most of Europe.
+GB,A,0,2000,standard,"W,J,F",32.00,GBP,2026-04-01,2027-03-31,https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty,2026-09-09,Band A standard rate.
+GB,B,2001,5500,reduced,Y,102.00,GBP,2026-04-01,2027-03-31,https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty,2026-09-09,BAND B COVERS EVERY US DESTINATION including SFO and LAX - London to Washington DC is about 3670 miles and the band is set by the capital. This is the row Trip B's LHR->SFO leg would owe.
+GB,B,2001,5500,standard,"W,J,F",244.00,GBP,2026-04-01,2027-03-31,https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty,2026-09-09,Band B standard rate.
+GB,C,5501,,reduced,Y,106.00,GBP,2026-04-01,2027-03-31,https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty,2026-09-09,Band C: over 5500 miles capital-to-capital. Blank distance_max means no upper bound.
+GB,C,5501,,standard,"W,J,F",253.00,GBP,2026-04-01,2027-03-31,https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty,2026-09-09,Band C standard rate.
+GB,DOMESTIC,0,0,reduced,Y,8.26,GBP,2027-04-01,2099-12-31,https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty,2026-09-09,SECOND RATE PERIOD. No end date has been announced; 2099-12-31 is an open-ended sentinel and NOT a published expiry.
+GB,DOMESTIC,0,0,standard,"W,J,F",16.52,GBP,2027-04-01,2099-12-31,https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty,2026-09-09,Second rate period. Open-ended end date is a sentinel.
+GB,A,0,2000,reduced,Y,15.49,GBP,2027-04-01,2099-12-31,https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty,2026-09-09,Second rate period. Open-ended end date is a sentinel.
+GB,A,0,2000,standard,"W,J,F",33.04,GBP,2027-04-01,2099-12-31,https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty,2026-09-09,Second rate period. Open-ended end date is a sentinel.
+GB,B,2001,5500,reduced,Y,105.33,GBP,2027-04-01,2099-12-31,https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty,2026-09-09,Second rate period. Open-ended end date is a sentinel.
+GB,B,2001,5500,standard,"W,J,F",251.95,GBP,2027-04-01,2099-12-31,https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty,2026-09-09,Second rate period. Open-ended end date is a sentinel.
+GB,C,5501,,reduced,Y,109.46,GBP,2027-04-01,2099-12-31,https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty,2026-09-09,Second rate period. Open-ended end date is a sentinel.
+GB,C,5501,,standard,"W,J,F",261.25,GBP,2027-04-01,2099-12-31,https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty,2026-09-09,Second rate period. Open-ended end date is a sentinel.

@@ -345,7 +345,10 @@ def optimize(
             # 0.0 here, which would silently understate it. Flag it rather than
             # let it pass as a total: this is the same failure shape as v0's
             # phantom $0 surcharge.
-            cash_known = getattr(award, "cash_component_known", True)
+            # MR-5: the getattr FALLBACK was `True` as well - a second copy of
+            # the unsafe default, which would have survived flipping the field.
+            # An object that cannot say whether it knows does not know.
+            cash_known = getattr(award, "cash_component_known", False)
             cash_cost = award.cash_component if cash_known else 0.0
             total_value = points_cost * valuation_cpp + cash_cost
 
@@ -421,7 +424,36 @@ def _captured_surcharge(cand: PointsCandidate) -> Optional[SurchargeEstimate]:
     """
     if not cand.surcharge_captured:
         return None
-    usd = convert_to_usd(cand.cash_surcharge, cand.surcharge_currency)
+    try:
+        usd = convert_to_usd(cand.cash_surcharge, cand.surcharge_currency)
+    except ValueError as e:
+        # MANAGER REVIEW MR-2. L-1's THIRD CALL SITE.
+        #
+        # L-1 - "one leg's unconfigured currency aborts the whole trip" - was
+        # fixed for `cash_options` and for `mandatory_fees` and reported as
+        # complete. It was not fixed here, and `surcharge_currency` is a
+        # documented trip-fixture field (trip_loader.py:83), so a fixture with
+        # `surcharge_captured: true, surcharge_currency: "JPY"` killed the entire
+        # run with `Error: No FX rate configured for 'JPY'` and exit 1, naming no
+        # leg and taking every other leg's result with it. That is WORSE than the
+        # bug L-1 described, because L-1's message at least came from a path the
+        # fix later taught to name the leg.
+        #
+        # This matters for v5 specifically: `--new-trip` will GENERATE this field.
+        #
+        # An unpriceable captured surcharge is UNKNOWN for this candidate - not
+        # $0, not a guessed rate, and not a dead run. Same shape as C-2's
+        # unconvertible taxes: a cash figure we cannot price poisons the cash
+        # side of THIS option and nothing else.
+        return SurchargeEstimate.unknown(
+            f"The captured surcharge for {cand.label!r} CANNOT BE PRICED. It was "
+            f"captured as {cand.surcharge_currency.upper()} "
+            f"{cand.cash_surcharge:,.2f} and {e} The amount is UNKNOWN - it is "
+            f"NOT $0 and it is NOT being converted at a rate the tool invented. "
+            f"Supply one with --fx {cand.surcharge_currency.upper()}=<rate> to "
+            f"score this option. This leg's other options and the rest of the "
+            f"trip are unaffected."
+        )
     if usd < 0:
         # FINDING M-3, BELT AND BRACES. `SurchargeTable.validate()` rejects a
         # negative amount on a table row; a figure captured from live data used
@@ -1144,7 +1176,10 @@ def evaluate_leg(
                 f"A points path exists ({result.best_points.program}, "
                 f"{result.points_required:,} points) but {missing}, so it cannot "
                 f"be scored against ${result.cash_total_score_usd:,.2f} cash. It is "
-                f"NOT $0 - v0 assumed it was and that is the bug this replaces. "
+                # The CURRENT FACT belongs in the output; why the tool once got
+                # it wrong belongs in the report. Tsuki is reading a booking
+                # recommendation, not this project's commit history.
+                f"NOT $0, and it must not be treated as $0. "
                 + (
                     f"Points win only if {what} is below "
                     f"${result.break_even_surcharge_usd:,.2f}."

@@ -300,14 +300,25 @@ class SurchargeTable:
         # BASIS CONVERSION. The research is expressed round-trip. Halving it for a
         # one-way is an approximation and is disclosed every time, because real
         # surcharges are directional and are not symmetric out of the UK.
-        converted = False
+        converted = ""
         # Halving a zero-policy row is a no-op, so do not disclose a conversion
         # that did not change anything - it reads as a caveat on a number that
         # has none.
         if rule.basis == "round_trip" and not is_round_trip and high > 0:
             low, point, high = low / 2.0, point / 2.0, high / 2.0
             basis = "one_way"
-            converted = True
+            converted = "halved for a one-way leg"
+        # THE CONVERSION WAS ONE-DIRECTIONAL AND THAT UNDERSTATED ROUND TRIPS.
+        # Found while seeding the 2026-09-09 sourced rows, which are the first
+        # one_way rows the table has ever held. Before them every row was
+        # round_trip, so this gap was dormant; with them, a round-trip lookup
+        # against a one-way row returned the ONE-WAY number and the scorer added
+        # it to a round-trip total - understating the points side by about half,
+        # which is the direction this project keeps erring in.
+        elif rule.basis == "one_way" and is_round_trip and high > 0:
+            low, point, high = low * 2.0, point * 2.0, high * 2.0
+            basis = "round_trip"
+            converted = "doubled for a round-trip leg"
 
         if rule.verified_on and today:
             age = (today - rule.verified_on).days
@@ -331,9 +342,10 @@ class SurchargeTable:
         )
         if converted:
             est.notes = (
-                f"{est.notes} BASIS CONVERTED: the source row is round-trip and was "
-                f"halved for a one-way leg. Real surcharges are directional and are "
-                f"not symmetric, particularly out of the UK."
+                f"{est.notes} BASIS CONVERTED: the source row is "
+                f"{rule.basis.replace('_', '-')} and was {converted}. Real "
+                f"surcharges are directional and are not symmetric, particularly "
+                f"out of the UK."
             ).strip()
         return est
 
@@ -492,11 +504,47 @@ class SurchargeTable:
                 raise SurchargeTableError(f"{rule.describe()}: no source.")
             if rule.verified_on is None:
                 raise SurchargeTableError(f"{rule.describe()}: no verified_on date.")
-            if rule.confidence not in ("captured", "modeled"):
+            # 'sourced' is the THIRD tier, added with the 2026-09-09 research
+            # rows. It sits between the two that already existed and the
+            # distinction is real, not decorative:
+            #   captured - read off a booking page for THIS itinerary
+            #   sourced  - a published figure with a URL and a date, for a
+            #              comparable route. Someone observed it; nobody
+            #              observed it for your trip.
+            #   modeled  - a band this project reasoned its way to
+            # It behaves like 'modeled' everywhere (it is NOT 'captured', so it
+            # never wins the captured-beats-table precedence in `resolve`), and
+            # it prints as itself so the output never calls one the other.
+            if rule.confidence not in ("captured", "sourced", "modeled"):
                 raise SurchargeTableError(
-                    f"{rule.describe()}: confidence must be 'captured' or "
-                    f"'modeled', got {rule.confidence!r}. A table row can never be "
-                    f"'unknown' - unknown is the ABSENCE of a row."
+                    f"{rule.describe()}: confidence must be 'captured', 'sourced' "
+                    f"or 'modeled', got {rule.confidence!r}. A table row can never "
+                    f"be 'unknown' - unknown is the ABSENCE of a row."
+                )
+            # FOUND WHILE SEEDING THE 2026-09-09 SOURCED ROWS. The table has a
+            # `currency` column and THE SCORER IGNORES IT: `optimizer` adds
+            # `surcharge.amount_point` straight into a USD total
+            # (`score = plan.score_usd + surcharge.amount_point + ...`) and
+            # assigns it to `points_surcharge_usd`. Every row happens to be USD
+            # today, so the bug is dormant - but seeding the two sourced GBP
+            # figures from that research (Iberia Plus MAD->NYC one-way J at
+            # about GBP115, and BA Club LHR<->NYC round-trip J at GBP850) would
+            # have scored GBP850 as $850, understating it by roughly $300, which
+            # is this project's signature bug wearing a unit label.
+            #
+            # So the table refuses a non-USD row rather than accepting one the
+            # scorer will silently misread. Those two figures are therefore NOT
+            # seeded and remain UNKNOWN. Lifting this check is not the fix;
+            # teaching `optimizer` to convert is, and then this message should
+            # be deleted along with it.
+            if (rule.currency or "USD").upper() != "USD":
+                raise SurchargeTableError(
+                    f"{rule.describe()}: currency is {rule.currency!r}, but the "
+                    f"scorer adds amount_point directly into a USD total without "
+                    f"converting it, so this row would be read as "
+                    f"${rule.amount_point:,.2f}. Convert the figure and record the "
+                    f"rate, or leave the row out and let the lookup answer "
+                    f"UNKNOWN. A wrong unit is a wrong number."
                 )
             if rule.basis not in ("round_trip", "one_way", "per_segment"):
                 raise SurchargeTableError(

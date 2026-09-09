@@ -56,10 +56,26 @@ Examples:
   python -m src.main --trip-fixture trip_b_europe.json
 
   # Same, but constrained to a real UR balance
-  python -m src.main --trip-fixture trip_b_europe.json --balance-ur 180000
+  python -m src.main --trip-fixture trip_b_europe.json --balance UR=160000
 
   # Live award search for a single route
   python -m src.main --origin SFO --destination LHR --date 2027-01-15
+
+EXIT CODES (the single authoritative list; README.md quotes this one):
+  0  Success. A margin was produced and, if a balance was given, the plan is
+     executable from it.
+  1  Error. Bad arguments, a missing or unreadable file, or an unhandled
+     failure. NOTHING was scored.
+  3  WITHHELD. --require-all-live was given and at least one leg did not come
+     back live, so no margin is quoted. This is a REFUSAL TO ANSWER, not a
+     finding of zero value.
+  4  NOT EXECUTABLE. A margin was produced, but the recommendation cannot be
+     funded from the balance you supplied. The number is real; the plan is not
+     actionable as printed.
+
+  3 and 4 are deliberately different: "the number is not quotable" and "the
+  plan cannot be executed" are different failures and a wrapping script must be
+  able to tell them apart.
         """,
     )
 

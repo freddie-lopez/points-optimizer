@@ -322,7 +322,7 @@
       "data_flags": [
         "DATE CONFLICT: booked Jan 15-19, the same four nights as Novotel Madrid. Impossible. The flights imply Amsterdam Jan 19-23.",
         "NH Rewards / Minor DISCOVERY is NOT a Chase UR transfer partner. Cash only.",
-        "EUR56.47 city tax is now MODELLED as a mandatory fee and IS included in the scored total. v0 stored it as free text on the cash option, so it entered no total at all. It is owed on a points stay too."
+        "EUR56.47 city tax is MODELLED as a mandatory fee and IS included in the scored total. It is owed on a points stay too."
       ],
       "cash_options": [
         {
@@ -360,7 +360,7 @@
       "data_flags": [
         "No check-in date was captured for this hotel - only '4 nights'. Jan 23 is inferred from the flight legs and is NOT confirmed.",
         "Hilton Honors is an Amex Membership Rewards partner, NOT a Chase UR partner. Cash only under the current UR-only scope.",
-        "This leg is quoted in GBP, and its dollar figure is the least reliable number in the run: it is the largest single line, and the whole of it rests on one FX rate. That rate is 'sourced' (v3 Step 0 looked it up on 2026-09-08) - better than a placeholder, and still NOT vouched for by anyone, so CONFIRM BEFORE TRUSTING. Until the v1-v3 adversarial fix this flag described the rate as a placeholder with nothing behind it, which stopped being true at v3 Step 0 and left this free text contradicting the structured is_placeholder_rate marker, with the free text the wrong one (finding L-7)."
+        "This leg is quoted in GBP, and its dollar figure is the least reliable number in the run: it is the largest single line, and the whole of it rests on one FX rate. That rate is 'sourced' (looked up 2026-09-08) - better than a placeholder, and still NOT vouched for by anyone. CONFIRM BEFORE TRUSTING."
       ],
       "cash_options": [
         {

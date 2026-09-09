@@ -202,6 +202,19 @@ def query_leg(
     )
     unreadable_reasons = list(getattr(client, "last_unreadable_reasons", []) or [])
     budget_exhausted = bool(getattr(client, "last_budget_exhausted", False))
+    # MANAGER REVIEW MR-1. This getattr is the wire that was missing. The flag
+    # was computed in search_raw and set on RawSearchResult four versions ago and
+    # NOTHING ever read it, so coverage survived only as prose inside
+    # pagination_note - which NO_AWARD_SPACE.render() does not read.
+    result_incomplete = bool(getattr(client, "last_incomplete", False))
+    incomplete_reason = str(getattr(client, "last_incomplete_reason", "") or "")
+    if result_incomplete and not incomplete_reason:
+        # LiveLegOutcome REQUIRES a reason with the flag. A client that sets the
+        # flag without one is still a truncation and must not be downgraded to
+        # "complete" just because it failed to explain itself.
+        incomplete_reason = (
+            "the client reported an INCOMPLETE result set and recorded no reason."
+        )
     snapshot_name = getattr(client, "last_snapshot_name", None)
     manifest_key = getattr(client, "last_manifest_key", "")
     served_from_cache = bool(getattr(client, "last_served_from_cache", False))
@@ -230,6 +243,8 @@ def query_leg(
             queried=spec,
             rows_seen=rows_seen,
             pagination_note=pagination_note,
+            result_incomplete=result_incomplete,
+            incomplete_reason=incomplete_reason,
             error=(
                 f"the {SeatsClient.DAILY_CALL_CAP} calls/day Seats.aero budget ran "
                 f"out during this leg's own request, so it was never completed. "
@@ -242,6 +257,8 @@ def query_leg(
         if awards
         else LiveQueryState.ANSWERED_UNREADABLE.value
         if rows_unreadable
+        else LiveQueryState.ANSWERED_INCOMPLETE.value
+        if result_incomplete
         else LiveQueryState.NO_AWARD_SPACE.value
     )
     # Complete the manifest row this fetch wrote. Only the parser knows how many
@@ -268,6 +285,8 @@ def query_leg(
             rows_unreadable=rows_unreadable,
             rows_without_availability=rows_no_avail,
             unreadable_reasons=unreadable_reasons,
+            result_incomplete=result_incomplete,
+            incomplete_reason=incomplete_reason,
             error=(
                 "The response was received and then could not be parsed: "
                 + ("; ".join(unreadable_reasons) or "no reason was recorded")
@@ -279,8 +298,34 @@ def query_leg(
             cache_fetched_at=fetched_at,
         ), []
 
+    if not awards and result_incomplete:
+        # MANAGER REVIEW MR-1, THE FOURTH INSTANCE OF FAILURE-AS-FINDING.
+        # Every row we saw was readable and we did not see every row. The old
+        # code fell straight through to NO_AWARD_SPACE below and rendered text
+        # BYTE-IDENTICAL to a genuinely empty, complete result: "there is no
+        # award to buy on this date". An empty page of a truncated result set is
+        # not an empty result set. LiveLegOutcome now REFUSES to build that
+        # combination, so this branch is not politeness; the alternative raises.
+        return LiveLegOutcome(
+            leg_id=leg.id,
+            state=LiveQueryState.ANSWERED_INCOMPLETE,
+            provenance=PointsProvenance.UNAVAILABLE,
+            queried=spec,
+            rows_seen=rows_seen,
+            rows_skipped=rows_skipped,
+            rows_unreadable=0,
+            rows_without_availability=rows_no_avail,
+            result_incomplete=True,
+            incomplete_reason=incomplete_reason,
+            pagination_note=pagination_note,
+            snapshot_path=snapshot_path,
+            served_from_cache=served_from_cache,
+            cache_fetched_at=fetched_at,
+        ), []
+
     if not awards:
-        # THE API ANSWERED, EVERY ROW WAS READ, AND THE ANSWER WAS "NOTHING".
+        # THE API ANSWERED, EVERY ROW WAS READ IN FULL, AND THE ANSWER WAS
+        # "NOTHING".
         # That is a real finding about the world and is reported as one. Note
         # there is NO error string here, and LiveLegOutcome refuses to accept
         # one - or a single unreadable row - in this state.
@@ -293,6 +338,9 @@ def query_leg(
             rows_skipped=rows_skipped,
             rows_unreadable=0,
             rows_without_availability=rows_no_avail,
+            # Guaranteed False by the branch above; passed explicitly so the
+            # invariant is exercised rather than relied on by omission.
+            result_incomplete=False,
             pagination_note=pagination_note,
             snapshot_path=snapshot_path,
             served_from_cache=served_from_cache,
@@ -312,6 +360,10 @@ def query_leg(
         rows_unreadable=rows_unreadable,
         rows_without_availability=rows_no_avail,
         unreadable_reasons=unreadable_reasons,
+        # An OK result can ALSO be partial: we found awards AND did not see the
+        # whole result set. Coverage is a field, not a state, for exactly this.
+        result_incomplete=result_incomplete,
+        incomplete_reason=incomplete_reason,
         pagination_note=pagination_note,
         snapshot_path=snapshot_path,
         served_from_cache=served_from_cache,

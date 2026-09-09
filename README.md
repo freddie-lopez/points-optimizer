@@ -63,7 +63,7 @@ or with flags:
 
 ```bash
 python -m src.main --trip-fixture trip_b_europe.json \
-    --balance UR=180000 --card "Chase Sapphire Preferred" \
+    --balance UR=160000 --card "Chase Sapphire Preferred" \
     --transfer-date 2026-09-15 --show-alternatives
 ```
 
@@ -73,6 +73,24 @@ across the 2026-10-01 change — which is an unearned claim about your wallet th
 changes real answers.
 
 `python -m src.main --help` lists everything.
+
+### Exit codes
+
+These are a contract. A script wrapping this tool must be able to tell a
+refusal to answer apart from an unfundable plan apart from a crash.
+
+| Code | Meaning |
+|---|---|
+| `0` | Success. A margin was produced and, if a balance was given, the plan is executable from it. |
+| `1` | Error. Bad arguments, a missing or unreadable file, or an unhandled failure. **Nothing was scored.** |
+| `3` | **WITHHELD.** `--require-all-live` was given and at least one leg did not come back live, so no margin is quoted. A refusal to answer, **not** a finding of zero value. |
+| `4` | **NOT EXECUTABLE.** A margin was produced, but the recommendation cannot be funded from the balance you supplied. The number is real; the plan is not actionable as printed. |
+
+`3` and `4` are deliberately distinct: "the number is not quotable" and "the plan
+cannot be executed" are different failures. There is no code `2`.
+
+The same table is printed by `python -m src.main --help`; if the two ever
+disagree, `--help` is the one generated from the code.
 
 ### The wallet
 
@@ -105,7 +123,7 @@ response.
 
 ```bash
 python -m src.main --trip-fixture trip_b_europe.json --live \
-    --balance UR=180000 --card "Chase Sapphire Preferred" \
+    --balance UR=160000 --card "Chase Sapphire Preferred" \
     --transfer-date 2026-09-15 --flex-days 0
 ```
 
@@ -135,14 +153,21 @@ convention:
 | State | Meaning | Is it a finding? |
 |---|---|---|
 | `ok` | answered, awards parsed | yes |
-| `no_award_space` | **answered**, and the answer was nothing | **yes** — there is no award to buy |
+| `no_award_space` | **answered**, read **in full**, and the answer was nothing | **yes** — there is no award to buy |
+| `answered_unreadable` | answered, and the parser could not read the rows | **no** — a defect on our side |
+| `answered_incomplete` | answered and readable, but we saw only **part** of the result set and found nothing in that part | **no** — an empty page of a truncated answer is not an empty answer |
 | `api_error` | never answered | **no** — nothing is known about this leg |
 | `budget_exhausted` | never asked; the daily cap ran out | **no** |
 | `not_queried` | hotel leg, missing airports, or `--live` off | n/a |
 
 `LiveLegOutcome`'s constructor **refuses** to build a `no_award_space` carrying
-an error message, or an error state carrying awards. The two never share wording
-in the output either.
+an error message, an error state carrying awards, a `no_award_space` over
+unreadable rows, or a `no_award_space` over a **truncated** result set. No two of
+these states share wording in the output either.
+
+The full enumeration — **every way this tool can fail to know something about a
+leg's award space**, each one a field with an invariant — is the docstring on
+`LiveLegOutcome` in `src/models.py`. Read it before adding an eighth.
 
 **A failing leg does not fail the trip.** The legs that worked are scored, the
 ones that did not are reported, and the margin says which is which.
