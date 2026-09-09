@@ -59,8 +59,18 @@ re-fetch that returns byte-identical data adds a row here but no second file.
 This manifest is what makes a live run reviewable after the fact. It records
 what was asked, when, what came back, and which file holds it.
 
-| fetched_at (UTC) | leg | route | dates | rows | awards | state | snapshot |
-| --- | --- | --- | --- | ---: | ---: | --- | --- |
+v5 MADE THIS FILE AN INPUT. `--from-snapshot MANIFEST.md` replays the selected
+rows and quotes a margin against a hash of them. Three columns were added for
+that: `content_hash` (16 hex of the archived pages), `parser_version` (which
+parser read them), and `trip_id` (which trip they belong to). Rows written
+before v5 have none of the three; they read as `unknown`, never as `matches`.
+
+THE PROSE ABOVE THIS TABLE IS NOT HASHED. The manifest hash is over the
+selected rows' snapshot CONTENT, so fixing a typo here cannot invalidate a
+number somebody quoted, and changing one byte of one snapshot always does.
+
+| fetched_at (UTC) | leg | route | dates | rows | awards | state | snapshot | content_hash | parser_version | trip_id |
+| --- | --- | --- | --- | ---: | ---: | --- | --- | --- | --- | --- |
 """
 
 
@@ -106,6 +116,29 @@ def content_hash(pages: List[Dict[str, Any]]) -> str:
     """Stable hash of the response body alone, used to deduplicate snapshots."""
     blob = json.dumps(pages, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+# How many hex characters of `content_hash` go in the manifest column. Short
+# enough to read in a table, long enough that a collision is not a thing anyone
+# needs to think about. The FULL hash is recomputed from the file at verify
+# time; this column is a second, independent copy of the claim.
+MANIFEST_HASH_CHARS = 16
+
+
+def _parser_version() -> str:
+    """
+    `seats_client.PARSER_VERSION`, imported lazily to avoid an import cycle.
+
+    Returns "unknown" rather than raising: a cache write must never fail
+    because of a bookkeeping field, and "unknown" is the honest value when the
+    module cannot be reached.
+    """
+    try:
+        from src.seats_client import PARSER_VERSION
+
+        return str(PARSER_VERSION)
+    except Exception:  # noqa: BLE001 - a version stamp must not break a write
+        return "unknown"
 
 
 @dataclass(frozen=True)
@@ -317,6 +350,15 @@ class ResponseCache:
                 # Worded WITHOUT the literal header name: assert_no_key_material
                 # refuses any write that names it, and that guard is deliberately
                 # dumb enough that it would otherwise trip on this very note.
+                # v5 STEP 2. WHICH PARSER READ THESE BYTES.
+                #
+                # Storing raw pages exists so a parser fix can be re-run against
+                # yesterday's responses. That property is only usable if a
+                # replay can say whether the parser has moved since - otherwise
+                # a reparse silently changes the award count and the reader has
+                # no way to know it happened. Imported lazily because
+                # seats_client imports this module.
+                "parser_version": _parser_version(),
                 "key_note": (
                     "The partner auth header is not part of the request key, is "
                     "not written to this file, and is not recoverable from it."
@@ -387,6 +429,15 @@ class ResponseCache:
         """
         self.snapshot_dir.mkdir(parents=True, exist_ok=True)
         digest = envelope["_meta"]["content_hash"]
+        # The manifest row needs three facts the CALLER's meta does not carry:
+        # the content hash and parser version the envelope was just stamped
+        # with, and the trip. Merged here rather than duplicated in the row
+        # builder, so there is one place a manifest column can go wrong.
+        meta = {
+            **meta,
+            "content_hash": digest,
+            "parser_version": envelope["_meta"].get("parser_version"),
+        }
 
         existing = self._snapshot_with_content(digest)
         if existing is not None:
@@ -432,6 +483,13 @@ class ResponseCache:
         )
         dates = f"{request.get('start_date', '?')}..{request.get('end_date', '?')}"
         note = f"{snapshot.name}" + (" (re-fetch, identical)" if duplicate else "")
+        # v5 STEP 2. The content hash written here is RECOMPUTED FROM THE PAGES,
+        # not copied out of `_meta`. That makes the column an independent second
+        # claim about the same bytes: a tampered snapshot whose `_meta` was
+        # edited to match still disagrees with this, and a tampered snapshot
+        # whose `_meta` was not edited disagrees with both.
+        digest = str(meta.get("content_hash") or "")[:MANIFEST_HASH_CHARS] or "-"
+        parser_version = str(meta.get("parser_version") or _parser_version())
         # `awards` and `state` are left as "-" here on purpose: at fetch time
         # nothing has been PARSED yet, and inventing a count would defeat the
         # transport/parse split. `annotate_manifest` fills them in once the live
@@ -439,7 +497,8 @@ class ResponseCache:
         row = (
             f"| {_iso(fetched_at)} | {meta.get('leg_id') or '-'} | {route} | {dates} "
             f"| {meta.get('rows_seen') if meta.get('rows_seen') is not None else '-'} "
-            f"| - | - | {note} |\n"
+            f"| - | - | {note} | {digest} | {parser_version} "
+            f"| {meta.get('trip_id') or '-'} |\n"
         )
         # FINDING L-8: the append was a plain unlocked open(path, "a"), so two
         # interleaved writers could corrupt a row. An exclusive lock around the

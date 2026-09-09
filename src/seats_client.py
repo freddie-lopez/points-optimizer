@@ -48,6 +48,24 @@ class SeatsAeroError(RuntimeError):
     """Raised when the Seats.aero API cannot be reached or returns an error."""
 
 
+# v5 STEP 2. WHICH PARSER READ A SET OF BYTES.
+#
+# Stamped into every snapshot's `_meta` and into its manifest row at `put` time.
+# It exists for exactly one property: storing raw pages means a parser fix can
+# be replayed against every response this project has ever seen, and a replay
+# that silently reparsed under a DIFFERENT parser would change the award count
+# with nothing in the output to say so.
+#
+# BUMP THIS whenever `parse_pages_detail` or anything it calls changes what a
+# given page yields. Rows written before v5 carry no version at all; those read
+# as "unknown", which is reported as unknown and never as "matches".
+#
+# It is NOT part of the manifest hash. The hash is over BYTES, so a reparse
+# under a new parser reproduces the same hash and a different award count -
+# which is the honest pair.
+PARSER_VERSION = "2026-09-09.v5"
+
+
 def _rows_of(payload: Dict[str, Any]) -> List[Any]:
     """
     The availability rows in one response page, under either documented key.
