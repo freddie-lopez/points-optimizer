@@ -1,0 +1,26 @@
+{
+  "id": "trip_002",
+  "description": "Domestic first class (SFO→JFK), 1 pax, June 2026",
+  "origin": "SFO",
+  "destination": "JFK",
+  "date_range": {
+    "from": "2026-06-01",
+    "to": "2026-06-30"
+  },
+  "balances": {
+    "UR": 150000,
+    "MR": 200000,
+    "TY": 80000,
+    "CapitalOne": 100000,
+    "Bilt": 60000,
+    "United": 120000,
+    "Flying Blue": 50000,
+    "SkyMiles": 0
+  },
+  "cards_held": [
+    "Chase Sapphire Preferred",
+    "Amex Platinum",
+    "Capital One Venture X"
+  ],
+  "num_passengers": 1
+}

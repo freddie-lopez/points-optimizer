@@ -1,0 +1,5 @@
+{
+  "_README": "SYNTHETIC test wallet. Not anyone's real holdings.",
+  "balances": {"UR": 50000, "MR": 40000, "TY": 30000, "C1": null, "Bilt": 0},
+  "cards": ["Chase Sapphire Reserve", "Chase Sapphire Preferred"]
+}

@@ -1,0 +1,66 @@
+iata,name,alliance,country
+AA,American Airlines,oneworld,US
+AS,Alaska Airlines,oneworld,US
+BA,British Airways,oneworld,GB
+IB,Iberia,oneworld,ES
+EI,Aer Lingus,none,IE
+AY,Finnair,oneworld,FI
+QR,Qatar Airways,oneworld,QA
+JL,Japan Airlines,oneworld,JP
+CX,Cathay Pacific,oneworld,HK
+QF,Qantas,oneworld,AU
+MH,Malaysia Airlines,oneworld,MY
+RJ,Royal Jordanian,oneworld,JO
+UL,SriLankan Airlines,oneworld,LK
+AT,Royal Air Maroc,oneworld,MA
+FJ,Fiji Airways,oneworld_connect,FJ
+UA,United Airlines,star,US
+AC,Air Canada,star,CA
+LH,Lufthansa,star,DE
+OS,Austrian Airlines,star,AT
+SN,Brussels Airlines,star,BE
+LX,Swiss International Air Lines,star,CH
+SQ,Singapore Airlines,star,SG
+NH,All Nippon Airways,star,JP
+TK,Turkish Airlines,star,TR
+SK,SAS,star,SE
+TP,TAP Air Portugal,star,PT
+A3,Aegean Airlines,star,GR
+ET,Ethiopian Airlines,star,ET
+AI,Air India,star,IN
+OZ,Asiana Airlines,star,KR
+CA,Air China,star,CN
+BR,EVA Air,star,TW
+NZ,Air New Zealand,star,NZ
+ZH,Shenzhen Airlines,star,CN
+MS,EgyptAir,star,EG
+SA,South African Airways,star,ZA
+AV,Avianca,star,CO
+CM,Copa Airlines,star,PA
+JU,Air Serbia,none,RS
+DL,Delta Air Lines,skyteam,US
+AF,Air France,skyteam,FR
+KL,KLM Royal Dutch Airlines,skyteam,NL
+AZ,ITA Airways,skyteam,IT
+KE,Korean Air,skyteam,KR
+MU,China Eastern Airlines,skyteam,CN
+CI,China Airlines,skyteam,TW
+VN,Vietnam Airlines,skyteam,VN
+RO,TAROM,skyteam,RO
+SV,Saudia,skyteam,SA
+UX,Air Europa,skyteam,ES
+ME,Middle East Airlines,skyteam,LB
+KQ,Kenya Airways,skyteam,KE
+GA,Garuda Indonesia,skyteam,ID
+AM,Aeromexico,skyteam,MX
+VS,Virgin Atlantic,none,GB
+B6,JetBlue Airways,none,US
+WN,Southwest Airlines,none,US
+U2,easyJet,none,GB
+FR,Ryanair,none,IE
+EK,Emirates,none,AE
+EY,Etihad Airways,none,AE
+LA,LATAM Airlines,none,CL
+HA,Hawaiian Airlines,none,US
+NK,Spirit Airlines,none,US
+F9,Frontier Airlines,none,US

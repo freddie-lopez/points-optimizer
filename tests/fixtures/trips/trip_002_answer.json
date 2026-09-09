@@ -1,0 +1,17 @@
+{
+  "trip_id": "trip_002",
+  "human_booking": {
+    "transfers": [
+      {
+        "from": "United",
+        "to": "United",
+        "amount": 0,
+        "ratio": "1:1"
+      }
+    ],
+    "award": "SFO→JFK United First (F), 1 pax",
+    "points_cost": 120000,
+    "cash_cost": 50.00
+  },
+  "notes": "Domestic first class: user already has 120k United miles, so no transfer needed. Direct booking at cost."
+}

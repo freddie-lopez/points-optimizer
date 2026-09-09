@@ -1,0 +1,116 @@
+{
+  "id": "trip_c_lon_mry_surcharge",
+  "name": "TRIP C - the surcharge case (LON->MRY, plus a same-metal comparison)",
+  "description": "The flagship v1 acceptance case. C1 is Trip B's real LON->MRY leg, scored with the surcharge model. C2 is a constructed business-cabin leg that exercises the same-metal alternatives engine, which C1's economy cabin cannot.",
+  "source": "C1 transcribes the real LON->MRY capture (Google Flights, 2026-09-07, Tsuki). C2 is CONSTRUCTED for acceptance testing and is NOT a real captured itinerary - its award prices are labelled synthetic and must never be quoted as real.",
+  "trip_level_flags": [
+    "C2 IS SYNTHETIC. Its points prices are invented for the purpose of exercising the alternatives engine and are labelled as such on every candidate. C1 is real captured data.",
+    "v0 scored C1's British Airways option at a $0 surcharge and called it a $282 saving. That number does not exist. C1 must not reproduce it."
+  ],
+  "legs": [
+    {
+      "id": "C1",
+      "kind": "flight",
+      "description": "LON->MRY, Jan 27 2027, one-way, economy, 1 adult (real capture; arrives SFO)",
+      "date": "2027-01-27",
+      "origin": "LHR",
+      "destination": "SFO",
+      "travelers": 1,
+      "notes": [
+        "This is Trip B's B4 leg, isolated so the surcharge behaviour can be pinned by a test.",
+        "Departing LHR is the worst case in the surcharge model: UK Air Passenger Duty stacks on top of the carrier-imposed surcharge."
+      ],
+      "data_flags": [
+        "NO option actually arrives MRY. All arrive SFO. Return positioning SFO->Monterey is unpriced.",
+        "The economy surcharge for British Airways ex-LHR is NOT in the model. The research behind data/surcharges.csv is business-cabin only, and economy figures were deliberately not extrapolated from it."
+      ],
+      "cash_options": [
+        {
+          "label": "$482 British Airways LHR-SFO nonstop 3:20pm-6:45pm, 11h25",
+          "amount": 482.0,
+          "currency": "USD"
+        },
+        {
+          "label": "$500 United (Lufthansa, Austrian, Brussels) LHR-SFO nonstop 10:05am-1:20pm, 11h15",
+          "amount": 500.0,
+          "currency": "USD"
+        }
+      ],
+      "points_candidates": [
+        {
+          "label": "British Airways LHR-SFO nonstop (badge 20k pts)",
+          "program": "British Airways Executive Club",
+          "points": 20000,
+          "cash_surcharge": 0.0,
+          "surcharge_currency": "USD",
+          "source": "google_badge_unverified",
+          "source_note": "Google Flights '20k pts' badge. UNVERIFIED. BA awards DEPARTING LHR carry UK Air Passenger Duty plus BA carrier-imposed surcharges. That figure was NOT captured, and v1 refuses to model it: the seed table is business-cabin and this is economy.",
+          "program_attribution_assumed": true,
+          "marketing_carrier": "BA",
+          "operating_carrier": "BA",
+          "carrier_source": "captured",
+          "cabin": "Y",
+          "is_round_trip": false
+        },
+        {
+          "label": "United LHR-SFO nonstop (badge 27.6k pts)",
+          "program": "United MileagePlus",
+          "points": 27600,
+          "cash_surcharge": 0.0,
+          "surcharge_currency": "USD",
+          "source": "google_badge_unverified",
+          "source_note": "Google Flights '27.6k pts' badge. UNVERIFIED. United levies no carrier-imposed surcharge as a matter of program policy, which is why this resolves to a confirmed $0. UK departure taxes are still owed and are NOT modelled.",
+          "program_attribution_assumed": true,
+          "marketing_carrier": "UA",
+          "operating_carrier": "UA",
+          "carrier_source": "captured",
+          "cabin": "Y",
+          "is_round_trip": false
+        }
+      ],
+      "unpriced_partner_programs": [],
+      "no_points_path_notes": []
+    },
+    {
+      "id": "C2",
+      "kind": "flight",
+      "description": "SYNTHETIC: JFK->DUB, business, on Aer Lingus metal, priced in British Airways Executive Club",
+      "date": "2027-03-10",
+      "origin": "JFK",
+      "destination": "DUB",
+      "travelers": 1,
+      "notes": [
+        "CONSTRUCTED CASE, not a capture. It exists to exercise alternatives.find_same_metal_alternatives(): the same EI aeroplane can be ticketed in Aer Lingus AerClub, whose surcharge band IS modelled, while BA Executive Club's surcharge on EI metal is not."
+      ],
+      "data_flags": [
+        "SYNTHETIC POINTS PRICE. 50,000 Avios is invented for this test and is not a real award price."
+      ],
+      "cash_options": [
+        {
+          "label": "SYNTHETIC $1,800 business fare JFK-DUB",
+          "amount": 1800.0,
+          "currency": "USD"
+        }
+      ],
+      "points_candidates": [
+        {
+          "label": "SYNTHETIC BA Executive Club award on Aer Lingus metal, JFK-DUB business",
+          "program": "British Airways Executive Club",
+          "points": 50000,
+          "cash_surcharge": 0.0,
+          "surcharge_currency": "USD",
+          "source": "synthetic_test_fixture",
+          "source_note": "SYNTHETIC. Invented for acceptance testing. Never quote this number.",
+          "program_attribution_assumed": false,
+          "marketing_carrier": "BA",
+          "operating_carrier": "EI",
+          "carrier_source": "captured",
+          "cabin": "J",
+          "is_round_trip": false
+        }
+      ],
+      "unpriced_partner_programs": [],
+      "no_points_path_notes": []
+    }
+  ]
+}

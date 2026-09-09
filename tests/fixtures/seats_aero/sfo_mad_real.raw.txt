@@ -1,0 +1,10 @@
+GET https://seats.aero/partnerapi/search?origin_airport=SFO&destination_airport=MAD&start_date=2027-01-15&end_date=2027-02-14
+Header: Partner-Authorization: <key redacted>
+Captured by: Tsuki, on his own Mac, 2026-09-08. First real Seats.aero response this project has ever seen.
+
+VERBATIM, AND TRUNCATED AT 2000 CHARACTERS BY THE CAPTURE. The "..." below are
+the capture's own elisions, not an edit. Everything after the last "..." inside
+the object was never seen, and neither was whatever follows the "data" array -
+so whether the response carries count / hasMore / cursor is UNKNOWN.
+
+{"data":[{"ID":"38luxWYLAxIcApViJAEPr2F8m9N","RouteID":"2jZIzOHTUJOqMuvQxylZQdLkTOw","Route":{"ID":"2jZIzOHTUJOqMuvQxylZQdLkTOw","OriginAirport":"SFO","OriginRegion":"North America","DestinationAirport":"MAD","DestinationRegion":"Europe","Distance":5805,"Source":"aeroplan"},"Date":"2027-01-15","ParsedDate":"2027-01-15T00:00:00Z","YAvailable":true,"WAvailable":false,"JAvailable":false,"FAvailable":false,"YAvailableRaw":true,"WAvailableRaw":false,"JAvailableRaw":true,"FAvailableRaw":false,"YMileageCost":"50000","WMileageCost":"0","JMileageCost":"0","FMileageCost":"0","YMileageCostRaw":50000,"WMileageCostRaw":0,"JMileageCostRaw":470500,"FMileageCostRaw":0,"YDirectMileageCost":0,...,"TaxesCurrency":"CAD","YTotalTaxes":4460,"WTotalTaxes":0,"JTotalTaxes":0,"FTotalTaxes":0,"YTotalTaxesRaw":4460,"WTotalTaxesRaw":0,"JTotalTaxesRaw":5590,"FTotalTaxesRaw":0,...,"YRemainingSeats":9,"WRemainingSeats":0,"JRemainingSeats":0,"FRemainingSeats":0,"YRemainingSeatsRaw":9,...,"YAirlines":"AC, LH, UA, VL","WAirlines":"","JAirlines":"","FAirlines":"","YAirlinesRaw":"AC, EK, LH, UA, VL","JAirlinesRaw":"AC",...,"YDirect":false,"WDirect":false,"JDirect":false,...}]}

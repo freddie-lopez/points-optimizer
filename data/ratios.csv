@@ -1,0 +1,19 @@
+from_program,to_program,card_dependency,ratio_numerator,ratio_denominator,effective_from,effective_to,source,verified_on
+UR,Aer Lingus AerClub,all,1,1,2000-01-01,2099-12-31,Chase UR partner list verified during v0 ratio-table rebuild (docs/test-reports/points-optimizer.md),2026-09-07
+UR,Air Canada Aeroplan,all,1,1,2000-01-01,2099-12-31,Chase UR partner list verified during v0 ratio-table rebuild (docs/test-reports/points-optimizer.md),2026-09-07
+UR,Air France-KLM Flying Blue,all,1,1,2000-01-01,2099-12-31,Chase UR partner list verified during v0 ratio-table rebuild (docs/test-reports/points-optimizer.md),2026-09-07
+UR,British Airways Executive Club,all,1,1,2000-01-01,2099-12-31,Chase UR partner list verified during v0 ratio-table rebuild (docs/test-reports/points-optimizer.md),2026-09-07
+UR,Club Iberia Plus,all,1,1,2000-01-01,2099-12-31,Chase UR partner list verified during v0 ratio-table rebuild (docs/test-reports/points-optimizer.md),2026-09-07
+UR,JetBlue TrueBlue,all,1,1,2000-01-01,2099-12-31,Chase UR partner list verified during v0 ratio-table rebuild (docs/test-reports/points-optimizer.md),2026-09-07
+UR,Singapore Airlines KrisFlyer,all,1,1,2000-01-01,2099-12-31,Chase UR partner list verified during v0 ratio-table rebuild (docs/test-reports/points-optimizer.md),2026-09-07
+UR,Southwest Rapid Rewards,all,1,1,2000-01-01,2099-12-31,Chase UR partner list verified during v0 ratio-table rebuild (docs/test-reports/points-optimizer.md),2026-09-07
+UR,United MileagePlus,all,1,1,2000-01-01,2099-12-31,Chase UR partner list verified during v0 ratio-table rebuild (docs/test-reports/points-optimizer.md),2026-09-07
+UR,Virgin Atlantic Flying Club,all,1,1,2000-01-01,2099-12-31,Chase UR partner list verified during v0 ratio-table rebuild (docs/test-reports/points-optimizer.md),2026-09-07
+UR,IHG One Rewards,all,1,1,2000-01-01,2099-12-31,Chase UR partner list verified during v0 ratio-table rebuild; corrected from an erroneous 2:1,2026-09-07
+UR,Marriott Bonvoy,all,1,1,2000-01-01,2099-12-31,Chase UR partner list verified during v0 ratio-table rebuild; corrected from an erroneous 3:1,2026-09-07
+UR,Wyndham Rewards,all,1,1,2000-01-01,2099-12-31,Chase UR partner list verified during v0 ratio-table rebuild; partner was missing entirely,2026-09-07
+UR,World of Hyatt,Chase Sapphire Reserve,1,1,2000-01-01,2099-12-31,Chase UR partner list verified during v0 ratio-table rebuild; Reserve is unaffected by the 2026-10-01 change,2026-09-07
+UR,World of Hyatt,Chase Sapphire Preferred,1,1,2000-01-01,2026-09-30,Chase UR partner list verified during v0 ratio-table rebuild; pre-change window,2026-09-07
+UR,World of Hyatt,Chase Sapphire Preferred,4,3,2026-10-01,2099-12-31,Chase UR partner list verified during v0 ratio-table rebuild; 2026-10-01 devaluation,2026-09-07
+UR,World of Hyatt,Chase Ink Business Preferred,1,1,2000-01-01,2026-09-30,Chase UR partner list verified during v0 ratio-table rebuild; pre-change window,2026-09-07
+UR,World of Hyatt,Chase Ink Business Preferred,4,3,2026-10-01,2099-12-31,Chase UR partner list verified during v0 ratio-table rebuild; 2026-10-01 devaluation,2026-09-07

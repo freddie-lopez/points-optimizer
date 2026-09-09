@@ -1,0 +1,10 @@
+from_program,to_program,card_dependency,ratio_numerator,ratio_denominator,effective_from,effective_to,source,verified_on
+UR,British Airways Executive Club,all,1,1,2000-01-01,2099-12-31,SYNTHETIC test-only row. Not a claim about the world.,2026-09-08
+UR,World of Hyatt,Chase Sapphire Reserve,1,1,2000-01-01,2099-12-31,SYNTHETIC test-only row. Not a claim about the world.,2026-09-08
+UR,World of Hyatt,Chase Sapphire Preferred,1,1,2000-01-01,2026-09-30,SYNTHETIC test-only row. Not a claim about the world.,2026-09-08
+UR,World of Hyatt,Chase Sapphire Preferred,4,3,2026-10-01,2099-12-31,SYNTHETIC test-only row. Not a claim about the world.,2026-09-08
+MR,British Airways Executive Club,all,1,1,2000-01-01,2099-12-31,SYNTHETIC test-only row. Not a claim about the world.,2026-09-08
+TY,British Airways Executive Club,all,1,1,2000-01-01,2099-12-31,SYNTHETIC test-only row. Not a claim about the world.,2026-09-08
+C1,British Airways Executive Club,all,2,1,2000-01-01,2099-12-31,SYNTHETIC test-only row at a deliberately BAD 2:1 ratio to exercise cross-currency scoring.,2026-09-08
+Bilt,British Airways Executive Club,all,1,1,2000-01-01,2099-12-31,SYNTHETIC test-only row. Not a claim about the world.,2026-09-08
+MR,Club Iberia Plus,all,1,1,2000-01-01,2099-12-31,SYNTHETIC test-only row. Not a claim about the world.,2026-09-08

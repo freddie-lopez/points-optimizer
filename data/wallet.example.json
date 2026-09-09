@@ -1,0 +1,32 @@
+{
+  "_README": [
+    "TEMPLATE ONLY. Every number in this file is FAKE and is here to show the shape.",
+    "Copy it to wallet.json, delete the currencies you do not hold, and put your",
+    "real numbers in. wallet.json is gitignored; this template is not.",
+    "",
+    "THREE DISTINCT BALANCE STATES:",
+    "  currency present with a number  -> held, that many points, ceiling applied",
+    "  currency present with null      -> held, balance not supplied, NO ceiling",
+    "  currency ABSENT from this file  -> NOT HELD. Nothing may be funded from it.",
+    "",
+    "Listing a currency here is a claim that you hold that account. The tool will",
+    "not assume any of them.",
+    "",
+    "NOTE ON THE NON-UR CURRENCIES BELOW: as of v1, data/ratios.csv contains NO",
+    "verified transfer rows for MR, TY, C1 or Bilt. Listing one here is accepted",
+    "and validates, but it will fund nothing until verified partner rows exist.",
+    "See README.md, 'Multi-currency status'."
+  ],
+  "balances": {
+    "UR": 123456,
+    "MR": null,
+    "TY": 0
+  },
+  "cards": [
+    "Chase Sapphire Preferred"
+  ],
+  "_valuation_cpp_README": "Optional. Cents per point as a decimal fraction of a dollar (0.01 = 1 cent). Omit the block entirely to use the neutral 1cpp yardstick for every currency.",
+  "valuation_cpp": {
+    "UR": 0.01
+  }
+}

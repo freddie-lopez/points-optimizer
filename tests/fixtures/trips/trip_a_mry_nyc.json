@@ -1,0 +1,106 @@
+{
+  "id": "trip_a_mry_nyc",
+  "name": "TRIP A - Monterey to New York, Jan 15-18 2027",
+  "description": "Round trip, economy. Real cash prices captured by Tsuki on 2026-09-07 for January 2027.",
+  "source": "Google Flights + Marriott.com, captured 2026-09-07 by Tsuki. Transcribed verbatim.",
+  "trip_level_flags": [
+    "Trip A and Trip B both start Jan 15 2027. They appear to be ALTERNATIVES, not one itinerary. Scored separately; totals are NOT combined.",
+    "Flights are priced for 1 adult. The hotel is priced for 2 guests. This inconsistency is reported, not silently corrected - nothing is doubled."
+  ],
+  "legs": [
+    {
+      "id": "A1",
+      "kind": "flight",
+      "description": "MRY-JFK round trip, Jan 15-18 2027, economy, 1 adult",
+      "date": "2027-01-15",
+      "travelers": 1,
+      "notes": [
+        "Google Flights headline: 'Cheapest from $367'.",
+        "Listed cash prices are ROUND TRIP. The points badges are labelled '(one-way)'."
+      ],
+      "data_flags": [
+        "INFERENCE: round-trip points cost is modelled as 2x the one-way badge. Google showed only a one-way badge; the return leg's award price was not captured and may differ.",
+        "Two options depart SFO, not MRY. Positioning Monterey->SFO is not priced anywhere in this data.",
+        "Region classified on SFO-JFK, the route actually priced. The leg is named MRY-JFK but the priced option departs SFO."
+      ],
+      "cash_options": [
+        {
+          "label": "$367 American (SkyWest/American Eagle) MRY-JFK, 1 stop PHX 2h59, 6:00am-7:00pm, 10h",
+          "amount": 367.0,
+          "currency": "USD"
+        },
+        {
+          "label": "$367 American MRY-JFK, 1 stop PHX 41m, 7:11pm-5:40am+1, 7h29",
+          "amount": 367.0,
+          "currency": "USD"
+        },
+        {
+          "label": "$389 Alaska SFO-JFK nonstop, 11:00pm-7:45am+1, 5h45",
+          "amount": 389.0,
+          "currency": "USD"
+        },
+        {
+          "label": "$428 JetBlue SFO-JFK nonstop, 10:37pm-7:03am+1, 5h26",
+          "amount": 428.0,
+          "currency": "USD"
+        }
+      ],
+      "points_candidates": [
+        {
+          "label": "JetBlue SFO-JFK nonstop (badge 21.3k pts one-way, x2 for round trip)",
+          "program": "JetBlue TrueBlue",
+          "points": 42600,
+          "cash_surcharge": 0.0,
+          "surcharge_currency": "USD",
+          "source": "google_badge_unverified",
+          "source_note": "Google Flights '21.3k pts (one-way)' badge, doubled for round trip. Google badges often reflect dynamic revenue pricing, NOT partner saver award space. Not confirmed against Seats.aero. Metal is unambiguous (JetBlue nonstop, JetBlue's own aeroplane), but no surcharge row exists for JetBlue TrueBlue, so the surcharge resolves to UNKNOWN rather than to $0.",
+          "program_attribution_assumed": true,
+          "marketing_carrier": "B6",
+          "operating_carrier": "B6",
+          "carrier_source": "captured",
+          "cabin": "Y",
+          "is_round_trip": true
+        }
+      ],
+      "unpriced_partner_programs": [],
+      "no_points_path_notes": [
+        "American AAdvantage (the two $367 options) is NOT a Chase UR transfer partner.",
+        "Alaska Mileage Plan (the $389 option) is NOT a Chase UR transfer partner.",
+        "Only the JetBlue option maps to a UR partner (TrueBlue), and it is also the most expensive cash fare."
+      ],
+      "origin": "SFO",
+      "destination": "JFK"
+    },
+    {
+      "id": "A2",
+      "kind": "hotel",
+      "description": "Marriott NYC, Jan 15-18 2027, 3 nights, 1 room 2 guests, Traditional King city view, 'Long Term Stay rate'",
+      "date": "2027-01-15",
+      "travelers": 2,
+      "notes": [
+        "Room 3 nights $597.00 + estimated taxes/fees $236.26 = $833.26 total.",
+        "A daily destination fee is charged at check-in and CANNOT be paid with points. It is owed on a points stay too.",
+        "Marriott Bonvoy IS a Chase UR transfer partner at 1:1."
+      ],
+      "data_flags": [
+        "NO Marriott Bonvoy award price was captured. The points option therefore cannot be scored - only a break-even is reported.",
+        "The daily destination fee amount was not captured, so no total including it can be computed.",
+        "The destination fee is NOT modelled as a MandatoryFee because its AMOUNT was never captured. Inventing a figure to make the model look complete is exactly what this tool must not do. It remains a note."
+      ],
+      "cash_options": [
+        {
+          "label": "Traditional King city view, Long Term Stay rate, 3 nights ($597.00 room + $236.26 est. taxes/fees)",
+          "amount": 833.26,
+          "currency": "USD",
+          "unavoidable_cash_note": "Plus a daily destination fee charged at check-in, amount not captured, not payable with points."
+        }
+      ],
+      "points_candidates": [],
+      "unpriced_partner_programs": [
+        "Marriott Bonvoy"
+      ],
+      "no_points_path_notes": [],
+      "nights": 3
+    }
+  ]
+}

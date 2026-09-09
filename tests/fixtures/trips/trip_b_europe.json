@@ -1,0 +1,380 @@
+{
+  "id": "trip_b_europe",
+  "name": "TRIP B - Europe multi-city, Jan 15-27 2027",
+  "description": "One-way legs, economy, 1 adult on flights / 2 people on hotels. Real cash prices captured by Tsuki on 2026-09-07.",
+  "source": "Google Flights + Accor/NH/Hilton, captured 2026-09-07 by Tsuki. Transcribed verbatim.",
+  "trip_level_flags": [
+    "HOTEL DATES DO NOT LINE UP WITH THE FLIGHTS. Novotel Madrid and NH City Centre Amsterdam are BOTH booked Jan 15-19 2027, which is impossible - you cannot be in two cities on the same four nights. The flight legs imply Madrid ~Jan 16-19, Amsterdam Jan 19-23, London Jan 23-27. Reported, NOT corrected: the right dates are a decision for Tsuki, not a guess for the optimizer.",
+    "Trip A and Trip B both start Jan 15 2027. They appear to be ALTERNATIVES, not one itinerary. Scored separately.",
+    "Flights are priced for 1 adult, hotels for 2 people. Nothing has been doubled to reconcile this.",
+    "No London hotel dates were given beyond '4 nights'. Assumed to be the Jan 23-27 window implied by the flights, but the booking dates were not captured.",
+    "Every Google 'from $X' headline in this capture is LOWER than the cheapest option actually listed beneath it (388 vs 395, 35 vs 44, 450 vs 482). The headline fares were not available in the listing; the listed fares are used."
+  ],
+  "legs": [
+    {
+      "id": "B1",
+      "kind": "flight",
+      "description": "MRY->MAD, Jan 15 2027, one-way, economy, 1 adult",
+      "date": "2027-01-15",
+      "travelers": 1,
+      "notes": [
+        "Google Flights headline: 'Cheapest from $388'."
+      ],
+      "data_flags": [
+        "Headline said 'from $388' but the cheapest listed option is $395.",
+        "NO option actually departs MRY. All four depart SFO or SJC. Monterey positioning is unpriced.",
+        "Region classified on SFO-MAD, the route actually priced. The leg is named MRY->MAD but no priced option departs MRY."
+      ],
+      "cash_options": [
+        {
+          "label": "$395 British Airways (American, Iberia, Finnair) SFO-MAD, 1 stop LHR 1h45, 5:25pm-5:05pm+1, 14h40",
+          "amount": 395.0,
+          "currency": "USD"
+        },
+        {
+          "label": "$400 Air Canada (United, Lufthansa) SFO-MAD, 1 stop YUL 2h04, 8:25am-8:00am+1, 14h35",
+          "amount": 400.0,
+          "currency": "USD"
+        },
+        {
+          "label": "$401 American (British Airways) SFO-MAD, 1 stop PHL 1h33, 9:51am-8:55am+1, 14h04",
+          "amount": 401.0,
+          "currency": "USD"
+        },
+        {
+          "label": "$401 Delta (KLM, Virgin Atlantic) SJC-MAD, 1 stop ATL 1h21, 12:45pm-11:45am+1, 14h",
+          "amount": 401.0,
+          "currency": "USD"
+        }
+      ],
+      "points_candidates": [
+        {
+          "label": "British Airways SFO-MAD via LHR (badge 22.5k pts)",
+          "program": "British Airways Executive Club",
+          "points": 22500,
+          "cash_surcharge": 0.0,
+          "surcharge_currency": "USD",
+          "source": "google_badge_unverified",
+          "source_note": "Google Flights '22.5k pts' badge. UNVERIFIED. Note also that BA awards routed via LHR normally carry substantial UK carrier-imposed surcharges, which this badge does not show and which were NOT captured. The real cash surcharge is likely well above $0. OPERATING METAL AMBIGUOUS: the listing names American, Iberia and Finnair alongside British Airways, so which airline flies which segment was not captured. Recorded as assumed, which degrades the surcharge to unknown.",
+          "program_attribution_assumed": true,
+          "marketing_carrier": "BA",
+          "operating_carrier": "BA",
+          "carrier_source": "assumed",
+          "cabin": "Y",
+          "is_round_trip": false
+        },
+        {
+          "label": "Air Canada SFO-MAD via YUL (badge 50k pts)",
+          "program": "Air Canada Aeroplan",
+          "points": 50000,
+          "cash_surcharge": 0.0,
+          "surcharge_currency": "USD",
+          "source": "google_badge_unverified",
+          "source_note": "Google Flights '50k pts' badge. CONFIRMED BY SEATS.AERO 2026-09-08: a real SFO-MAD search returned an Aeroplan economy award on 2027-01-15 at exactly 50,000 miles with 9 seats and CAD 44.60 in taxes (tests/fixtures/seats_aero/sfo_mad_real.json). The badge was right on THIS leg - which is a fact about this leg, not a licence to trust badges generally; the other badges in this trip remain unverified. The real response also shows the operating metal is NOT AC alone: it lists AC, LH, UA and VL as possible carriers. Aeroplan's zero surcharge is a program-wide policy and does not depend on the metal, so every one of them resolves to the same $0 and the verdict is unaffected. The CAD 44.60 in taxes is NOT included below - CAD has no configured FX rate, so it is an explicit unknown that can only make the points side worse.",
+          "program_attribution_assumed": true,
+          "marketing_carrier": "AC",
+          "operating_carrier": "AC",
+          "carrier_source": "assumed",
+          "cabin": "Y",
+          "is_round_trip": false
+        }
+      ],
+      "unpriced_partner_programs": [],
+      "no_points_path_notes": [
+        "The $401 American option's 46k badge maps to American AAdvantage, which is NOT a Chase UR partner.",
+        "The $401 Delta option had no points badge and Delta SkyMiles is NOT a Chase UR partner."
+      ],
+      "origin": "SFO",
+      "destination": "MAD"
+    },
+    {
+      "id": "B2",
+      "kind": "flight",
+      "description": "MAD->AMS, Jan 19 2027, one-way, economy, 1 adult",
+      "date": "2027-01-19",
+      "travelers": 1,
+      "notes": [
+        "Google Flights headline: 'Cheapest from $35'."
+      ],
+      "data_flags": [
+        "Headline said 'from $35' but the cheapest listed option is $44."
+      ],
+      "cash_options": [
+        {
+          "label": "$44 Air Europa nonstop 7:00am-9:40am, 2h40",
+          "amount": 44.0,
+          "currency": "USD"
+        },
+        {
+          "label": "$49 Iberia nonstop 8:40am-11:25am, 2h45",
+          "amount": 49.0,
+          "currency": "USD"
+        },
+        {
+          "label": "$69 KLM nonstop 10:50am-1:25pm, 2h35",
+          "amount": 69.0,
+          "currency": "USD"
+        }
+      ],
+      "points_candidates": [
+        {
+          "label": "Iberia MAD-AMS nonstop (badge 7.5k pts)",
+          "program": "Club Iberia Plus",
+          "points": 7500,
+          "cash_surcharge": 0.0,
+          "surcharge_currency": "USD",
+          "source": "google_badge_unverified",
+          "source_note": "Google Flights '7.5k pts' badge. UNVERIFIED.",
+          "program_attribution_assumed": true,
+          "marketing_carrier": "IB",
+          "operating_carrier": "IB",
+          "carrier_source": "captured",
+          "cabin": "Y",
+          "is_round_trip": false
+        },
+        {
+          "label": "KLM MAD-AMS nonstop (badge 7.5k pts)",
+          "program": "Air France-KLM Flying Blue",
+          "points": 7500,
+          "cash_surcharge": 0.0,
+          "surcharge_currency": "USD",
+          "source": "google_badge_unverified",
+          "source_note": "Google Flights '7.5k pts' badge. UNVERIFIED.",
+          "program_attribution_assumed": true,
+          "marketing_carrier": "KL",
+          "operating_carrier": "KL",
+          "carrier_source": "captured",
+          "cabin": "Y",
+          "is_round_trip": false
+        }
+      ],
+      "unpriced_partner_programs": [],
+      "no_points_path_notes": [
+        "Air Europa (the cheapest cash option at $44) had no points badge and Air Europa SUMA is NOT a Chase UR partner."
+      ],
+      "origin": "MAD",
+      "destination": "AMS"
+    },
+    {
+      "id": "B3",
+      "kind": "flight",
+      "description": "AMS->LON, Jan 23 2027, one-way, economy, 1 adult",
+      "date": "2027-01-23",
+      "travelers": 1,
+      "notes": [
+        "Google Flights headline: 'Cheapest from $76'."
+      ],
+      "data_flags": [
+        "The three cheapest options are all easyJet and all marked 'Unsupported' by Google - no points option exists for any of them.",
+        "Destination recorded as LHR (the KLM option). The three cheaper easyJet options land at LGW/LTN/SEN; all are GB and classify identically."
+      ],
+      "cash_options": [
+        {
+          "label": "$76 easyJet AMS-LGW 2:20pm-2:40pm, 1h20 (marked Unsupported - no points option)",
+          "amount": 76.0,
+          "currency": "USD"
+        },
+        {
+          "label": "$82 easyJet AMS-LTN, 1h10 (Unsupported)",
+          "amount": 82.0,
+          "currency": "USD"
+        },
+        {
+          "label": "$94 easyJet AMS-SEN, 55m (Unsupported)",
+          "amount": 94.0,
+          "currency": "USD"
+        },
+        {
+          "label": "$111 KLM AMS-LHR 11:45am-12:05pm, 1h20",
+          "amount": 111.0,
+          "currency": "USD"
+        }
+      ],
+      "points_candidates": [
+        {
+          "label": "KLM AMS-LHR (badge 4k pts)",
+          "program": "Air France-KLM Flying Blue",
+          "points": 4000,
+          "cash_surcharge": 0.0,
+          "surcharge_currency": "USD",
+          "source": "google_badge_unverified",
+          "source_note": "Google Flights '4k pts' badge. UNVERIFIED.",
+          "program_attribution_assumed": true,
+          "marketing_carrier": "KL",
+          "operating_carrier": "KL",
+          "carrier_source": "captured",
+          "cabin": "Y",
+          "is_round_trip": false
+        }
+      ],
+      "unpriced_partner_programs": [],
+      "no_points_path_notes": [
+        "easyJet is a low-cost carrier with no UR-transferable loyalty currency. All three easyJet options are cash-only by construction."
+      ],
+      "origin": "AMS",
+      "destination": "LHR"
+    },
+    {
+      "id": "B4",
+      "kind": "flight",
+      "description": "LON->MRY, Jan 27 2027, one-way, economy, 1 adult",
+      "date": "2027-01-27",
+      "travelers": 1,
+      "notes": [
+        "Google Flights headline: 'Cheapest from $450'."
+      ],
+      "data_flags": [
+        "Headline said 'from $450' but the cheapest listed option is $482.",
+        "NO option actually arrives MRY. All three arrive SFO. Return positioning SFO->Monterey is unpriced.",
+        "Region classified on LHR-SFO. departure_country=GB, which is what makes UK Air Passenger Duty applicable on this leg."
+      ],
+      "cash_options": [
+        {
+          "label": "$482 British Airways (American, Iberia, Finnair) LHR-SFO nonstop 11:45am-2:55pm, 11h10",
+          "amount": 482.0,
+          "currency": "USD"
+        },
+        {
+          "label": "$482 British Airways LHR-SFO nonstop 3:20pm-6:45pm, 11h25",
+          "amount": 482.0,
+          "currency": "USD"
+        },
+        {
+          "label": "$500 United (Lufthansa, Austrian, Brussels) LHR-SFO nonstop 10:05am-1:20pm, 11h15",
+          "amount": 500.0,
+          "currency": "USD"
+        }
+      ],
+      "points_candidates": [
+        {
+          "label": "British Airways LHR-SFO nonstop (badge 20k pts)",
+          "program": "British Airways Executive Club",
+          "points": 20000,
+          "cash_surcharge": 0.0,
+          "surcharge_currency": "USD",
+          "source": "google_badge_unverified",
+          "source_note": "Google Flights '20k pts' badge. UNVERIFIED. BA awards DEPARTING LHR carry the UK Air Passenger Duty plus BA carrier-imposed surcharges - commonly $200-300+ in economy on a transatlantic. That surcharge was NOT captured and is modelled here as $0, which materially flatters the points option. Metal recorded as assumed: the badge says British Airways and the flight is a nonstop, but the listing also names American, Iberia and Finnair on the $482 cash row. Assumed metal degrades the surcharge to UNKNOWN rather than to the $0 v0 used.",
+          "program_attribution_assumed": true,
+          "marketing_carrier": "BA",
+          "operating_carrier": "BA",
+          "carrier_source": "assumed",
+          "cabin": "Y",
+          "is_round_trip": false
+        },
+        {
+          "label": "United LHR-SFO nonstop (badge 27.6k pts)",
+          "program": "United MileagePlus",
+          "points": 27600,
+          "cash_surcharge": 0.0,
+          "surcharge_currency": "USD",
+          "source": "google_badge_unverified",
+          "source_note": "Google Flights '27.6k pts' badge. UNVERIFIED. Also subject to uncaptured UK departure taxes. United MileagePlus levies no carrier-imposed surcharge as a matter of program policy, so this resolves to a confirmed $0 regardless of metal. GOVERNMENT TAXES AND UK AIR PASSENGER DUTY ARE STILL OWED ON THIS LEG AND ARE NOT MODELLED - the $0 covers the carrier surcharge only.",
+          "program_attribution_assumed": true,
+          "marketing_carrier": "UA",
+          "operating_carrier": "UA",
+          "carrier_source": "assumed",
+          "cabin": "Y",
+          "is_round_trip": false
+        }
+      ],
+      "unpriced_partner_programs": [],
+      "no_points_path_notes": [],
+      "origin": "LHR",
+      "destination": "SFO"
+    },
+    {
+      "id": "B5",
+      "kind": "hotel",
+      "description": "Novotel Madrid Center (Accor), Jan 15-19 2027, 4 nights, 2 people, Standard Room queen, 'Stay Longer and Save' non-refundable",
+      "date": "2027-01-15",
+      "travelers": 2,
+      "notes": [
+        "Quoted in both currencies: $747.81 total incl. fees/taxes = EUR643.57. This dual quote is the ONLY source for the EUR/USD rate used anywhere in this run."
+      ],
+      "data_flags": [
+        "DATE CONFLICT: booked Jan 15-19, the same four nights as NH Amsterdam. Impossible. The flights imply Madrid ~Jan 16-19.",
+        "Accor Live Limitless is NOT a Chase UR transfer partner. Cash only - this is a hard constraint, not a missing input."
+      ],
+      "cash_options": [
+        {
+          "label": "Standard Room queen, Stay Longer and Save, non-refundable, 4 nights (EUR643.57 incl. fees/taxes)",
+          "amount": 643.57,
+          "currency": "EUR"
+        }
+      ],
+      "points_candidates": [],
+      "unpriced_partner_programs": [],
+      "no_points_path_notes": [
+        "Accor is not a Chase UR partner. No points path exists."
+      ],
+      "nights": 4
+    },
+    {
+      "id": "B6",
+      "kind": "hotel",
+      "description": "NH City Centre Amsterdam, Jan 15-19 2027, 4 nights, 2 adults, Standard Room, room only, non-refundable",
+      "date": "2027-01-15",
+      "travelers": 2,
+      "notes": [
+        "Room EUR451.68 + VAT EUR94.87 = EUR546.55 payable at booking.",
+        "City tax EUR56.47 shown separately, likely payable at the property. NOT included in the score below."
+      ],
+      "data_flags": [
+        "DATE CONFLICT: booked Jan 15-19, the same four nights as Novotel Madrid. Impossible. The flights imply Amsterdam Jan 19-23.",
+        "NH Rewards / Minor DISCOVERY is NOT a Chase UR transfer partner. Cash only.",
+        "EUR56.47 city tax is now MODELLED as a mandatory fee and IS included in the scored total. v0 stored it as free text on the cash option, so it entered no total at all. It is owed on a points stay too."
+      ],
+      "cash_options": [
+        {
+          "label": "Standard Room, room only, non-refundable, 4 nights (EUR451.68 room + EUR94.87 VAT)",
+          "amount": 546.55,
+          "currency": "EUR"
+        }
+      ],
+      "points_candidates": [],
+      "unpriced_partner_programs": [],
+      "no_points_path_notes": [
+        "NH Hotels is not a Chase UR partner. No points path exists."
+      ],
+      "nights": 4,
+      "mandatory_fees": [
+        {
+          "label": "Amsterdam city tax (payable at the property)",
+          "amount": 56.47,
+          "currency": "EUR",
+          "per": "stay",
+          "payable_on_points": true,
+          "source": "captured from the NH booking page 2026-09-07"
+        }
+      ]
+    },
+    {
+      "id": "B7",
+      "kind": "hotel",
+      "description": "Hilton London Hyde Park, 4 nights, Queen Guest Room, GBP125.66/night",
+      "date": "2027-01-23",
+      "travelers": 2,
+      "notes": [
+        "GBP125.66/night x 4 = GBP502.64 total, taxes included."
+      ],
+      "data_flags": [
+        "No check-in date was captured for this hotel - only '4 nights'. Jan 23 is inferred from the flight legs and is NOT confirmed.",
+        "Hilton Honors is an Amex Membership Rewards partner, NOT a Chase UR partner. Cash only under the current UR-only scope.",
+        "This leg is quoted in GBP, and its dollar figure is the least reliable number in the run: it is the largest single line, and the whole of it rests on one FX rate. That rate is 'sourced' (v3 Step 0 looked it up on 2026-09-08) - better than a placeholder, and still NOT vouched for by anyone, so CONFIRM BEFORE TRUSTING. Until the v1-v3 adversarial fix this flag described the rate as a placeholder with nothing behind it, which stopped being true at v3 Step 0 and left this free text contradicting the structured is_placeholder_rate marker, with the free text the wrong one (finding L-7)."
+      ],
+      "cash_options": [
+        {
+          "label": "Queen Guest Room, 4 nights at GBP125.66/night, taxes included",
+          "amount": 502.64,
+          "currency": "GBP"
+        }
+      ],
+      "points_candidates": [],
+      "unpriced_partner_programs": [],
+      "no_points_path_notes": [
+        "Hilton is not a Chase UR partner. No points path exists."
+      ],
+      "nights": 4
+    }
+  ]
+}

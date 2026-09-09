@@ -1,0 +1,23 @@
+{
+  "trip_id": "trip_001",
+  "human_booking": {
+    "transfers": [
+      {
+        "from": "UR",
+        "to": "United",
+        "amount": 120000,
+        "ratio": "1:1"
+      },
+      {
+        "from": "MR",
+        "to": "Flying Blue",
+        "amount": 90000,
+        "ratio": "1:1"
+      }
+    ],
+    "award": "SFO→LHR United Business (J), 2 pax",
+    "points_cost": 180000,
+    "cash_cost": 200.00
+  },
+  "notes": "Hypothetical booking: two J seats on UA901 May 3-4 available with 120k United + 90k Flying Blue transferred. Human chose to transfer 120k UR to United (already has 40k United = 160k total, but only needs 120k) and 90k MR to Flying Blue as backup."
+}

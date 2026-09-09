@@ -1,0 +1,26 @@
+{
+  "id": "trip_001",
+  "description": "Transatlantic to London (SFO→LHR), 2 pax, May 2026",
+  "origin": "SFO",
+  "destination": "LHR",
+  "date_range": {
+    "from": "2026-05-01",
+    "to": "2026-05-31"
+  },
+  "balances": {
+    "UR": 250000,
+    "MR": 150000,
+    "TY": 100000,
+    "CapitalOne": 50000,
+    "Bilt": 75000,
+    "United": 40000,
+    "Flying Blue": 0,
+    "SkyMiles": 0
+  },
+  "cards_held": [
+    "Chase Sapphire Reserve",
+    "Amex Platinum",
+    "Citi Prestige"
+  ],
+  "num_passengers": 2
+}

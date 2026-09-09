@@ -1,0 +1,319 @@
+# Program metadata, aliases, and partner lists.
+#
+# TRANSFER-RATIO SCOPE: Chase Ultimate Rewards (UR) only, verified 2026-09-07.
+#
+# v1 declares MR / TY / C1 / Bilt as KNOWN ISSUER CURRENCIES so a wallet can name
+# them and the multi-currency machinery can be exercised. Declaring a currency is
+# NOT a claim about its transfer partners: `data/ratios.csv` contains no verified
+# rows for any of them, so today they fund nothing. Adding rows is a research
+# task that could not be done from the build sandbox (no network egress at all),
+# and the standard set in v0 - a partner that cannot be verified is omitted, not
+# guessed - is not being lowered to fill the table.
+#
+# `aliases` are used by RatioManager.normalize_program() so that short names
+# ("United", "Hyatt") and API-style codes ("united", "virginatlantic") resolve to
+# the canonical program name used in ratios.csv.
+#
+# `blanket_no_yq: true` marks a program with a STRUCTURAL policy of levying no
+# carrier-imposed surcharge. It is the only thing that licenses a `carrier=*`
+# wildcard row in data/surcharges.csv; the surcharge-table validator rejects a
+# wildcard row for any program without it.
+#
+# `bookable_carriers` is what src/alternatives.py consumes: which metal a program
+# can ticket. See the caveat block at the bottom of this file - this list is an
+# ALLIANCE-DERIVED APPROXIMATION, not a verified partnership matrix, and every
+# alternative built from it is emitted unpriced and marked as assumed.
+
+programs:
+  UR:
+    name: "Chase Ultimate Rewards"
+    currency: "points"
+    category: "issuer_currency"
+    transfer_increment: 1000
+    aliases: ["Chase UR", "Ultimate Rewards", "Chase Ultimate Rewards", "ur"]
+    partners:
+      # Airlines - all 1:1, no card dependency
+      - Aer Lingus AerClub
+      - Air Canada Aeroplan
+      - Air France-KLM Flying Blue
+      - British Airways Executive Club
+      - Club Iberia Plus
+      - JetBlue TrueBlue
+      - Singapore Airlines KrisFlyer
+      - Southwest Rapid Rewards
+      - United MileagePlus
+      - Virgin Atlantic Flying Club
+      # Hotels
+      - IHG One Rewards
+      - Marriott Bonvoy
+      - Wyndham Rewards
+      - World of Hyatt
+
+  # ---------------------------------------------------------------------
+  # Other issuer currencies.
+  #
+  # DECLARED SO A WALLET CAN NAME THEM. There are no verified transfer rows for
+  # any of these in ratios.csv, so each currently funds nothing. That is a data
+  # gap, honestly recorded, not a code limitation.
+  # ---------------------------------------------------------------------
+  MR:
+    name: "American Express Membership Rewards"
+    currency: "points"
+    category: "issuer_currency"
+    transfer_increment: 1000
+    aliases: ["Amex MR", "Membership Rewards", "American Express Membership Rewards", "mr", "amex"]
+    partners_verified: false
+    partners_note: >
+      No verified partner rows. Amex MR's partner list, ratios and transfer
+      increments were not verifiable from the v1 build environment, which has no
+      network egress. Omitted rather than guessed.
+
+  TY:
+    name: "Citi ThankYou Points"
+    currency: "points"
+    category: "issuer_currency"
+    transfer_increment: 1000
+    aliases: ["Citi TY", "ThankYou", "ThankYou Points", "Citi ThankYou Points", "ty", "citi"]
+    partners_verified: false
+    partners_note: "No verified partner rows. See MR."
+
+  C1:
+    name: "Capital One Miles"
+    currency: "miles"
+    category: "issuer_currency"
+    transfer_increment: 1000
+    aliases: ["Capital One", "CapitalOne", "Capital One Miles", "c1", "capone"]
+    partners_verified: false
+    partners_note: "No verified partner rows. See MR."
+
+  Bilt:
+    name: "Bilt Rewards"
+    currency: "points"
+    category: "issuer_currency"
+    transfer_increment: 1000
+    aliases: ["Bilt Rewards", "bilt"]
+    partners_verified: false
+    partners_note: "No verified partner rows. See MR."
+
+  # ---------------------------------------------------------------------
+  # Airline partners
+  # ---------------------------------------------------------------------
+  Aer Lingus AerClub:
+    name: "Aer Lingus AerClub"
+    currency: "avios"
+    category: "airline"
+    aliases: ["Aer Lingus", "AerClub", "EI", "aerlingus"]
+    avios_family: true
+    own_metal: ["EI"]
+    alliance: null
+    bookable_carriers: ["EI", "BA", "IB"]
+
+  Air Canada Aeroplan:
+    name: "Air Canada Aeroplan"
+    currency: "points"
+    category: "airline"
+    aliases: ["Aeroplan", "Air Canada", "AC", "aeroplan"]
+    own_metal: ["AC"]
+    alliance: "star"
+    blanket_no_yq: true
+    blanket_no_yq_note: >
+      Aeroplan levies no carrier-imposed surcharge on PARTNER awards. Asserted
+      for partner awards only - verify before extending to AC's own metal.
+    bookable_carriers: ["AC", "UA", "LH", "OS", "SN", "LX", "SQ", "NH", "TK", "SK", "TP", "A3", "ET", "AI", "OZ", "CA", "BR", "NZ", "ZH", "MS", "SA", "AV", "CM", "JU"]
+
+  Air France-KLM Flying Blue:
+    name: "Air France-KLM Flying Blue"
+    currency: "miles"
+    category: "airline"
+    aliases: ["Flying Blue", "Air France", "KLM", "AF", "KL", "flyingblue"]
+    own_metal: ["AF", "KL"]
+    alliance: "skyteam"
+    bookable_carriers: ["AF", "KL", "DL", "AZ", "KE", "MU", "CI", "VN", "RO", "SV", "UX", "ME", "KQ", "GA", "AM"]
+
+  British Airways Executive Club:
+    name: "British Airways Executive Club"
+    currency: "avios"
+    category: "airline"
+    aliases: ["British Airways", "BA", "Executive Club", "britishairways"]
+    avios_family: true
+    own_metal: ["BA"]
+    alliance: "oneworld"
+    bookable_carriers: ["BA", "IB", "EI", "AA", "AY", "QR", "JL", "CX", "QF", "MH", "RJ", "UL", "AT", "AS", "FJ"]
+
+  Club Iberia Plus:
+    name: "Club Iberia Plus"
+    currency: "avios"
+    category: "airline"
+    aliases: ["Iberia", "Iberia Plus", "IB", "iberia"]
+    avios_family: true
+    own_metal: ["IB"]
+    alliance: "oneworld"
+    bookable_carriers: ["IB", "BA", "EI", "AA", "AY", "QR", "JL", "CX", "QF", "MH", "RJ", "UL", "AT", "AS"]
+
+  JetBlue TrueBlue:
+    name: "JetBlue TrueBlue"
+    currency: "points"
+    category: "airline"
+    aliases: ["JetBlue", "TrueBlue", "B6", "jetblue"]
+    own_metal: ["B6"]
+    alliance: null
+    bookable_carriers: ["B6"]
+
+  Singapore Airlines KrisFlyer:
+    name: "Singapore Airlines KrisFlyer"
+    currency: "miles"
+    category: "airline"
+    aliases: ["Singapore Airlines", "KrisFlyer", "SQ", "singapore"]
+    own_metal: ["SQ"]
+    alliance: "star"
+    bookable_carriers: ["SQ", "UA", "AC", "LH", "NH", "TK", "SK", "TP", "A3", "ET", "AI", "OZ", "CA", "BR", "NZ", "ZH", "MS", "SA", "AV", "CM", "OS", "SN", "LX"]
+
+  Southwest Rapid Rewards:
+    name: "Southwest Rapid Rewards"
+    currency: "points"
+    category: "airline"
+    aliases: ["Southwest", "Rapid Rewards", "WN", "southwest"]
+    own_metal: ["WN"]
+    alliance: null
+    bookable_carriers: ["WN"]
+
+  United MileagePlus:
+    name: "United MileagePlus"
+    currency: "miles"
+    category: "airline"
+    aliases: ["United", "MileagePlus", "UA", "united"]
+    own_metal: ["UA"]
+    alliance: "star"
+    blanket_no_yq: true
+    blanket_no_yq_note: >
+      United does not pass carrier-imposed surcharges through on award tickets.
+      Government taxes and airport charges (including UK APD) are still owed and
+      are NOT modelled by the surcharge table - see surcharges.csv notes.
+    bookable_carriers: ["UA", "AC", "LH", "OS", "SN", "LX", "SQ", "NH", "TK", "SK", "TP", "A3", "ET", "AI", "OZ", "CA", "BR", "NZ", "ZH", "MS", "SA", "AV", "CM", "JU"]
+
+  Virgin Atlantic Flying Club:
+    name: "Virgin Atlantic Flying Club"
+    currency: "points"
+    category: "airline"
+    aliases: ["Virgin Atlantic", "Flying Club", "VS", "virginatlantic"]
+    own_metal: ["VS"]
+    alliance: "skyteam_affiliate"
+    bookable_carriers: ["VS", "DL", "AF", "KL"]
+
+  # ---------------------------------------------------------------------
+  # Hotel partners
+  # ---------------------------------------------------------------------
+  # AWARD RULES (fifth_night_free, peak_off_peak_calendar, points_stay_tax_free)
+  # ALL DEFAULT TO OFF. Enabling one requires `source` and `verified_on`, and the
+  # hotel-rule validator test fails a rule that is enabled without them. Shipping
+  # them off is capability without invention: a wrongly-enabled fifth-night-free
+  # silently makes every 5-night stay 20% cheaper than it is.
+  IHG One Rewards:
+    name: "IHG One Rewards"
+    currency: "points"
+    category: "hotel"
+    aliases: ["IHG", "One Rewards", "ihg"]
+    award_rules:
+      fifth_night_free: false
+      peak_off_peak_calendar: false
+      points_stay_tax_free: false
+
+  Marriott Bonvoy:
+    name: "Marriott Bonvoy"
+    currency: "points"
+    category: "hotel"
+    aliases: ["Marriott", "Bonvoy", "marriott"]
+    award_rules:
+      fifth_night_free: false
+      peak_off_peak_calendar: false
+      points_stay_tax_free: false
+
+  Wyndham Rewards:
+    name: "Wyndham Rewards"
+    currency: "points"
+    category: "hotel"
+    aliases: ["Wyndham", "wyndham"]
+    award_rules:
+      fifth_night_free: false
+      peak_off_peak_calendar: false
+      points_stay_tax_free: false
+
+  World of Hyatt:
+    name: "World of Hyatt"
+    currency: "points"
+    category: "hotel"
+    aliases: ["Hyatt", "WoH", "hyatt"]
+    # Card-dependent transfer ratio. See ratios.csv:
+    #   Chase Sapphire Reserve        -> 1:1 always
+    #   Chase Sapphire Preferred      -> 1:1 through 2026-09-30, then 4:3
+    #   Chase Ink Business Preferred  -> 1:1 through 2026-09-30, then 4:3
+    card_dependent: true
+    award_rules:
+      fifth_night_free: false
+      peak_off_peak_calendar: false
+      points_stay_tax_free: false
+
+# ---------------------------------------------------------------------
+# The Avios family: one currency, THREE DIFFERENT AWARD CHARTS.
+#
+# British Airways Executive Club, Club Iberia Plus and Aer Lingus AerClub all
+# spend Avios and Avios can be moved between them, but each prices awards from
+# its own chart and each levies its own carrier surcharge. The BA price for a
+# flight is NOT the Iberia price for the same flight, and the tool must never
+# substitute one for the other. This is the mechanism behind v1's headline
+# capability - same balance, same aeroplane, wildly different cash - and also the
+# most tempting place to invent a number.
+# ---------------------------------------------------------------------
+avios_family:
+  members:
+    - British Airways Executive Club
+    - Club Iberia Plus
+    - Aer Lingus AerClub
+  shared_currency: true
+  shared_award_chart: false
+  note: >
+    Prices must be supplied per program. Never reuse one member's award price for
+    another. src/alternatives.py enforces this.
+
+# ---------------------------------------------------------------------
+# CAVEAT on `bookable_carriers`.
+#
+# These lists are derived from ALLIANCE MEMBERSHIP plus each program's own metal,
+# plus the Avios family cross-booking relationship. Alliance membership is stable
+# and public; a specific program-to-carrier award partnership is NOT the same
+# thing, and a few of the pairs below will be wrong.
+#
+# That is tolerable ONLY because of how the list is used: alternatives.py emits
+# every alliance-derived alternative as an UNPRICED counterfactual carrying a
+# break-even points figure and the label "partnership assumed - verify". No
+# alternative built from this list is ever scored, totalled, or presented as a
+# confirmed price. If that ever changes, this list must be replaced with a
+# verified partnership matrix first.
+#
+# NOT verified against a live source: the v1 build environment had no network.
+# ---------------------------------------------------------------------
+bookable_carriers_provenance:
+  method: "alliance membership + own metal + Avios family"
+  verified: false
+  verified_on: null
+  usage_constraint: "unpriced counterfactuals only; never scored"
+
+# ---------------------------------------------------------------------
+# Non-partners explicitly recorded so they are never silently re-added.
+# ---------------------------------------------------------------------
+not_partners:
+  UR:
+    - name: "Emirates Skywards"
+      note: "Removed 2026-09-07. Not a current Chase UR transfer partner."
+    - name: "LATAM Pass"
+      note: "Removed 2026-09-07. Not a current Chase UR transfer partner."
+    - name: "Japan Airlines Mileage Bank"
+      note: >
+        Removed 2026-09-07. Was present in the previous ratios.csv but is not on
+        the verified UR partner list. Chase UR does not transfer to JAL.
+    - name: "Hilton Honors"
+      note: "Amex MR partner, not Chase UR. Relevant to the London hotel leg: cash only."
+    - name: "Accor Live Limitless"
+      note: "Not a Chase UR partner. Relevant to the Novotel Madrid leg: cash only."
+    - name: "NH Rewards / Minor DISCOVERY"
+      note: "Not a Chase UR partner. Relevant to the NH Amsterdam leg: cash only."

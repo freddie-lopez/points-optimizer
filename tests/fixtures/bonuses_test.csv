@@ -1,0 +1,3 @@
+from_program,to_program,bonus_percent,effective_from,effective_to,notes
+UR,Air France-KLM Flying Blue,25,2026-09-15,2026-10-31,SYNTHETIC test-only bonus. Not a real promo.
+UR,Singapore Airlines KrisFlyer,20,2026-10-01,2026-12-31,SYNTHETIC test-only bonus. Not a real promo.

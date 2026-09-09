@@ -1,0 +1,23 @@
+# .env holds the LIVE Seats.aero Pro API key (SEATS_AERO_KEY). The v0 plan §2
+# says in bold that the key must never be committed, and until this line existed
+# the first `git add -A` would have committed it. .env.example is the template
+# and IS tracked; it must never carry a real key.
+.env
+
+# wallet.json holds real balances. Template only in git.
+wallet.json
+
+# Python runtime droppings. None of these are inputs to anything.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Scratch output from tier-1 runs. Regenerated on demand; not a fixture.
+tier1-output.txt
+
+# Runtime Seats.aero response cache. RAW pages, keyed by request hash.
+# Gitignored because it is runtime state that expires; the durable copy of every
+# response is the SNAPSHOT under tests/fixtures/seats_aero/live_trip_b/, which
+# IS committed. See src/response_cache.py.
+data/cache/

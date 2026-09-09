@@ -1,0 +1,142 @@
+iata,name,country,region
+MRY,Monterey Regional,US,NA
+SFO,San Francisco Intl,US,NA
+SJC,San Jose Mineta,US,NA
+OAK,Oakland Intl,US,NA
+LAX,Los Angeles Intl,US,NA
+SAN,San Diego Intl,US,NA
+SEA,Seattle-Tacoma Intl,US,NA
+PDX,Portland Intl,US,NA
+LAS,Harry Reid Intl,US,NA
+PHX,Phoenix Sky Harbor,US,NA
+DEN,Denver Intl,US,NA
+DFW,Dallas/Fort Worth Intl,US,NA
+IAH,Houston Intercontinental,US,NA
+ORD,Chicago O'Hare,US,NA
+ATL,Hartsfield-Jackson Atlanta,US,NA
+MIA,Miami Intl,US,NA
+CLT,Charlotte Douglas,US,NA
+PHL,Philadelphia Intl,US,NA
+JFK,New York JFK,US,NA
+EWR,Newark Liberty,US,NA
+LGA,New York LaGuardia,US,NA
+NYC,New York (all airports),US,NA
+BOS,Boston Logan,US,NA
+IAD,Washington Dulles,US,NA
+DCA,Washington National,US,NA
+MSP,Minneapolis-St Paul,US,NA
+DTW,Detroit Metro,US,NA
+SLC,Salt Lake City Intl,US,NA
+HNL,Honolulu Daniel K Inouye,US,NA
+YVR,Vancouver Intl,CA,NA
+YYZ,Toronto Pearson,CA,NA
+YUL,Montreal Trudeau,CA,NA
+YYC,Calgary Intl,CA,NA
+YOW,Ottawa Macdonald-Cartier,CA,NA
+MEX,Mexico City Intl,MX,NA
+CUN,Cancun Intl,MX,NA
+LHR,London Heathrow,GB,EU
+LGW,London Gatwick,GB,EU
+LTN,London Luton,GB,EU
+STN,London Stansted,GB,EU
+LCY,London City,GB,EU
+SEN,London Southend,GB,EU
+LON,London (all airports),GB,EU
+MAN,Manchester,GB,EU
+EDI,Edinburgh,GB,EU
+GLA,Glasgow,GB,EU
+DUB,Dublin,IE,EU
+SNN,Shannon,IE,EU
+ORK,Cork,IE,EU
+CDG,Paris Charles de Gaulle,FR,EU
+ORY,Paris Orly,FR,EU
+PAR,Paris (all airports),FR,EU
+NCE,Nice Cote d'Azur,FR,EU
+AMS,Amsterdam Schiphol,NL,EU
+BRU,Brussels,BE,EU
+FRA,Frankfurt,DE,EU
+MUC,Munich,DE,EU
+DUS,Dusseldorf,DE,EU
+BER,Berlin Brandenburg,DE,EU
+HAM,Hamburg,DE,EU
+ZRH,Zurich,CH,EU
+GVA,Geneva,CH,EU
+VIE,Vienna,AT,EU
+MAD,Madrid Barajas,ES,EU
+BCN,Barcelona El Prat,ES,EU
+AGP,Malaga,ES,EU
+PMI,Palma de Mallorca,ES,EU
+LIS,Lisbon,PT,EU
+OPO,Porto,PT,EU
+FCO,Rome Fiumicino,IT,EU
+MXP,Milan Malpensa,IT,EU
+LIN,Milan Linate,IT,EU
+VCE,Venice Marco Polo,IT,EU
+NAP,Naples,IT,EU
+ATH,Athens,GR,EU
+CPH,Copenhagen,DK,EU
+ARN,Stockholm Arlanda,SE,EU
+OSL,Oslo Gardermoen,NO,EU
+HEL,Helsinki Vantaa,FI,EU
+KEF,Keflavik,IS,EU
+WAW,Warsaw Chopin,PL,EU
+PRG,Prague,CZ,EU
+BUD,Budapest,HU,EU
+OTP,Bucharest Otopeni,RO,EU
+ZAG,Zagreb,HR,EU
+IST,Istanbul,TR,EU
+SAW,Istanbul Sabiha Gokcen,TR,EU
+DXB,Dubai Intl,AE,ME
+AUH,Abu Dhabi,AE,ME
+DOH,Doha Hamad,QA,ME
+TLV,Tel Aviv Ben Gurion,IL,ME
+AMM,Amman Queen Alia,JO,ME
+RUH,Riyadh King Khalid,SA,ME
+JED,Jeddah,SA,ME
+CAI,Cairo,EG,AF
+CMN,Casablanca Mohammed V,MA,AF
+JNB,Johannesburg OR Tambo,ZA,AF
+CPT,Cape Town,ZA,AF
+NBO,Nairobi Jomo Kenyatta,KE,AF
+ADD,Addis Ababa Bole,ET,AF
+LOS,Lagos Murtala Muhammed,NG,AF
+NRT,Tokyo Narita,JP,AS
+HND,Tokyo Haneda,JP,AS
+TYO,Tokyo (all airports),JP,AS
+KIX,Osaka Kansai,JP,AS
+ICN,Seoul Incheon,KR,AS
+PEK,Beijing Capital,CN,AS
+PKX,Beijing Daxing,CN,AS
+PVG,Shanghai Pudong,CN,AS
+CAN,Guangzhou Baiyun,CN,AS
+HKG,Hong Kong Intl,HK,AS
+TPE,Taipei Taoyuan,TW,AS
+SIN,Singapore Changi,SG,AS
+KUL,Kuala Lumpur Intl,MY,AS
+BKK,Bangkok Suvarnabhumi,TH,AS
+HKT,Phuket,TH,AS
+SGN,Ho Chi Minh City,VN,AS
+HAN,Hanoi Noi Bai,VN,AS
+CGK,Jakarta Soekarno-Hatta,ID,AS
+MNL,Manila Ninoy Aquino,PH,AS
+DEL,Delhi Indira Gandhi,IN,AS
+BOM,Mumbai Chhatrapati Shivaji,IN,AS
+BLR,Bengaluru Kempegowda,IN,AS
+MLE,Male Velana,MV,AS
+CMB,Colombo Bandaranaike,LK,AS
+SYD,Sydney Kingsford Smith,AU,OC
+MEL,Melbourne Tullamarine,AU,OC
+BNE,Brisbane,AU,OC
+PER,Perth,AU,OC
+AKL,Auckland,NZ,OC
+NAN,Nadi,FJ,OC
+PPT,Papeete Faaa,PF,OC
+GRU,Sao Paulo Guarulhos,BR,SA
+GIG,Rio de Janeiro Galeao,BR,SA
+EZE,Buenos Aires Ezeiza,AR,SA
+SCL,Santiago Arturo Merino Benitez,CL,SA
+LIM,Lima Jorge Chavez,PE,SA
+BOG,Bogota El Dorado,CO,SA
+UIO,Quito Mariscal Sucre,EC,SA
+PTY,Panama City Tocumen,PA,NA
+SJO,San Jose Juan Santamaria,CR,NA
