@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -68,6 +69,10 @@ HASH_CHARS = 16
 # What a missing v5 column reads as. NOT "matches", NOT an empty string that a
 # comparison would treat as equal to something.
 UNKNOWN = "unknown"
+
+# What a content_hash column must look like to be checkable at all (M-2): the
+# 16 hex characters `put` writes, or a full sha256 if somebody widens it.
+_CONTENT_HASH_COLUMN = re.compile(rf"[0-9a-f]{{{HASH_CHARS}}}|[0-9a-f]{{64}}")
 
 
 class ManifestError(ValueError):
@@ -562,7 +567,26 @@ def verify(rows: List[ManifestRow], snapshot_dir: Path) -> List[Problem]:
                     "v5 row, or replay a manifest that has one.",
                 )
             )
-        elif not recomputed.startswith(row.content_hash):
+        elif not _CONTENT_HASH_COLUMN.fullmatch(row.content_hash.strip().lower()):
+            # FINDING M-2. The comparison was `recomputed.startswith(column)`, so
+            # the column's strength was 16^len and a ONE-CHARACTER column was a
+            # 1-in-16 coin flip that passed "the check that cannot be defeated by
+            # editing the file". Blanking the column was caught
+            # (content_hash_unknown); shortening it was not. A column that is
+            # not a full 16 (or 64) hex characters is not a hash - it is an
+            # unverifiable value, and unverifiable is never "matches".
+            problems.append(
+                Problem(
+                    "content_hash_malformed",
+                    row,
+                    f"the content_hash column is {row.content_hash!r}, which is "
+                    f"not {HASH_CHARS} (or 64) hexadecimal characters. A prefix "
+                    f"is not a hash: a shortened column would match one file in "
+                    f"16^len, so it certifies nothing while looking exactly like "
+                    f"a certificate. Re-fetch the leg to write a full column.",
+                )
+            )
+        elif row.content_hash.strip().lower() != recomputed[: len(row.content_hash.strip())]:
             problems.append(
                 Problem(
                     "manifest_hash_mismatch",

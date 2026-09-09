@@ -439,3 +439,41 @@ def test_parser_versions_reports_unknown_for_pre_v5_rows(tmp_path):
     path.write_text(PRE_V5_MANIFEST)
     rows = snapshot_replay.parse_manifest(path)
     assert snapshot_replay.parser_versions(rows) == ["unknown"]
+
+
+# ---------------------------------------------------------------------------
+# M-2: a truncated content_hash column is not a hash
+# ---------------------------------------------------------------------------
+
+
+def _one_row(tmp_path, column):
+    import json as _json
+
+    from src import response_cache as _rc, snapshot_replay as _sr
+
+    pages = [{"data": []}]
+    (tmp_path / "B1.json").write_text(
+        _json.dumps({"_meta": {"content_hash": _rc.content_hash(pages)},
+                     "pages": pages})
+    )
+    row = _sr.ManifestRow(
+        fetched_at=None, fetched_at_text="", leg_id="B1", route="SFO->MAD",
+        dates="2027-01-15..2027-01-15", rows_seen="1", awards="0", state="ok",
+        snapshot_cell="B1.json", snapshot_name="B1.json", is_refetch=False,
+        content_hash=column, parser_version="v", trip_id="t", line_no=1,
+    )
+    return [p.kind for p in _sr.verify([row], tmp_path)]
+
+
+def test_a_one_character_content_hash_column_is_refused(tmp_path):
+    from src import response_cache as _rc
+
+    full = _rc.content_hash([{"data": []}])
+    assert _one_row(tmp_path, full[:1]) == ["content_hash_malformed"]
+    assert _one_row(tmp_path, full[:15]) == ["content_hash_malformed"]
+    assert _one_row(tmp_path, "zzzzzzzzzzzzzzzz") == ["content_hash_malformed"]
+    # The two lengths that ARE checkable still verify, and a wrong one still
+    # reports the mismatch rather than the malformation.
+    assert _one_row(tmp_path, full[:16]) == []
+    assert _one_row(tmp_path, full) == []
+    assert _one_row(tmp_path, "0" * 16) == ["manifest_hash_mismatch"]
