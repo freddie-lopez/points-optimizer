@@ -1473,6 +1473,44 @@ def evaluate_trip(
 # ---------------------------------------------------------------------------
 
 
+def _apd_cabin(result: LegResult) -> Tuple[str, str]:
+    """
+    Which cabin this leg is taxed in, and a warning when the inputs disagree.
+
+    FINDING H-2. This used to be `result.best_points.cabin`, else the first
+    candidate's, else the literal `"Y"` - the REDUCED rate. A `--new-trip`
+    fixture carries no points candidates BY DESIGN, so every one of them fell to
+    the default and a `--cabin J` LHR->SFO leg was charged GBP 102 "per the
+    reduced rate" instead of GBP 244. The builder had been writing a leg-level
+    `cabin` key since v5 Step 4 and nothing read it.
+
+    THE ORDER, AND WHY. The LEG's own cabin wins: it is what the fixture says
+    the traveller is flying, and it exists whether or not anybody has priced an
+    award. A scored candidate's cabin is used when the leg does not say. When
+    both exist and DISAGREE the leg still wins and the disagreement is REPORTED
+    rather than resolved silently - HMRC's two rates differ by more than GBP 140
+    and a silent choice between them is a GBP 140 guess.
+
+    Returns ("", note) when nothing records a cabin. Empty is UNKNOWN, and
+    `apd_for_leg` turns it into a written-down unknown rather than a rate.
+    """
+    leg_cabin = (getattr(result.leg, "cabin", "") or "").strip().upper()
+    candidate = result.best_points or (
+        result.leg.points_candidates[0] if result.leg.points_candidates else None
+    )
+    candidate_cabin = (getattr(candidate, "cabin", "") or "").strip().upper()
+
+    if leg_cabin and candidate_cabin and leg_cabin != candidate_cabin:
+        return leg_cabin, (
+            f"CABIN DISAGREEMENT on {result.leg.id}: the leg says {leg_cabin} and "
+            f"the award being scored ({getattr(candidate, 'label', 'the candidate')}) "
+            f"says {candidate_cabin}. UK APD is charged on the leg's cabin here "
+            f"({leg_cabin}); if the award is really flown in {candidate_cabin} the "
+            f"duty differs. Fix the fixture rather than trusting this line."
+        )
+    return (leg_cabin or candidate_cabin), ""
+
+
 def apply_apd(results: List[LegResult], today: Optional[date] = None):
     """
     One additive term on the offline points-side total, AFTER evaluate_leg ran.
@@ -1519,11 +1557,9 @@ def apply_apd(results: List[LegResult], today: Optional[date] = None):
 
     for result in results:
         leg = result.leg
-        cabin = (
-            result.best_points.cabin
-            if result.best_points is not None
-            else (leg.points_candidates[0].cabin if leg.points_candidates else "Y")
-        )
+        cabin, cabin_conflict = _apd_cabin(result)
+        if cabin_conflict:
+            result.warnings.append(cabin_conflict)
         # A replayed leg is as unverifiable as a live one: its cash figure came
         # from the same TotalTaxes field, captured earlier.
         flagged = leg.points_provenance in (

@@ -463,3 +463,76 @@ def test_a_missing_apd_table_leaves_every_score_untouched(rm, monkeypatch):
     legs, _ = score_trip_b(rm)
     assert legs["B4"].apd is None
     assert legs["B4"].apd_added_usd == 0.0
+
+
+# ---------------------------------------------------------------------------
+# H-2: the cabin comes from the LEG, not only from a points candidate
+# ---------------------------------------------------------------------------
+
+
+def test_apd_cabin_prefers_the_leg_over_a_candidate_and_reports_a_conflict():
+    from src.models import Leg as _Leg, LegResult as _LegResult, PointsCandidate as _PC
+    from src.optimizer import _apd_cabin
+
+    leg = _Leg(id="L1", kind="flight", description="", date=date(2027, 1, 27),
+               origin="LHR", destination="SFO", travelers=1, cabin="J")
+    result = _LegResult(leg=leg)
+    assert _apd_cabin(result) == ("J", "")
+
+    candidate = _PC(label="award", program="p", points=1, cabin="Y")
+    leg.points_candidates = [candidate]
+    result.best_points = candidate
+    cabin, note = _apd_cabin(result)
+    assert cabin == "J"
+    assert "CABIN DISAGREEMENT" in note
+
+    # No leg cabin: the scored award's cabin answers.
+    leg.cabin = ""
+    assert _apd_cabin(result) == ("Y", "")
+
+    # Nothing records a cabin at all: UNKNOWN, not "Y".
+    leg.points_candidates = []
+    result.best_points = None
+    assert _apd_cabin(result) == ("", "")
+
+
+def test_a_new_trip_shaped_leg_is_taxed_on_its_own_cabin(rates, bands):
+    """
+    The shape v5's own builder produces: a leg with a cabin and NO candidates.
+    It used to fall through to the literal "Y" and be charged GBP 102.
+    """
+    from src.models import Leg as _Leg, LegResult as _LegResult
+    from src.optimizer import _apd_cabin
+
+    for cabin, gbp, words in (("J", 244.0, "standard"), ("Y", 102.0, "reduced")):
+        leg = _Leg(id="L1", kind="flight", description="", date=date(2027, 1, 27),
+                   origin="LHR", destination="SFO", travelers=1, cabin=cabin)
+        charge = apd_for_leg(
+            leg, _apd_cabin(_LegResult(leg=leg))[0], 1, rates=rates, bands=bands
+        )
+        assert charge.total_gbp == gbp
+        assert f"per the {words} rate" in charge.render()
+
+
+def test_a_leg_with_no_cabin_anywhere_is_unknown_not_reduced(rates, bands):
+    from src.models import Leg as _Leg, LegResult as _LegResult
+    from src.optimizer import _apd_cabin
+
+    leg = _Leg(id="L1", kind="flight", description="", date=date(2027, 1, 27),
+               origin="LHR", destination="SFO", travelers=1)
+    charge = apd_for_leg(
+        leg, _apd_cabin(_LegResult(leg=leg))[0], 1, rates=rates, bands=bands
+    )
+    assert charge.is_known is False
+    assert "not one of" in charge.render()
+
+
+def test_the_loader_reads_the_leg_level_cabin_the_builder_writes(tmp_path):
+    from src import trip_builder
+    from src.trip_loader import load_trip_fixture
+
+    path = trip_builder.new_trip_from_flags(
+        "cabin_probe", ["LHR:SFO:2027-01-27:500"], [], cabin="J", directory=tmp_path
+    )
+    fixture = load_trip_fixture(path)
+    assert fixture.legs[0].cabin == "J"

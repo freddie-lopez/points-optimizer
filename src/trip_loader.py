@@ -137,6 +137,9 @@ def load_trip_fixture(path: Path) -> TripFixture:
                 unpriced_partner_programs=list(raw.get("unpriced_partner_programs", [])),
                 origin=str(raw.get("origin", "") or "").upper(),
                 destination=str(raw.get("destination", "") or "").upper(),
+                # H-2: the builder has written this key since v5 Step 4 and
+                # nothing read it. Absent stays absent - it is not "Y".
+                cabin=str(raw.get("cabin", "") or "").strip().upper(),
                 mandatory_fees=mandatory_fees,
                 nights=int(raw.get("nights", 0) or 0),
                 # Leg-level cash provenance: the most specific thing every cash

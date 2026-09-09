@@ -1549,6 +1549,15 @@ class Leg:
     # --- v1 additions ----------------------------------------------------
     origin: str = ""  # IATA, for region/surcharge classification
     destination: str = ""  # IATA
+    # FINDING H-2. THE CABIN IS A PROPERTY OF THE LEG, not only of a points
+    # candidate. `--new-trip` writes a leg-level "cabin" key and nothing read
+    # it: `Leg` had no field for it, the loader dropped it, and APD took the
+    # cabin from `best_points` or from the literal "Y". A --new-trip fixture has
+    # NO candidates by design, so every one of them was charged the reduced rate
+    # - GBP 102 instead of GBP 244 on a J-cabin UK departure, understated by
+    # GBP 142 per passenger and described confidently as "per the reduced rate".
+    # Empty means the fixture did not say, which is UNKNOWN and not "Y".
+    cabin: str = ""
     # Fees owed whether you pay cash or points. On the LEG, not on the cash
     # option: that placement is the bug fix.
     mandatory_fees: List[MandatoryFee] = field(default_factory=list)
