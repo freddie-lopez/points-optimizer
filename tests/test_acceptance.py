@@ -341,15 +341,40 @@ def test_trip_b_headline_is_a_range_not_the_bare_16_percent(fixtures_dir, ratio_
     #     6.55% -> 6.46%   and   15.66% -> 15.45%
     # The range did NOT narrow because live data confirmed anything. It shrank
     # because the trip was always $42 more expensive than the tool said.
+    #
+    # CHANGED AT v5 STEP 7, AND THIS IS THE ONE NUMBER IN v5 THAT MOVES ON
+    # PURPOSE. UK Air Passenger Duty is now wired into the offline path. B4 is
+    # LHR->SFO: a UK departure, band B (London-Washington DC 3665 miles),
+    # reduced rate, GBP 102.00 x 1 passenger = $138.11 at GBP 1.354. It is
+    # ADDED to B4's points-side cash total, because on the offline path the
+    # tool owns the whole cash figure and knows APD is missing from it, while
+    # the CAPTURED cash fare is a published fare that already contains it.
+    #
+    # B4 was the only points win in this trip, so its saving IS the trip's
+    # saving:
+    #     $202.06 -> $63.89     6.46% -> 2.04%    15.45% -> 11.03%
+    # The denominator is untouched: all_cash_usd is still $3,126.11 to the
+    # cent, because APD enters the POINTS side only. The trip did not get more
+    # expensive; the tool stopped omitting a GBP 102 government tax from the
+    # option it was recommending.
+    #
+    # This movement is not evidence of anything new about award space, and it
+    # is NOT the live/replayed figure: on a live or replayed B4 the same GBP 102
+    # is STATED and NOT ADDED, because nobody has yet checked whether
+    # Seats.aero's TotalTaxes already contains it.
     assert totals["all_cash_usd"] == pytest.approx(3126.11, abs=0.02)
-    assert totals["beat_cash_pct_low"] == pytest.approx(6.46, abs=0.02)
-    assert totals["beat_cash_pct_high"] == pytest.approx(15.45, abs=0.02)
-    assert totals["beat_cash_pct_low"] < 16 < totals["beat_cash_pct_high"] + 1
-    # The defensible figure is roughly the ~7% the architect predicted.
-    assert 5.0 < totals["beat_cash_pct_low"] < 8.0
-    # The dollar savings - the part that has nothing to do with FX - is intact.
+    assert totals["beat_cash_pct_low"] == pytest.approx(2.04, abs=0.02)
+    assert totals["beat_cash_pct_high"] == pytest.approx(11.03, abs=0.02)
     assert totals["all_cash_usd"] - totals["optimized_usd"] == pytest.approx(
-        202.0, abs=0.02
+        63.89, abs=0.02
+    )
+    # The pre-APD saving, and the APD that explains the whole difference.
+    b4 = next(r for r in results if r.leg.id == "B4")
+    assert b4.apd_added_usd == pytest.approx(138.11, abs=0.01)
+    assert (
+        totals["all_cash_usd"] - totals["optimized_usd"] + b4.apd_added_usd
+    ) == pytest.approx(202.0, abs=0.02), (
+        "the saving moved by EXACTLY the APD and by nothing else"
     )
 
 

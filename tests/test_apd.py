@@ -1,11 +1,10 @@
 """
-The UK APD table loads, validates, and is NOT wired into scoring.
+The UK APD table loads and validates, and is not conflated with surcharges.csv.
 
-That last one is a test, not a comment. `data/apd.csv` is seed data landed ahead
-of v5, and a table that quietly started being applied would move every
-UK-departure verdict in the tool - by about $138 on Trip B's LHR->SFO leg - with
-no plan and no disclosure. So the "not wired" property is pinned here, and the
-test that pins it is the thing v5 deletes on purpose.
+v5 STEP 7 WIRED IT IN and deleted the one test in this file that pinned it as
+unwired. The 16 tests here are unchanged: the loader, both rate periods, the
+2027-04-01 boundary, and the validator's refusals are the same behaviours they
+always were. What APD now DOES to a score lives in tests/test_apd_scoring.py.
 """
 from datetime import date
 
@@ -161,7 +160,7 @@ def test_a_missing_file_is_an_error_not_an_empty_table(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# NOT WIRED IN. Delete this section in v5, deliberately.
+# Still two separate quantities, even now that both are scored
 # ---------------------------------------------------------------------------
 
 
@@ -182,22 +181,15 @@ def test_apd_is_not_conflated_with_the_carrier_surcharge_table():
         assert "PASSENGER DUTY" not in rule.notes.upper() or rule.amount_point > 0
 
 
-def test_apd_does_not_yet_affect_any_score():
-    """
-    THE GUARD ON SEED DATA. `src.optimizer` must not import `src.apd` yet.
+# DELETED AT v5 STEP 7: test_apd_does_not_yet_affect_any_score.
+#
+# It asserted that `src.optimizer` does not import `src.apd`, and it existed to
+# be deleted by exactly this change. v5 Step 7 wires APD into the offline
+# scoring path (docs/plans/v5.md section 4.6), which cuts Trip B's reported
+# $202.06 saving on the LHR->SFO leg to $63.89. The double-counting question it
+# warned about - whether Seats.aero's TotalTaxes already contains APD - is NOT
+# answered, and that is why APD is added on the offline path ONLY and merely
+# FLAGGED on live and replayed legs. See tests/test_apd_scoring.py, which is
+# the replacement, and docs/research/surcharge-and-apd-data.md Step 8, which is
+# the one-row experiment that settles it.
 
-    Applying APD cuts Trip B's reported $202 saving on the LHR->SFO leg to about
-    $64. That is a change that needs a plan and a disclosure, which is v5's job.
-    When v5 does it, this test is the one to delete - on purpose, in the same
-    commit, with the plan referenced.
-    """
-    import src.optimizer as optimizer
-
-    src = open(optimizer.__file__, encoding="utf-8").read()
-    assert "src.apd" not in src, (
-        "optimizer now imports the APD table. If that is intentional, it is a "
-        "v5 change: delete this test in the same commit as the plan that "
-        "justifies it, and make sure the double-counting question against "
-        "Seats.aero's TotalTaxes has been answered first."
-    )
-    assert "from src import apd" not in src

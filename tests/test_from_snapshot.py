@@ -134,7 +134,9 @@ def test_snapshot_is_a_distinct_points_provenance_value():
 
 def test_the_exhaustive_list_gained_an_eighth_numbered_entry():
     doc = LiveLegOutcome.__doc__ or ""
-    if not doc:
+    if "EXHAUSTIVE LIST" not in doc:
+        # Under -OO the real docstring is stripped and @dataclass synthesises a
+        # signature string in its place, so `doc` is truthy but empty of prose.
         pytest.skip("docstrings stripped (-OO)")
     assert "(8)" in doc
     assert "replayed_from_snapshot" in doc

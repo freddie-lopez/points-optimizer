@@ -1461,8 +1461,159 @@ def evaluate_trip(
     results = [_score_leg(leg, full_wallet) for leg in legs]
 
     if not enforce_trip_balance:
+        return apply_apd(results, today=today)
+    return apply_apd(
+        _apply_trip_balance_ceiling(legs, results, full_wallet, _score_leg),
+        today=today,
+    )
+
+
+# ---------------------------------------------------------------------------
+# v5 Step 7: UK Air Passenger Duty. THE ONLY PLACE THIS MODULE TOUCHES IT.
+# ---------------------------------------------------------------------------
+
+
+def apply_apd(results: List[LegResult], today: Optional[date] = None):
+    """
+    One additive term on the offline points-side total, AFTER evaluate_leg ran.
+
+    OFF-LIMITS COMPLIANCE. `evaluate_leg`'s own logic, the Seats.aero parser and
+    `SurchargeTable.resolve*` are not read, not called differently, and not
+    modified by this. APD never enters the surcharge table, never becomes a
+    surcharge row, and never participates in the captured-beats-table
+    precedence: it is a GOVERNMENT DEPARTURE TAX and a carrier YQ is a different
+    quantity with a different payer. Merging them is how "United charges no YQ"
+    becomes "this leg costs nothing in cash".
+
+    THE ASYMMETRY IS THE DESIGN, not a gap:
+
+      * OFFLINE / BADGE leg - the tool owns the whole cash figure and knows APD
+        is missing from it, so it is ADDED.
+      * LIVE / SNAPSHOT leg - the cash figure came from Seats.aero's TotalTaxes
+        and nobody has checked whether that already includes APD. The amount is
+        STATED and NOT ADDED. Adding it would risk double-charging.
+
+    APD IS ADDED TO THE POINTS SIDE ONLY. A captured cash fare is a published
+    fare and already contains APD; adding it to both sides would cancel out of
+    the margin and hide the entire effect.
+
+    ONE APPROXIMATION, STATED. This runs AFTER the greedy trip-balance ordering,
+    which ranks legs by savings per point. Those savings are therefore ranked
+    pre-APD. The ordering was never proven optimal (see `evaluate_trip`), and
+    re-running the ceiling with APD folded in would mean APD changing WHICH legs
+    are recommended rather than only what they cost - a much larger change than
+    this step is scoped for.
+    """
+    from src import apd as apd_module
+    from src.models import PointsProvenance
+
+    try:
+        rates = apd_module.load_apd_table()
+        bands = apd_module.load_apd_bands()
+    except apd_module.APDTableError:
+        # A missing or malformed table must not silently score every UK
+        # departure at zero. It is loud at load time elsewhere; here the safe
+        # behaviour is to leave every leg untouched rather than to add nothing
+        # while claiming APD was considered.
         return results
-    return _apply_trip_balance_ceiling(legs, results, full_wallet, _score_leg)
+
+    for result in results:
+        leg = result.leg
+        cabin = (
+            result.best_points.cabin
+            if result.best_points is not None
+            else (leg.points_candidates[0].cabin if leg.points_candidates else "Y")
+        )
+        # A replayed leg is as unverifiable as a live one: its cash figure came
+        # from the same TotalTaxes field, captured earlier.
+        flagged = leg.points_provenance in (
+            PointsProvenance.LIVE,
+            PointsProvenance.SNAPSHOT,
+        )
+        charge = apd_module.apd_for_leg(
+            leg,
+            cabin=cabin,
+            travelers=leg.travelers,
+            on=leg.date,
+            rates=rates,
+            bands=bands,
+            inclusion_unverified=flagged,
+            today=today,
+        )
+        if charge is None:
+            # NOT a UK departure. Nothing is set - not a zero, not a field.
+            continue
+
+        result.apd = charge
+        result.warnings.append(charge.render())
+
+        if not charge.is_known:
+            result.apd_added_usd = 0.0
+            result.add_reason(
+                "APD_UNKNOWN",
+                charge.render(),
+                destination_country=charge.destination_country,
+            )
+            continue
+        if charge.inclusion_unverified:
+            result.apd_added_usd = 0.0
+            result.add_reason(
+                "APD_INCLUSION_UNVERIFIED",
+                charge.render(),
+                gbp=charge.total_gbp,
+                usd=charge.total_usd,
+            )
+            continue
+
+        amount = float(charge.total_usd)
+        result.apd_added_usd = amount
+        result.add_reason(
+            "APD_ADDED", charge.render(), gbp=charge.total_gbp, usd=amount
+        )
+
+        if not result.has_points_path:
+            # No points side to add it to. The line still prints, because the
+            # tax is still owed and a reader comparing this leg against a
+            # points option elsewhere needs to see it.
+            continue
+
+        for attr in (
+            "points_total_score_usd",
+            "points_score_low_usd",
+            "points_score_high_usd",
+            "points_floor_usd",
+        ):
+            value = getattr(result, attr)
+            if value is not None and value != float("inf"):
+                setattr(result, attr, value + amount)
+
+        # The head-to-head numbers are recomputed from the moved score rather
+        # than left stale. A leg whose points side has grown by GBP 102 and
+        # whose printed margin still says otherwise is worse than not applying
+        # APD at all.
+        if result.points_total_score_usd != float("inf"):
+            result.margin_usd = (
+                result.cash_total_score_usd - result.points_total_score_usd
+            )
+            result.margin_pct = (
+                (result.margin_usd / result.cash_total_score_usd * 100)
+                if result.cash_total_score_usd
+                else 0.0
+            )
+            if (
+                result.verdict == "points"
+                and result.points_total_score_usd > result.cash_total_score_usd
+            ):
+                result.verdict = "cash"
+                result.verdict_reason = (
+                    f"Pay cash. The points side WON before UK Air Passenger Duty "
+                    f"and LOSES after it: APD adds ${amount:,.2f} to the "
+                    f"points-side cash total (${result.points_total_score_usd:,.2f}) "
+                    f"and the captured cash fare "
+                    f"(${result.cash_total_score_usd:,.2f}) already contains its "
+                    f"own APD. {result.verdict_reason}"
+                ).strip()
+    return results
 
 
 def leg_points_demand(result: LegResult, wallet: Wallet) -> Dict[str, int]:

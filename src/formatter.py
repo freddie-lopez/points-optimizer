@@ -426,7 +426,16 @@ def print_leg_detail(results: List[LegResult], console: Console = None) -> None:
             console.print(f"  [dim]note: {note}[/dim]")
         for flag in r.leg.data_flags:
             console.print(f"  [yellow]FLAG: {flag}[/yellow]")
+        # v5 STEP 7. The APD line gets its own prefix, not "UNVERIFIED:".
+        # An ADDED government tax is not an unverified claim - it is a rate read
+        # off gov.uk and applied - and printing it under the same word as an
+        # uncorroborated Google badge would flatten the difference between "we
+        # looked this up" and "somebody typed this".
         for w in r.warnings:
+            if w.startswith("UK AIR PASSENGER DUTY on "):
+                style = "yellow" if "IT IS NOT ADDED HERE" in w or "UNKNOWN" in w else "cyan"
+                console.print(f"  [{style}]APD: {w}[/{style}]")
+                continue
             console.print(f"  [red]UNVERIFIED: {w}[/red]")
 
 

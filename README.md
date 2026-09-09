@@ -112,6 +112,44 @@ said.
 The same table is printed by `python -m src.main --help`; if the two ever
 disagree, `--help` is the one generated from the code.
 
+### UK Air Passenger Duty, and the one question that is still open
+
+APD is a **government departure tax**, charged on every passenger leaving a UK
+airport, on award tickets too, by every carrier and every program. It lives in
+`data/apd.csv` with its own loader and `SurchargeTable` never sees it: a
+carrier's YQ and a government tax are different quantities, and merging them is
+how "United charges no surcharge" becomes "this leg costs nothing in cash".
+
+As of v5 it is **applied asymmetrically, on purpose**:
+
+| leg | APD |
+|---|---|
+| offline / badge | **added** to the points-side cash total, with the GOV.UK source and the band that was chosen |
+| live / replayed | **stated and not added**, flagged "APD inclusion in TotalTaxes unverified" |
+
+The reason is that nobody has checked whether Seats.aero's `TotalTaxes` already
+includes it — there has never been a live LHR-departure row. Adding it there
+would risk double-charging; omitting it silently would understate. Stating the
+amount without applying it is the only option that is not a guess.
+
+**The consequence is real and it is confusing on purpose**: the same trip scores
+differently in the two modes. Trip B's LHR→SFO leg reports a **$63.89** saving
+offline and **$202.06** live, and the live one carries the flag explaining why.
+
+The band comes from `data/apd_bands.csv` — destination country → band, with the
+capital and the London distance that justified it. HMRC bands by distance to the
+**destination country's capital**, so London→SFO's 5,350 miles is irrelevant and
+London→Washington DC's 3,665 miles is what puts every US destination in band B.
+**15 of 63 countries are recorded as band `UNKNOWN`** because their distance
+falls within 300 miles of a band boundary and the distances here were computed
+rather than read off HMRC's published list. UNKNOWN is not the nearer band and
+it is not zero.
+
+`tests/test_apd_verification_gate.py` is the gate that closes the question. It
+skips until `docs/research/surcharge-and-apd-data.md` records an answer, and
+then fails loudly with v6's instruction — so an answer cannot land and be
+forgotten. See that document for the exact command.
+
 ### The wallet
 
 | In the wallet | Means |

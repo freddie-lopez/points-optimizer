@@ -265,7 +265,16 @@ def test_the_ba_surcharge_is_reported_as_unknown_with_a_floor(rm):
     legs, _ = _flagship(rm)
     c1 = legs["C1"]
     # 20,000 UR at 1cpp = $200 before any surcharge.
-    assert c1.points_floor_usd == pytest.approx(200.0)
+    #
+    # CHANGED AT v5 STEP 7. C1 is LHR->SFO - the SAME UK departure as Trip B's
+    # B4 - so the floor now also carries UK Air Passenger Duty: band B, reduced
+    # rate, GBP 102.00 x 1 = $138.11 at GBP 1.354. The floor is "the cheapest
+    # the points side could conceivably be", and it could not conceivably be
+    # cheaper than the government tax that is owed regardless of surcharge. The
+    # PROPERTY this test defends - a floor exists and it is not the phantom
+    # $282 saving - is unchanged; only the tax it now includes is new.
+    assert c1.apd_added_usd == pytest.approx(138.11, abs=0.01)
+    assert c1.points_floor_usd == pytest.approx(200.0 + 138.108)
     assert any(
         "surcharge is below $80.00" in x.detail
         for x in c1.reasons

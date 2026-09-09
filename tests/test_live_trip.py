@@ -566,8 +566,15 @@ def test_without_live_the_output_is_byte_identical_to_today(trip_b, rm):
     assert totals["margin_provenance"] == "badge"
     assert totals["legs_points_live"] == 0
     assert totals["legs_points_badge"] == 4
-    assert totals["beat_cash_pct_low"] == pytest.approx(6.46, abs=0.02)
-    assert totals["beat_cash_pct_high"] == pytest.approx(15.45, abs=0.02)
+    # CHANGED AT v5 STEP 7, and ONLY by the APD term. This test's subject is
+    # that a run without --live renders no live block and keeps its badge
+    # provenance - both still true above. The headline moved because B4
+    # (LHR->SFO) now carries GBP 102.00 = $138.11 of UK Air Passenger Duty on
+    # its points side, which is the one number v5 moves on purpose.
+    assert totals["beat_cash_pct_low"] == pytest.approx(2.04, abs=0.02)
+    assert totals["beat_cash_pct_high"] == pytest.approx(11.03, abs=0.02)
+    b4 = next(r for r in results if r.leg.id == "B4")
+    assert b4.apd_added_usd == pytest.approx(138.11, abs=0.01)
 
 
 # ===========================================================================

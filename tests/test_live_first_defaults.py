@@ -32,8 +32,16 @@ BASE = [
 # The badge-mode headline. THIS IS THE REGRESSION ANCHOR FOR THE WHOLE STEP: it
 # must be reachable under --offline and reachable NOWHERE ELSE without a
 # qualifier travelling on the same line.
-BADGE_LOW = "6.46%"
-BADGE_HIGH = "15.45%"
+#
+# UPDATED BY v5 STEP 7, WHICH IS THE STEP THAT OWNS THIS MOVEMENT. Step 6
+# landed with 6.46%-15.45%, verified against the v4 run. Step 7 then wired UK
+# Air Passenger Duty into the offline path, and B4 (LHR->SFO) picked up GBP
+# 102.00 = $138.11 on its points side. The all-cash denominator is UNCHANGED at
+# $3,126.11 and the points spend is UNCHANGED at 28,000, because APD enters the
+# points side only. What this file asserts is a MODE - which invocation can
+# reach the badge headline - and that is unaffected.
+BADGE_LOW = "2.04%"
+BADGE_HIGH = "11.03%"
 BADGE_CASH = "$3,126.11"
 BADGE_POINTS = "28,000"
 
@@ -87,8 +95,8 @@ def test_no_network_with_allow_badge_fallback_answers_with_the_qualifier():
 
 def test_the_badge_headline_appears_under_offline_or_the_opt_out_and_nowhere_else():
     """
-    The single cross-cutting assertion for this step: 6.46%-15.45% is reachable
-    from exactly two invocations, and a plain one is not one of them.
+    The single cross-cutting assertion for this step: the badge headline is
+    reachable from exactly two invocations, and a plain one is not one of them.
     """
     plain = run()[1]
     assert BADGE_LOW not in plain

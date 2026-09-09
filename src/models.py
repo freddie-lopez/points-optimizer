@@ -313,6 +313,16 @@ REASON_CODES = frozenset(
         # v3 fix. The leg was scored against a fare captured for a DIFFERENT
         # date than the leg's own, because the award is for that date.
         "DATE_SHIFTED_SCORING",
+        # v5 Step 7. UK Air Passenger Duty was ADDED to this leg's points-side
+        # cash total. Offline/badge legs only.
+        "APD_ADDED",
+        # v5 Step 7. The leg departs the UK and owes APD, and the amount was
+        # NOT added because the leg's cash figure came from Seats.aero's
+        # TotalTaxes and nobody has checked whether that already contains it.
+        "APD_INCLUSION_UNVERIFIED",
+        # v5 Step 7. The leg departs the UK and the amount owed is UNKNOWN -
+        # not zero, and not the nearest band.
+        "APD_UNKNOWN",
     }
 )
 
@@ -1525,6 +1535,15 @@ class LegResult:
     points_floor_usd: Optional[float] = None
     surcharge_cannot_change_verdict: bool = False
     mandatory_fees_usd: float = 0.0
+    # --- v5 Step 7: UK Air Passenger Duty ---------------------------------
+    # `apd` is None when the leg does not depart the UK. None means NOTHING,
+    # not zero: a leg that owes no UK departure tax carries no APD line at all,
+    # because "$0.00 APD" is a claim and an absence is not.
+    apd: object = None
+    # What actually entered `points_total_score_usd`. Zero both when APD is
+    # UNKNOWN and when it is merely FLAGGED on a live/replayed leg, so it can
+    # never be added twice or reported as added when it was not.
+    apd_added_usd: float = 0.0
     alternatives: List[Alternative] = field(default_factory=list)
     reasons: List[Reason] = field(default_factory=list)
     rests_on_placeholder_fx: bool = False
