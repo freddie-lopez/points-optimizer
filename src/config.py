@@ -100,12 +100,22 @@ class KeyResolutionError(ValueError):
 class KeyResolution:
     """A resolved API key, plus WHERE it came from. The key is never printed."""
 
-    __slots__ = ("key", "source", "path")
+    __slots__ = ("key", "source", "path", "permission_warning")
 
-    def __init__(self, key: str, source: str, path: Optional[Path] = None):
+    def __init__(
+        self,
+        key: str,
+        source: str,
+        path: Optional[Path] = None,
+        permission_warning: str = "",
+    ):
         self.key = key
         self.source = source
         self.path = path
+        # FINDING L-2. Empty when the file's mode is safe, when there is no file
+        # (a flag or an exported variable), or on a platform with no POSIX
+        # modes. Never None-as-unknown: see `key_file_permission_warning`.
+        self.permission_warning = permission_warning
 
     @property
     def masked(self) -> str:
@@ -114,7 +124,10 @@ class KeyResolution:
     def describe(self) -> str:
         """The banner line. THE ONLY KEY TEXT ANY OUTPUT EVER CONTAINS."""
         where = f"{self.source} {self.path}" if self.path else self.source
-        return f"Seats.aero key: {self.masked}   (source: {where})"
+        line = f"Seats.aero key: {self.masked}   (source: {where})"
+        # L-2: the warning rides WITH the source line, in the same string, for
+        # the same reason the margin's provenance rides with the margin.
+        return f"{line}\n{self.permission_warning}" if self.permission_warning else line
 
     def __repr__(self) -> str:  # never leak the key through a traceback
         return f"KeyResolution(masked={self.masked!r}, source={self.source!r})"
@@ -133,6 +146,42 @@ def mask_key(key: Optional[str]) -> str:
     if len(text) < 8:
         return "…"
     return f"{text[:4]}…{text[-3:]}"
+
+
+def key_file_permission_warning(path: Path) -> str:
+    """
+    "" if this key file is readable only by its owner, else why that matters.
+
+    FINDING L-2. `~/.config/points-optimizer/.env` is the one new place a key
+    can live and it is OUTSIDE the repo, so gitignore protects nothing there.
+    Nothing inspected its mode: a world-readable key file was read and used
+    under a banner that said only "user config".
+
+    This REPORTS; it does not refuse. The key is the user's and a mode this
+    process cannot read (a filesystem with no POSIX bits) is reported as
+    unknown rather than as safe - the same rule every other unknown in this
+    codebase follows.
+    """
+    import stat
+
+    try:
+        mode = os.stat(path).st_mode
+    except OSError:
+        return ""
+    exposed = mode & (stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH | stat.S_IWOTH)
+    if not exposed:
+        return ""
+    who = []
+    if mode & (stat.S_IRGRP | stat.S_IWGRP):
+        who.append("your group")
+    if mode & (stat.S_IROTH | stat.S_IWOTH):
+        who.append("every user on this machine")
+    return (
+        f"  [KEY FILE PERMISSIONS] {path} is mode "
+        f"{stat.S_IMODE(mode):04o}, so it is readable by {' and '.join(who)}. "
+        f"This file is outside the repository, so .gitignore protects nothing "
+        f"here. Run: chmod 600 {path}"
+    )
 
 
 def resolve_key(flag: Optional[str] = None) -> KeyResolution:
@@ -163,7 +212,9 @@ def resolve_key(flag: Optional[str] = None) -> KeyResolution:
     ):
         value = read_env_value(path, KEY_ENV_VAR)
         if value:
-            return KeyResolution(value, label, path)
+            return KeyResolution(
+                value, label, path, key_file_permission_warning(path)
+            )
 
     raise KeyResolutionError(
         "No Seats.aero API key found. Four places were checked, in this order:\n"

@@ -230,3 +230,51 @@ def test_client_with_no_key_raises_naming_all_four(isolated):
 def test_api_key_flag_is_on_the_parser():
     args = build_parser().parse_args(["--api-key", "abc"])
     assert args.api_key == "abc"
+
+
+# ---------------------------------------------------------------------------
+# L-2: the key file's permissions are checked and reported
+# ---------------------------------------------------------------------------
+
+
+def test_a_world_readable_key_file_is_reported_in_the_banner(tmp_path, monkeypatch):
+    import os as _os
+
+    from src import config as _config
+
+    path = tmp_path / "user.env"
+    path.write_text("SEATS_AERO_KEY=" + REAL_SHAPED_KEY + "\n")
+    _os.chmod(path, 0o644)
+    monkeypatch.setattr(_config, "_ENV_PATH", tmp_path / "absent.env")
+    monkeypatch.setattr(_config, "USER_CONFIG_ENV_PATH", path)
+    monkeypatch.delenv("SEATS_AERO_KEY", raising=False)
+
+    resolution = _config.resolve_key(None)
+    banner = resolution.describe()
+    assert "KEY FILE PERMISSIONS" in banner
+    assert "0644" in banner
+    assert "chmod 600" in banner
+    # The key itself is still never printed.
+    assert REAL_SHAPED_KEY not in banner
+
+    _os.chmod(path, 0o600)
+    assert "KEY FILE PERMISSIONS" not in _config.resolve_key(None).describe()
+
+
+def test_a_group_readable_key_file_names_the_group(tmp_path):
+    import os as _os
+
+    from src.config import key_file_permission_warning
+
+    path = tmp_path / "user.env"
+    path.write_text("x")
+    _os.chmod(path, 0o640)
+    warning = key_file_permission_warning(path)
+    assert "your group" in warning
+    assert "every user on this machine" not in warning
+
+
+def test_a_missing_file_produces_no_warning_and_no_crash(tmp_path):
+    from src.config import key_file_permission_warning
+
+    assert key_file_permission_warning(tmp_path / "nope.env") == ""
