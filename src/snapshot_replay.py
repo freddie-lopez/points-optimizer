@@ -106,6 +106,71 @@ class ManifestRow:
         return (self.leg_id, self.route, self.dates)
 
     @property
+    def route_pair(self) -> Tuple[str, str]:
+        """
+        (origin, destination) as the manifest recorded them, or ("", "").
+
+        FINDING H-1. This column was parsed, hashed and never compared to
+        anything. A leg id is three characters a human chose, and it was the
+        only binding between a row and the leg it answered.
+        """
+        text = (self.route or "").replace("→", "->").strip().upper()
+        for sep in ("->", "-->", ">"):
+            if sep in text:
+                origin, _, destination = text.partition(sep)
+                return origin.strip(), destination.strip()
+        return "", ""
+
+    @property
+    def date_span(self) -> Tuple[Optional[str], Optional[str]]:
+        """(start, end) ISO dates from the `dates` column, or (None, None)."""
+        text = (self.dates or "").strip()
+        if ".." in text:
+            start, _, end = text.partition("..")
+        else:
+            start = end = text
+        start, end = start.strip(), end.strip()
+        return (start or None, end or None)
+
+    def covers(self, origin: str, destination: str, on_date) -> str:
+        """
+        "" if this row answers exactly that question, else why it does not.
+
+        The date is checked against the row's SPAN rather than its start,
+        because a capture made with `--flex-days` legitimately covers a range
+        and the leg's own date has to fall inside it.
+        """
+        want = ((origin or "").strip().upper(), (destination or "").strip().upper())
+        have = self.route_pair
+        if have == ("", ""):
+            return (
+                f"the row's route column is {self.route!r}, which cannot be read "
+                f"as ORIGIN->DESTINATION, so there is nothing to check "
+                f"{want[0]}->{want[1]} against. It reads as UNKNOWN, never as "
+                f"'matches'."
+            )
+        if have != want:
+            return (
+                f"the row holds bytes captured for {have[0]}->{have[1]} and the "
+                f"leg being scored is {want[0]}->{want[1]}. A snapshot of a "
+                f"different route is not an answer about this one."
+            )
+        start, end = self.date_span
+        if not start:
+            return (
+                f"the row's dates column is {self.dates!r} and cannot be read, so "
+                f"the date these bytes answer for is UNKNOWN."
+            )
+        when = str(on_date)
+        if not (start <= when <= (end or start)):
+            return (
+                f"the row holds bytes captured for {start}..{end or start} and "
+                f"the leg being scored is on {when}. Award space moves by the "
+                f"day; a snapshot of another date is not an answer about this one."
+            )
+        return ""
+
+    @property
     def content_hash_display(self) -> str:
         return self.content_hash or UNKNOWN
 
@@ -277,6 +342,31 @@ def select_replay_set(
         if trip_id is None or r.trip_id is None or r.trip_id == trip_id
     ]
     selection = ReplaySelection(considered=considered)
+
+    # FINDING H-1b. AN ABSENT trip_id USED TO MATCH EVERY TRIP.
+    #
+    # `-` in the column parses to absent (which is right: absent and empty must
+    # not be confused), and absent was then read as "belongs to whatever trip is
+    # asking". One character in one cell therefore replayed another trip's
+    # manifest against this one. Absent is UNKNOWN, and unknown is not
+    # replayable - the same rule `content_hash` already follows. Rows written
+    # before v5 carry no trip_id AND no content_hash, so they were already
+    # refused; nothing that used to replay legitimately stops.
+    if trip_id is not None:
+        for row in [r for r in considered if r.trip_id is None]:
+            selection.problems.append(
+                Problem(
+                    kind="trip_id_unknown",
+                    row=row,
+                    detail=(
+                        f"this row names no trip, so there is nothing to check "
+                        f"against {trip_id!r}. An untagged row is UNKNOWN, never "
+                        f"'belongs to this trip' - otherwise blanking one cell "
+                        f"replays another itinerary's bytes here and prints a "
+                        f"hash beside the result."
+                    ),
+                )
+            )
 
     groups: Dict[Tuple[str, str, str], List[ManifestRow]] = {}
     for row in considered:
@@ -476,7 +566,12 @@ def verify(rows: List[ManifestRow], snapshot_dir: Path) -> List[Problem]:
 # ---------------------------------------------------------------------------
 
 
-def manifest_hash(rows: List[ManifestRow], snapshot_dir: Path) -> str:
+def manifest_hash(
+    rows: List[ManifestRow],
+    snapshot_dir: Path,
+    itinerary: Optional[List["LegQuery"]] = None,
+    trip_id: Optional[str] = None,
+) -> str:
     """
     `mh_` + 16 hex over the selected rows' CONTENT. What a margin is quoted at.
 
@@ -495,6 +590,18 @@ def manifest_hash(rows: List[ManifestRow], snapshot_dir: Path) -> str:
         recomputed = recompute_content_hash(directory / row.snapshot_name)
         lines.append(
             f"{row.leg_id}|{row.route}|{row.dates}|{row.snapshot_name}|{recomputed}"
+        )
+    # FINDING H-1. THE HASH NOW COVERS THE ITINERARY THAT WAS SCORED, not only
+    # the bytes that were read. Editing a leg's origin used to produce the same
+    # 16 hex characters for two different trips: one certificate, two answers.
+    # The route/date binding in `verify_covers_legs` already refuses that run;
+    # this makes the certificate itself say WHICH itinerary it covers, so a hash
+    # quoted in a report cannot be reproduced by a different trip.
+    if trip_id:
+        lines.append(f"trip|{trip_id}")
+    for query in itinerary or []:
+        lines.append(
+            f"leg|{query.leg_id}|{query.origin}->{query.destination}|{query.date}"
         )
     blob = "\n".join(sorted(lines))
     digest = hashlib.sha256(blob.encode("utf-8")).hexdigest()
@@ -593,6 +700,20 @@ class SnapshotTransport(SeatsClient):
                 f"failure rather than as an absence of award space."
             )
 
+        # FINDING H-1, THE SECOND HALF. `origin`, `destination` and `date_range`
+        # arrived here and were DISCARDED - the row was looked up by leg id
+        # alone. `verify_covers_legs` now refuses a mismatch before anything is
+        # scored, so this cannot fire in a normal run; it is here because the
+        # transport must not be able to answer a question it was not asked even
+        # if some future caller skips the verification. A transport failure,
+        # never an absence of award space.
+        mismatch = row.covers(origin, destination, date_range.from_date)
+        if mismatch:
+            raise SeatsAeroError(
+                f"the snapshot named for leg {leg_id!r} does not answer this "
+                f"leg's question: {mismatch}"
+            )
+
         path = self.snapshot_dir / row.snapshot_name
         envelope = json.loads(path.read_text())
         pages = envelope.get("pages") or []
@@ -646,17 +767,40 @@ class SnapshotTransport(SeatsClient):
         )
 
 
+@dataclass(frozen=True)
+class LegQuery:
+    """The question one leg asks: which leg, which route, which date."""
+
+    leg_id: str
+    origin: str
+    destination: str
+    date: Any
+
+    def describe(self) -> str:
+        return f"{self.leg_id} {self.origin}->{self.destination} on {self.date}"
+
+
 def verify_covers_legs(
-    rows: List[ManifestRow], queryable_leg_ids: List[str]
+    rows: List[ManifestRow], queryable: List[LegQuery]
 ) -> List[Problem]:
     """
-    Every queryable leg must have a row. A leg with none refuses the WHOLE run.
+    Every queryable leg must have a row THAT ANSWERS ITS OWN QUESTION.
 
     This is axis (1) - "we never asked" - on the replay path, and it is
     deliberately NOT allowed to become a NOT_QUERIED leg inside a hashed run.
     A percentage printed beside a hash must cover everything the trip contains,
     or the hash certifies a subset and looks like it certifies the whole.
+
+    FINDING H-1. It used to compare LEG IDS ONLY. `search_raw` discarded the
+    origin, destination and date it was handed and looked the row up by leg id,
+    so editing B1's origin to MRY scored MRY->MAD out of
+    `B1_SFO_MAD_2027-01-15.json`, exit 0, with the same hash the unedited
+    fixture printed. The manifest recorded the route and the dates all along;
+    nothing ever read them. A mismatch is REFUSED rather than scored: bytes
+    about another route are not a thin answer about this one, they are an
+    answer to a different question.
     """
+    queryable_leg_ids = [q.leg_id for q in queryable]
     have = {r.leg_id for r in rows}
     problems = [
         Problem(
@@ -669,6 +813,20 @@ def verify_covers_legs(
         for leg_id in queryable_leg_ids
         if leg_id not in have
     ]
+    by_leg = {r.leg_id: r for r in rows}
+    for query in queryable:
+        row = by_leg.get(query.leg_id)
+        if row is None:
+            continue
+        why = row.covers(query.origin, query.destination, query.date)
+        if why:
+            problems.append(
+                Problem(
+                    "row_does_not_match_the_leg",
+                    row,
+                    f"{why} The leg being scored is {query.describe()}.",
+                )
+            )
     extra = sorted(have - set(queryable_leg_ids))
     if extra:
         problems.append(

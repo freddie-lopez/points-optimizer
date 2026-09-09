@@ -606,8 +606,11 @@ def build_replay(args, console: Console, fixture):
         raise ReplayRefused(str(e)) from None
 
     selection = snapshot_replay.select_replay_set(rows, fixture.id)
+    # FINDING H-1. The legs' ROUTES AND DATES travel with their ids, so a row
+    # can be checked against the question it is about to answer. Passing ids
+    # alone is what let a manifest captured for SFO->MAD score MRY->MAD.
     queryable = [
-        leg.id
+        snapshot_replay.LegQuery(leg.id, leg.origin, leg.destination, leg.date)
         for leg in fixture.legs
         if leg.kind == "flight" and leg.origin and leg.destination
     ]
@@ -628,7 +631,11 @@ def build_replay(args, console: Console, fixture):
             "The manifest is NOT being updated to match the files."
         )
 
-    manifest_hash = snapshot_replay.manifest_hash(selection.selected, snapshot_dir)
+    # H-1: the certificate covers the ITINERARY as well as the bytes, so two
+    # different trips can never print the same hash.
+    manifest_hash = snapshot_replay.manifest_hash(
+        selection.selected, snapshot_dir, itinerary=queryable, trip_id=fixture.id
+    )
     transport = snapshot_replay.SnapshotTransport(
         selection.selected, snapshot_dir, manifest_hash
     )
