@@ -193,3 +193,35 @@ def test_apd_is_not_conflated_with_the_carrier_surcharge_table():
 # the replacement, and docs/research/surcharge-and-apd-data.md Step 8, which is
 # the one-row experiment that settles it.
 
+
+
+# ---------------------------------------------------------------------------
+# L-1: an unrecognised cabin is UNKNOWN, not a rate
+# ---------------------------------------------------------------------------
+
+
+def test_an_unrecognised_cabin_is_unknown_not_standard():
+    """
+    `CABIN_TO_CLASS.get(cabin, "standard")` and `cabin or "Y"` were guesses in
+    OPPOSITE directions: 'X' priced at GBP 244, '' at GBP 102. A cabin this
+    table does not know is a tax this table does not know.
+    """
+    from datetime import date as _date
+
+    from src import apd as _apd
+    from src.models import Leg as _Leg
+
+    leg = _Leg(id="X", kind="flight", description="", date=_date(2027, 1, 27),
+               origin="LHR", destination="SFO", travelers=1)
+    for cabin in ("X", "economy", "PREMIUM", "", None):
+        charge = _apd.apd_for_leg(leg, cabin=cabin, travelers=1)
+        assert charge is not None, "a UK departure still owes APD"
+        assert charge.is_known is False, f"{cabin!r} was priced anyway"
+        assert charge.total_gbp is None
+        assert "$0.00" not in charge.render()
+        assert "UNKNOWN IS NOT ZERO" in charge.render()
+        assert charge.cabin_class == "unknown"
+    # The four cabins the tables ARE keyed on still price.
+    for cabin, gbp in (("Y", 102.0), ("W", 244.0), ("J", 244.0), ("F", 244.0)):
+        charge = _apd.apd_for_leg(leg, cabin=cabin, travelers=1)
+        assert charge.total_gbp == gbp

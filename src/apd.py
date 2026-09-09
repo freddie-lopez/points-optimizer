@@ -420,9 +420,15 @@ class APDCharge:
             return 0.0
         return float(self.total_usd)
 
+    # FINDING L-1. `.get(cabin, "standard")` guessed, in a module whose own
+    # docstring says a departure this table does not cover is a departure whose
+    # tax is UNKNOWN. An unrecognised cabin now has no class at all, and
+    # `apd_for_leg` refuses to price it rather than picking a rate for it.
+    UNKNOWN_CLASS = "unknown"
+
     @property
     def cabin_class(self) -> str:
-        return CABIN_TO_CLASS.get(self.cabin.upper(), "standard")
+        return CABIN_TO_CLASS.get((self.cabin or "").upper(), self.UNKNOWN_CLASS)
 
     @property
     def shows_pitch_caveat(self) -> bool:
@@ -538,7 +544,10 @@ def apd_for_leg(
     rates = rates if rates is not None else load_apd_table()
     bands = bands if bands is not None else load_apd_bands()
     when = on or getattr(leg, "date", None) or date.today()
-    cabin = (cabin or "Y").strip().upper()
+    # FINDING L-1, THE OTHER DEFAULT. An EMPTY cabin used to become "Y", which
+    # is the REDUCED rate - the cheapest of the two - so the absence of an input
+    # made the tax smaller. Absence is not economy; it is absence.
+    cabin = (cabin or "").strip().upper()
     travelers = max(int(travelers or 1), 1)
 
     try:
@@ -561,7 +570,26 @@ def apd_for_leg(
             **base, unknown_reason=bands.unknown_reason(destination_country)
         )
 
-    cabin_class = CABIN_TO_CLASS.get(cabin, "standard")
+    cabin_class = CABIN_TO_CLASS.get(cabin)
+    if cabin_class is None:
+        # A cabin this table does not know is a tax this table cannot price.
+        # Both old defaults were guesses, in OPPOSITE directions: an unknown
+        # cabin resolved to standard (GBP 244) and an empty one to reduced
+        # (GBP 102). UNKNOWN IS NOT A RATE.
+        return APDCharge(
+            **base,
+            band=band,
+            band_row=bands.lookup(destination_country),
+            unknown_reason=(
+                f"the cabin for this leg is "
+                f"{cabin or '(none recorded)'!r}, which is not one of "
+                f"{'/'.join(sorted(CABIN_TO_CLASS))}. HMRC's reduced and standard "
+                f"rates differ by more than GBP 140 on a long-haul departure, so "
+                f"a cabin this tool cannot read is an amount it does not know - "
+                f"not the cheaper rate, and not the dearer one. Record the cabin "
+                f"on the leg."
+            ),
+        )
     rate = rates.lookup(departure_country, band, cabin_class, when)
     if rate is None:
         return APDCharge(
