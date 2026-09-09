@@ -260,12 +260,39 @@ EXIT CODES (the single authoritative list; README.md quotes this one):
         ),
     )
 
+    live.add_argument(
+        "--api-key",
+        default=None,
+        metavar="KEY",
+        help=(
+            "Seats.aero API key, highest priority of four sources (flag, "
+            f"{config.KEY_ENV_VAR} in the environment, ./.env, "
+            f"{config.USER_CONFIG_ENV_PATH}). Every run that needs a key prints "
+            "which source it used and a MASKED key; the full key is never "
+            "printed on any code path."
+        ),
+    )
+
     tune.add_argument("--passengers", type=int, default=1, help="Number of passengers")
     tune.add_argument("--max-results", type=int, default=5, help="Top N strategies")
     tune.add_argument("--human-cost", type=int, help="Human booking cost, for margin")
     tune.add_argument("--html", action="store_true", help="Export results to HTML")
 
     return parser
+
+
+def print_key_banner(console: Console, resolution=None, note: str = "") -> None:
+    """
+    One line naming the key's SOURCE and a masked key. Printed on every run
+    that resolves a key, and on `--from-snapshot` to say none was required.
+
+    `config.mask_key` is the only formatter of key material anywhere in this
+    codebase, and this is the only place that prints its output.
+    """
+    if resolution is None:
+        console.print(f"[dim]Seats.aero key: not required ({note})[/dim]")
+        return
+    console.print(f"[dim]{resolution.describe()}[/dim]")
 
 
 def parse_date_range(date_str: str) -> DateRange:
@@ -381,7 +408,8 @@ def build_live(args, console: Console):
         cache=cache,
         surcharges=default_table(),
     )
-    client = SeatsClient()
+    client = SeatsClient(getattr(args, "api_key", None))
+    print_key_banner(console, client.key_resolution)
     return client, opts, cache
 
 
@@ -519,10 +547,11 @@ def run_search(args, console: Console) -> int:
     )
 
     try:
-        seats_client = SeatsClient()
+        seats_client = SeatsClient(getattr(args, "api_key", None))
     except ValueError as e:
         console.print(f"[red]Error: {e}[/red]")
         return 1
+    print_key_banner(console, seats_client.key_resolution)
 
     ratios = load_ratio_manager()
 

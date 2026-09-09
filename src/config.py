@@ -19,8 +19,56 @@ from typing import Dict, Optional
 
 _ENV_PATH = Path(__file__).parent.parent / ".env"
 
+# v5 STEP 1. A SECOND PLACE A KEY MAY LIVE, outside the repo.
+#
+# The repo `.env` is the only place v4 looked, which means the key had to be
+# copied into every clone. This path is the user's own, is NOT covered by this
+# repo's .gitignore (risk 9.5), and NOTHING in this codebase ever writes to it.
+USER_CONFIG_ENV_PATH = Path.home() / ".config" / "points-optimizer" / ".env"
 
-def load_env(path: Path = _ENV_PATH) -> None:
+KEY_ENV_VAR = "SEATS_AERO_KEY"
+
+# The four source labels, in resolution order. Printed verbatim in the banner
+# and in the not-found error, so a reader never has to guess what "env" means.
+KEY_SOURCE_FLAG = "flag --api-key"
+KEY_SOURCE_ENV = "environment"
+KEY_SOURCE_REPO_ENV = "repo .env"
+KEY_SOURCE_USER_CONFIG = "user config"
+KEY_SOURCE_ORDER = (
+    KEY_SOURCE_FLAG,
+    KEY_SOURCE_ENV,
+    KEY_SOURCE_REPO_ENV,
+    KEY_SOURCE_USER_CONFIG,
+)
+
+# What `load_env` injected, and from where: {var: (source_label, value, path)}.
+#
+# WHY THIS EXISTS. `load_env()` runs at import and copies the repo `.env` into
+# `os.environ`, so by the time anything asks "where did this key come from?" the
+# two top sources are indistinguishable - a key that came out of the repo file
+# would be reported as "environment", which is a false provenance line on every
+# live run. Recording the injection is what keeps the banner honest.
+_ENV_INJECTED: Dict[str, tuple] = {}
+
+
+def read_env_value(path: Path, var: str) -> Optional[str]:
+    """One variable's value from a KEY=VALUE file, or None. Never raises."""
+    try:
+        text = path.read_text()
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key.strip() == var:
+            value = value.strip().strip("'\"")
+            return value or None
+    return None
+
+
+def load_env(path: Path = _ENV_PATH, source: str = KEY_SOURCE_REPO_ENV) -> None:
     """Load KEY=VALUE pairs from .env into os.environ without overriding it."""
     try:
         text = path.read_text()
@@ -35,9 +83,97 @@ def load_env(path: Path = _ENV_PATH) -> None:
         value = value.strip().strip("'\"")
         if key and key not in os.environ:
             os.environ[key] = value
+            _ENV_INJECTED[key] = (source, value, path)
 
 
 load_env()
+# The user-config path is loaded AFTER the repo file, so the repo file wins -
+# `load_env` never overrides a variable that is already set. That ordering IS
+# the priority rule; it is not a separate implementation of it.
+load_env(USER_CONFIG_ENV_PATH, KEY_SOURCE_USER_CONFIG)
+
+
+class KeyResolutionError(ValueError):
+    """No Seats.aero key in any of the four places. Names all four."""
+
+
+class KeyResolution:
+    """A resolved API key, plus WHERE it came from. The key is never printed."""
+
+    __slots__ = ("key", "source", "path")
+
+    def __init__(self, key: str, source: str, path: Optional[Path] = None):
+        self.key = key
+        self.source = source
+        self.path = path
+
+    @property
+    def masked(self) -> str:
+        return mask_key(self.key)
+
+    def describe(self) -> str:
+        """The banner line. THE ONLY KEY TEXT ANY OUTPUT EVER CONTAINS."""
+        where = f"{self.source} {self.path}" if self.path else self.source
+        return f"Seats.aero key: {self.masked}   (source: {where})"
+
+    def __repr__(self) -> str:  # never leak the key through a traceback
+        return f"KeyResolution(masked={self.masked!r}, source={self.source!r})"
+
+
+def mask_key(key: Optional[str]) -> str:
+    """
+    THE ONLY FUNCTION IN THIS CODEBASE THAT EVER FORMATS AN API KEY.
+
+    First four characters, an ellipsis, the last three: `pro_...jwV`. A key too
+    short to mask that way is rendered as the ellipsis ALONE - masking a
+    six-character secret as `abcd...def` would print all of it. The safe
+    direction on a short key is to show nothing.
+    """
+    text = str(key or "")
+    if len(text) < 8:
+        return "…"
+    return f"{text[:4]}…{text[-3:]}"
+
+
+def resolve_key(flag: Optional[str] = None) -> KeyResolution:
+    """
+    Resolve the Seats.aero key from the four sources, in priority order.
+
+    FIRST HIT WINS AND LATER SOURCES ARE NOT CONSULTED. That is not an
+    optimisation: a run that read a lower-priority source after finding a key
+    would have two candidate keys in memory and only one of them in its banner.
+    """
+    if flag and str(flag).strip():
+        return KeyResolution(str(flag).strip(), KEY_SOURCE_FLAG, None)
+
+    env_val = os.environ.get(KEY_ENV_VAR)
+    if env_val:
+        injected = _ENV_INJECTED.get(KEY_ENV_VAR)
+        if injected is not None and injected[1] == env_val:
+            return KeyResolution(env_val, injected[0], injected[2])
+        return KeyResolution(env_val, KEY_SOURCE_ENV, None)
+
+    # Not in the environment at all. The files are read directly here rather
+    # than relying on the import-time load: a key file that appeared since
+    # import is still a key, and reporting "not found" over a file that exists
+    # would be a false answer about the world.
+    for label, path in (
+        (KEY_SOURCE_REPO_ENV, _ENV_PATH),
+        (KEY_SOURCE_USER_CONFIG, USER_CONFIG_ENV_PATH),
+    ):
+        value = read_env_value(path, KEY_ENV_VAR)
+        if value:
+            return KeyResolution(value, label, path)
+
+    raise KeyResolutionError(
+        "No Seats.aero API key found. Four places were checked, in this order:\n"
+        f"  1. {KEY_SOURCE_FLAG}  (pass --api-key <key>)\n"
+        f"  2. {KEY_SOURCE_ENV}  (export {KEY_ENV_VAR}=<key>)\n"
+        f"  3. {KEY_SOURCE_REPO_ENV}  ({_ENV_PATH})\n"
+        f"  4. {KEY_SOURCE_USER_CONFIG}  ({USER_CONFIG_ENV_PATH})\n"
+        f"Write '{KEY_ENV_VAR}=<key>' into one of the two files, or pass the "
+        f"flag. Nothing is assumed and no request is attempted without one."
+    )
 
 # ---------------------------------------------------------------------------
 # Points valuation

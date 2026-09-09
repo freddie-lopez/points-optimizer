@@ -679,9 +679,20 @@ class SeatsClient:
     _calls_date: Optional[date] = None
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("SEATS_AERO_KEY")
-        if not self.api_key:
-            raise ValueError("SEATS_AERO_KEY not found in .env or parameter")
+        # v5 STEP 1. The key comes from `config.resolve_key`, not from
+        # `os.getenv` here. Two sources of truth for one secret is how a banner
+        # ends up naming a place the key did not come from - and the banner is
+        # the only thing that makes key provenance auditable at all.
+        from src import config as _config
+
+        try:
+            self.key_resolution = _config.resolve_key(api_key)
+        except _config.KeyResolutionError as e:
+            # Kept as ValueError: every existing caller (and `run_search`)
+            # catches ValueError and reports it. The MESSAGE is the new part -
+            # it names all four locations in priority order.
+            raise ValueError(str(e)) from None
+        self.api_key = self.key_resolution.key
         # Records why the last search failed, so callers can tell "no award
         # availability" apart from "we never reached the API". Conflating those
         # two is how a tool ends up silently reporting an empty result as fact -
