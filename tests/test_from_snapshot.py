@@ -595,3 +595,119 @@ def test_query_leg_gets_a_different_object_not_a_new_branch():
     assert "snapshot_replay" not in body
     assert "if replayed:" not in body, "way (8) must not add a branch here"
     assert 'getattr(client, "last_replayed_from_snapshot", False)' in body
+
+
+# ---------------------------------------------------------------------------
+# THE LOOP: a live run WRITES a manifest, and a replay of it reproduces the run
+# ---------------------------------------------------------------------------
+
+
+def _mock_response(payload):
+    from unittest.mock import Mock
+
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = payload
+    response.text = json.dumps(payload)
+    response.raise_for_status = lambda: None
+    return response
+
+
+def test_a_live_run_writes_a_manifest_that_replays_to_the_same_per_leg_table(
+    tmp_path, capsys, monkeypatch
+):
+    """
+    THE PROPERTY THE WHOLE FEATURE IS FOR, end to end, against a manifest this
+    tool WROTE rather than one the test hand-built.
+
+    A hand-built corpus proves the parser and the hash. It does not prove that
+    the columns `put()` writes are the columns `parse_manifest` reads, or that
+    the leg/route/dates cells the manifest records are the ones
+    `select_replay_set` groups on. Those are exactly the joins that a
+    hand-written fixture cannot catch, and this project has already learned once
+    what happens when a format is only ever exercised by the code that wrote it.
+    """
+    from unittest.mock import patch
+
+    from src import config
+    from src.live_trip import LiveOptions, apply_live
+    from src.response_cache import ResponseCache
+    from src.seats_client import SeatsClient
+    from src.trip_loader import load_trip_fixture
+
+    monkeypatch.setenv("SEATS_AERO_KEY", "test_key_not_a_real_one")
+    SeatsClient.CACHE.clear()
+    SeatsClient.CACHE_META.clear()
+    SeatsClient.reset_call_budget()
+
+    snapshot_dir = tmp_path / "live_trip_b"
+    cache = ResponseCache(
+        cache_dir=tmp_path / "cache", snapshot_dir=snapshot_dir, ttl_seconds=0
+    )
+
+    fixture = load_trip_fixture(TRIPS / "trip_b_europe.json")
+    payloads = {
+        (o, d): _row_for(o, d, on)
+        for _leg, o, d, on in TRIP_B_LEGS
+    }
+
+    def _fake_get(url, **kwargs):
+        params = kwargs.get("params") or {}
+        key = (params.get("origin_airport"), params.get("destination_airport"))
+        return _mock_response(payloads[key])
+
+    with patch("src.seats_client.requests.get", side_effect=_fake_get):
+        client = SeatsClient()
+        opts = LiveOptions(
+            live=True, cache=cache, trip_id=fixture.id, allow_badge_fallback=False
+        )
+        _, outcomes = apply_live(fixture, client, opts)
+
+    live_states = {o.leg_id: o.state for o in outcomes if o.leg_id.startswith("B")}
+    live_awards = {
+        leg.id: [(c.program, c.points, c.cabin) for c in leg.points_candidates]
+        for leg in fixture.legs
+        if leg.kind == "flight"
+    }
+    assert any(live_awards.values()), "the live run must have found something"
+
+    manifest = cache.manifest_path
+    assert manifest.exists()
+
+    # Now replay THAT manifest, through the CLI, with the network unreachable.
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path / "cache")
+    code, out = run_cli(REPLAY_BASE + ["--from-snapshot", str(manifest)], capsys)
+    assert code == 0, out
+
+    # Same states, same awards, from bytes alone.
+    replayed = load_trip_fixture(TRIPS / "trip_b_europe.json")
+    rows = snapshot_replay.parse_manifest(manifest)
+    selection = snapshot_replay.select_replay_set(rows, replayed.id)
+    assert snapshot_replay.verify(selection.selected, snapshot_dir) == []
+    transport = snapshot_replay.SnapshotTransport(
+        selection.selected,
+        snapshot_dir,
+        snapshot_replay.manifest_hash(selection.selected, snapshot_dir),
+    )
+    _, replay_outcomes = apply_live(
+        replayed,
+        transport,
+        LiveOptions(live=True, cache=None, trip_id=replayed.id,
+                    allow_badge_fallback=False),
+    )
+
+    assert {
+        o.leg_id: o.state for o in replay_outcomes if o.leg_id.startswith("B")
+    } == live_states
+    assert {
+        leg.id: [(c.program, c.points, c.cabin) for c in leg.points_candidates]
+        for leg in replayed.legs
+        if leg.kind == "flight"
+    } == live_awards
+
+    # ...and the provenance is the ONE thing that differs.
+    for outcome in replay_outcomes:
+        if outcome.state is LiveQueryState.OK:
+            assert outcome.provenance is PointsProvenance.SNAPSHOT
+            assert outcome.replayed_from_snapshot
+            assert not outcome.served_from_cache
