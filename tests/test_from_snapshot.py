@@ -711,3 +711,44 @@ def test_a_live_run_writes_a_manifest_that_replays_to_the_same_per_leg_table(
             assert outcome.provenance is PointsProvenance.SNAPSHOT
             assert outcome.replayed_from_snapshot
             assert not outcome.served_from_cache
+
+
+# ---------------------------------------------------------------------------
+# M-1: a snapshot with no pages is not an empty result
+# ---------------------------------------------------------------------------
+
+
+def test_a_zero_page_snapshot_is_refused_not_read_as_no_award_space(tmp_path):
+    import json as _json
+
+    from src import response_cache as _rc, snapshot_replay as _sr
+
+    pages = []
+    (tmp_path / "B1.json").write_text(
+        _json.dumps({"_meta": {"content_hash": _rc.content_hash(pages)},
+                     "pages": pages})
+    )
+    row = _sr.ManifestRow(
+        fetched_at=None, fetched_at_text="", leg_id="B1", route="SFO->MAD",
+        dates="2027-01-15..2027-01-15", rows_seen="0", awards="0", state="ok",
+        snapshot_cell="B1.json", snapshot_name="B1.json", is_refetch=False,
+        content_hash=_rc.content_hash(pages)[:16], parser_version="v",
+        trip_id="t", line_no=1,
+    )
+    problems = _sr.verify([row], tmp_path)
+    assert "snapshot_empty" in [p.kind for p in problems]
+    assert "NOT being read as 'no award space'" in problems[0].detail
+
+
+def test_a_zero_page_cache_entry_is_a_miss_not_an_empty_answer(tmp_path):
+    from src.response_cache import ResponseCache as _RC
+
+    cache = _RC(cache_dir=tmp_path / "c", snapshot_dir=tmp_path / "s",
+                ttl_seconds=99999)
+    written = cache.put(
+        "k", {"origin_airport": "SFO", "destination_airport": "MAD",
+              "start_date": "2027-01-15", "end_date": "2027-01-15"}, []
+    )
+    assert cache.get("k") is None
+    assert any("ZERO response pages" in w for w in cache.warnings)
+    assert written.path.exists(), "evidence is never deleted"

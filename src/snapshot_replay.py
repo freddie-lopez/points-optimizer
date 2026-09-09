@@ -502,6 +502,34 @@ def verify(rows: List[ManifestRow], snapshot_dir: Path) -> List[Problem]:
             )
             continue
 
+        # FINDING M-1. A SNAPSHOT WITH NO PAGES IS NOT AN EMPTY RESULT.
+        #
+        # `verify` checked existence, loadability, both hashes and the archived
+        # state, and never asked whether there was a response in the file. An
+        # empty list hashes cleanly, so four zero-page snapshots passed every
+        # check and every LEG then asserted "Seats.aero ANSWERED ... and
+        # returned NO award space ... That is a FINDING" - derived from a file
+        # containing no response at all. A live fetch never writes one: `put` is
+        # skipped on a budget failure and an HTTP failure archives nothing, so a
+        # zero-page envelope means truncation or corruption, which is exactly the
+        # state that must not become a finding.
+        try:
+            pages = (json.loads(path.read_text()).get("pages") or [])
+        except (OSError, ValueError):
+            pages = []
+        if not pages:
+            problems.append(
+                Problem(
+                    "snapshot_empty",
+                    row,
+                    f"{path.name} contains ZERO response pages. That is not an "
+                    f"empty result set - a fetch that answered writes at least "
+                    f"one page, and a budget or HTTP failure writes no file at "
+                    f"all - so this file records no observation. It is NOT being "
+                    f"read as 'no award space'.",
+                )
+            )
+
         try:
             claimed = (json.loads(path.read_text()).get("_meta") or {}).get(
                 "content_hash"

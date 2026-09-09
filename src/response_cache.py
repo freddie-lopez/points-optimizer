@@ -359,6 +359,18 @@ class ResponseCache:
             )
             return None
 
+        # FINDING M-1, THE SAME SHAPE IN THE CACHE. A zero-page envelope is not
+        # an empty answer; nothing that answered writes one. Treated as a MISS
+        # WITH A WARNING, exactly like a corrupt entry, and the file is kept.
+        if not pages:
+            self.warnings.append(
+                f"Cache file {path.name} contains ZERO response pages. A fetch "
+                f"that answered writes at least one page, so this entry records "
+                f"no observation. Treated as a MISS and re-fetched. It is NOT "
+                f"being read as an empty result. The file is left in place."
+            )
+            return None
+
         fetched_at = _parse_iso(str(meta.get("fetched_at") or ""))
         age = None
         if fetched_at is not None:
