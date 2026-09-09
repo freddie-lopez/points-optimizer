@@ -1511,6 +1511,58 @@ def _apd_cabin(result: LegResult) -> Tuple[str, str]:
     return (leg_cabin or candidate_cabin), ""
 
 
+def _apd_inclusion_unverified(result: LegResult) -> Tuple[bool, str]:
+    """
+    May this leg's points-side cash ALREADY contain APD? (flag, what it is).
+
+    THE RULE, STATED ONCE. APD is ADDED only when this tool MODELLED the whole
+    points-side cash figure itself. The moment any part of that figure was
+    CAPTURED from somebody else's page, we do not know what is inside it, and
+    adding a tax that may already be in there is a double charge.
+
+    FINDING H-3. The only test used to be `points_provenance in (LIVE,
+    SNAPSHOT)`, and `surcharge_captured` was never read - so a candidate
+    carrying a captured "taxes, fees and carrier charges" figure for a UK
+    departure (which necessarily contains APD, for exactly the reason
+    TotalTaxes might) was charged it a second time, on the offline path the plan
+    called safe. The asymmetry rests on "the tool owns the whole cash figure and
+    knows APD is missing from it", which is true of a MODELLED surcharge and
+    false of a CAPTURED one.
+
+    Where else this shape appears: a captured MANDATORY FEE payable on the
+    points side is the same thing wearing a different field name, so it is
+    covered here too rather than waiting to be found separately.
+    """
+    from src.models import PointsProvenance
+
+    leg = result.leg
+    if leg.points_provenance in (PointsProvenance.LIVE, PointsProvenance.SNAPSHOT):
+        return True, (
+            "this leg's points-side cash came from Seats.aero's TotalTaxes, "
+            "captured on this run or replayed from a snapshot"
+        )
+    candidate = result.best_points
+    if candidate is not None and getattr(candidate, "surcharge_captured", False):
+        return True, (
+            f"this leg's points-side cash includes a CAPTURED surcharge of "
+            f"{getattr(candidate, 'surcharge_currency', 'USD')} "
+            f"{float(getattr(candidate, 'cash_surcharge', 0.0)):,.2f} taken from a "
+            f"booking page ({candidate.label!r}), not modelled by this tool"
+        )
+    captured_fees = [
+        fee
+        for fee in leg.mandatory_fees
+        if fee.payable_on_points and "captur" in str(fee.source or "").lower()
+    ]
+    if captured_fees:
+        return True, (
+            f"this leg's points-side cash includes CAPTURED mandatory fee(s) "
+            f"({', '.join(f.label for f in captured_fees)}) taken from a booking "
+            f"page, not modelled by this tool"
+        )
+    return False, ""
+
+
 def apply_apd(results: List[LegResult], today: Optional[date] = None):
     """
     One additive term on the offline points-side total, AFTER evaluate_leg ran.
@@ -1560,12 +1612,7 @@ def apply_apd(results: List[LegResult], today: Optional[date] = None):
         cabin, cabin_conflict = _apd_cabin(result)
         if cabin_conflict:
             result.warnings.append(cabin_conflict)
-        # A replayed leg is as unverifiable as a live one: its cash figure came
-        # from the same TotalTaxes field, captured earlier.
-        flagged = leg.points_provenance in (
-            PointsProvenance.LIVE,
-            PointsProvenance.SNAPSHOT,
-        )
+        flagged, inclusion_source = _apd_inclusion_unverified(result)
         charge = apd_module.apd_for_leg(
             leg,
             cabin=cabin,
@@ -1574,6 +1621,7 @@ def apply_apd(results: List[LegResult], today: Optional[date] = None):
             rates=rates,
             bands=bands,
             inclusion_unverified=flagged,
+            inclusion_source=inclusion_source,
             today=today,
         )
         if charge is None:

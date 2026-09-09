@@ -536,3 +536,73 @@ def test_the_loader_reads_the_leg_level_cabin_the_builder_writes(tmp_path):
     )
     fixture = load_trip_fixture(path)
     assert fixture.legs[0].cabin == "J"
+
+
+# ---------------------------------------------------------------------------
+# H-3: APD is never ADDED on top of a CAPTURED figure
+# ---------------------------------------------------------------------------
+
+
+def test_a_captured_surcharge_is_flagged_not_double_charged():
+    """
+    $200 (20,000 pts) + $330 captured (which contains the GBP 102 APD line) +
+    $138.11 APD again = $668.11. The double charge the whole live/offline
+    asymmetry exists to prevent, on the path the plan called safe.
+    """
+    from src.models import Leg as _Leg, LegResult as _LegResult, PointsCandidate as _PC
+    from src.optimizer import _apd_inclusion_unverified
+
+    leg = _Leg(id="L1", kind="flight", description="", date=date(2027, 1, 27),
+               origin="LHR", destination="SFO", travelers=1)
+    candidate = _PC(label="BA award, taxes CAPTURED", program="p", points=20000,
+                    cash_surcharge=330.0, surcharge_captured=True, cabin="Y")
+    leg.points_candidates = [candidate]
+    result = _LegResult(leg=leg, best_points=candidate)
+
+    flagged, why = _apd_inclusion_unverified(result)
+    assert flagged is True
+    assert "CAPTURED surcharge" in why
+
+
+def test_a_modelled_surcharge_is_still_added():
+    from src.models import Leg as _Leg, LegResult as _LegResult, PointsCandidate as _PC
+    from src.optimizer import _apd_inclusion_unverified
+
+    leg = _Leg(id="L1", kind="flight", description="", date=date(2027, 1, 27),
+               origin="LHR", destination="SFO", travelers=1)
+    candidate = _PC(label="badge", program="p", points=20000, cabin="Y")
+    leg.points_candidates = [candidate]
+    assert _apd_inclusion_unverified(_LegResult(leg=leg, best_points=candidate)) == (
+        False,
+        "",
+    )
+
+
+def test_a_captured_mandatory_fee_on_the_points_side_is_the_same_shape():
+    from src.models import (
+        Leg as _Leg, LegResult as _LegResult, MandatoryFee as _Fee,
+    )
+    from src.optimizer import _apd_inclusion_unverified
+
+    leg = _Leg(id="L1", kind="flight", description="", date=date(2027, 1, 27),
+               origin="LHR", destination="SFO", travelers=1)
+    leg.mandatory_fees = [
+        _Fee(label="taxes, fees and carrier charges", amount=330.0,
+             payable_on_points=True, source="captured from BA.com")
+    ]
+    flagged, why = _apd_inclusion_unverified(_LegResult(leg=leg))
+    assert flagged is True
+    assert "CAPTURED mandatory fee" in why
+
+
+def test_the_flagged_render_names_the_captured_figure(rates, bands):
+    charge = apd_for_leg(
+        flight("LHR", "SFO"), "Y", 1, rates=rates, bands=bands,
+        inclusion_unverified=True,
+        inclusion_source="this leg's points-side cash includes a CAPTURED surcharge",
+    )
+    body = charge.render()
+    assert "IT IS NOT ADDED HERE" in body
+    assert "NOBODY HAS CHECKED" in body
+    assert "CAPTURED surcharge" in body
+    assert charge.applied_usd == 0.0

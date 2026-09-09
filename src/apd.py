@@ -405,9 +405,14 @@ class APDCharge:
     total_usd: Optional[float] = None
     fx_marked: str = ""
     unknown_reason: str = ""
-    # True on a LIVE or REPLAYED leg: the amount is STATED and NOT ADDED,
-    # because nobody has checked whether Seats.aero's TotalTaxes contains it.
+    # True whenever any part of this leg's points-side cash was CAPTURED rather
+    # than modelled here: a live/replayed TotalTaxes, a captured surcharge
+    # (finding H-3), a captured mandatory fee. The amount is STATED and NOT
+    # ADDED, because nobody has checked whether that figure already contains it.
     inclusion_unverified: bool = False
+    # WHICH captured figure might already contain it. Named in the render, so
+    # the reader knows which page to go and check.
+    inclusion_source: str = ""
 
     @property
     def is_known(self) -> bool:
@@ -464,16 +469,18 @@ class APDCharge:
         source = f" Source: {self.rate.source}." if self.rate is not None else ""
         caveat = f" {PITCH_CAVEAT}" if self.shows_pitch_caveat else ""
         if self.inclusion_unverified:
+            what = self.inclusion_source or (
+                "this leg's cash figure came from Seats.aero's TotalTaxes"
+            )
             return (
                 f"{head} It owes {arithmetic} per the {self.cabin_class} rate."
-                f"{band_note} IT IS NOT ADDED HERE: this leg's cash figure came "
-                f"from Seats.aero's TotalTaxes and NOBODY HAS CHECKED whether "
-                f"that field already includes APD. Adding it would risk "
-                f"double-charging; omitting it risks understating. The figure is "
-                f"stated so you can check it against a booking page - open the "
-                f"same route, date and cabin on a real award booking page and "
-                f"compare its taxes breakdown against the TotalTaxes above."
-                f"{source}{caveat}{self.fx_marked}"
+                f"{band_note} IT IS NOT ADDED HERE: {what}, and NOBODY HAS "
+                f"CHECKED whether that figure already includes APD. Adding it "
+                f"would risk double-charging; omitting it risks understating. "
+                f"The figure is stated so you can check it against a booking "
+                f"page - open the same route, date and cabin on a real award "
+                f"booking page and compare its taxes breakdown against the "
+                f"figure above.{source}{caveat}{self.fx_marked}"
             )
         return (
             f"{head} ADDED to the points-side cash total: {arithmetic} per the "
@@ -512,6 +519,7 @@ def apd_for_leg(
     rates: Optional[APDTable] = None,
     bands: Optional[APDBandTable] = None,
     inclusion_unverified: bool = False,
+    inclusion_source: str = "",
     today: Optional[date] = None,
 ) -> Optional[APDCharge]:
     """
@@ -562,6 +570,7 @@ def apd_for_leg(
         cabin=cabin,
         travelers=travelers,
         inclusion_unverified=inclusion_unverified,
+        inclusion_source=inclusion_source,
     )
 
     band = bands.band_for_destination(destination_country)
