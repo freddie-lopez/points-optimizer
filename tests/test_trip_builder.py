@@ -372,3 +372,172 @@ def test_cli_refuses_an_unknown_code_with_exit_1_and_writes_nothing(
     assert code == 1
     assert "XXX" in output
     assert list(tmp_path.iterdir()) == []
+
+
+# ===========================================================================
+# v5 Step 5: interactive mode, and chaining into --live
+# ===========================================================================
+
+
+class Script:
+    """A scripted stdin. Raises rather than blocking if the script runs out."""
+
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.asked = []
+
+    def __call__(self, question):
+        self.asked.append(question)
+        if not self.answers:
+            raise AssertionError(f"the session asked more than scripted: {question!r}")
+        return self.answers.pop(0)
+
+
+SESSION = [
+    "probe",                    # name
+    "1",                        # travelers
+    "Y",                        # cabin
+    f"SFO:MAD:{FUTURE}:395",    # leg 1
+    "MAD:AMS:2027-01-19:120",   # leg 2
+    "",                         # no more legs
+    f"Novotel Madrid:{FUTURE}:4:747.81",
+    "",                         # no more hotels
+]
+
+
+def _interactive(out, answers, force=False):
+    script = Script(answers)
+    name, flights, hotels, travelers, cabin = trip_builder.interactive_session(
+        read=script, write=lambda _l: None, today=TODAY
+    )
+    fixture = trip_builder.build_fixture(
+        name, flights, hotels, travelers, cabin, today=TODAY
+    )
+    return trip_builder.write_fixture(fixture, out, force=force), script
+
+
+def test_a_scripted_session_produces_the_flags_file_byte_for_byte(tmp_path):
+    """
+    The two paths call ONE set of validators and ONE build_fixture, so their
+    outputs are the same bytes. Asserted by comparing the files.
+    """
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+
+    from_flags = build(
+        a,
+        legs=[f"SFO:MAD:{FUTURE}:395", "MAD:AMS:2027-01-19:120"],
+        hotels=[f"Novotel Madrid:{FUTURE}:4:747.81"],
+    )
+    from_prompts, _ = _interactive(b, SESSION)
+
+    assert from_prompts.read_text() == from_flags.read_text()
+
+
+def test_a_bad_answer_re_prompts_rather_than_aborting(tmp_path):
+    out = tmp_path / "trips"
+    out.mkdir()
+    answers = ["probe", "0", "1", "Y", f"SFO:MAD:{FUTURE}:395", "", ""]
+    path, script = _interactive(out, answers)
+    assert path.exists()
+    assert script.answers == [], "every scripted answer should have been consumed"
+
+
+def test_a_bad_leg_re_prompts_and_keeps_the_earlier_legs(tmp_path):
+    out = tmp_path / "trips"
+    out.mkdir()
+    answers = [
+        "probe", "1", "Y",
+        f"SFO:MAD:{FUTURE}:395",
+        "XXX:MAD:2027-01-19:120",     # refused
+        "MAD:AMS:2027-01-19:120",     # accepted on the retry
+        "", "",
+    ]
+    path, _ = _interactive(out, answers)
+    fixture = load_trip_fixture(path)
+    assert [leg.origin for leg in fixture.legs] == ["SFO", "MAD"], (
+        "a typo in leg two must not throw away leg one"
+    )
+
+
+def test_three_bad_answers_in_a_row_abort_rather_than_looping(tmp_path):
+    out = tmp_path / "trips"
+    out.mkdir()
+    with pytest.raises(TripBuilderError) as excinfo:
+        _interactive(out, ["probe", "0", "-1", "abc", "Y"])
+    assert "invalid answers in a row" in str(excinfo.value)
+    assert list(out.iterdir()) == [], "nothing is written on an abort"
+
+
+def test_the_prompt_seam_never_loops_forever():
+    """A prompt that cannot be satisfied and will not stop is worse than one
+    that quits and says why."""
+    calls = []
+
+    def always_bad(_q):
+        calls.append(1)
+        return "not a cabin"
+
+    with pytest.raises(TripBuilderError):
+        trip_builder._prompt(
+            "Cabin", trip_builder.validate_cabin, always_bad, lambda _l: None
+        )
+    assert len(calls) == trip_builder.MAX_PROMPT_ATTEMPTS
+
+
+def test_blank_ends_a_section_and_is_never_validated_into_a_leg(tmp_path):
+    out = tmp_path / "trips"
+    out.mkdir()
+    path, _ = _interactive(out, ["probe", "1", "Y", "", f"Hotel A:{FUTURE}:2:200", ""])
+    fixture = load_trip_fixture(path)
+    assert [leg.kind for leg in fixture.legs] == ["hotel"]
+
+
+def test_new_trip_with_from_snapshot_is_refused(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(trip_builder, "FIXTURE_DIR", tmp_path)
+    manifest = tmp_path / "MANIFEST.md"
+    manifest.write_text("| a | b | c | d | e | f | g | h |\n")
+    code, output = run_cli(
+        [
+            "--new-trip", "probe",
+            "--leg", f"SFO:MAD:{FUTURE}:395",
+            "--from-snapshot", str(manifest),
+        ],
+        capsys,
+    )
+    assert code == 1
+    assert "no snapshots" in output
+    assert list(tmp_path.glob("*.json")) == []
+
+
+def test_new_trip_then_live_writes_then_scores_through_the_ordinary_path(
+    tmp_path, capsys, monkeypatch
+):
+    """
+    The scoring half is the ORDINARY live path with no special-casing: the
+    fixture that was just written is handed to run_fixture by filename.
+    Asserted by the live banner being present, and by the run failing the way
+    any live run with no network fails rather than in some new way.
+    """
+    monkeypatch.setattr(trip_builder, "FIXTURE_DIR", tmp_path)
+    monkeypatch.setenv("SEATS_AERO_KEY", "test_key_not_a_real_one")
+
+    code, output = run_cli(
+        [
+            "--new-trip", "chained",
+            "--leg", f"SFO:MAD:{FUTURE}:395",
+            "--live",
+            "--balance", "UR=160000",
+            "--card", "Chase Sapphire Preferred",
+            "--transfer-date", "2026-09-15",
+        ],
+        capsys,
+    )
+    assert (tmp_path / "chained.json").exists()
+    assert "Wrote " in output
+    assert "Seats.aero key:" in output, "the ordinary live key banner"
+    # No network in this sandbox, so every leg is an API failure - which is the
+    # ordinary live-path outcome, not a --new-trip-specific one.
+    assert "THIS IS AN API FAILURE" in output
+    assert code in (0, 3)

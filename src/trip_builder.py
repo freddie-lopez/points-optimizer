@@ -444,6 +444,120 @@ def new_trip_from_flags(
     return write_fixture(fixture, directory, force)
 
 
+# ---------------------------------------------------------------------------
+# Interactive mode
+# ---------------------------------------------------------------------------
+#
+# A THIN SEAM ON PURPOSE. `_prompt` takes the reader function as an argument so
+# tests drive a whole session from a scripted list, which is the only way an
+# interactive path gets tested at all. The alternative was a dependency
+# (prompt_toolkit, questionary) for a prompt loop; requirements.txt stays at
+# three lines.
+#
+# THE VALIDATORS ARE THE SAME FUNCTIONS THE FLAGS PATH CALLS. Not equivalent
+# ones - the same ones. A refusal that existed on one path and not the other
+# would make the tool's honesty depend on how you invoked it, and a test asserts
+# the two paths produce byte-identical files.
+
+MAX_PROMPT_ATTEMPTS = 3
+
+
+def _prompt(
+    question: str,
+    validate: Callable[[str], object],
+    read: Callable[[str], str],
+    write: Callable[[str], None] = print,
+    attempts: int = MAX_PROMPT_ATTEMPTS,
+):
+    """
+    Ask until the answer validates, then give up. NEVER loops forever.
+
+    A bad answer RE-PROMPTS rather than aborting - a typo in leg four should
+    not throw away legs one to three. Three bad answers in a row abort, because
+    a prompt that cannot be satisfied and will not stop is worse than one that
+    quits and says why.
+    """
+    last = ""
+    for attempt in range(1, attempts + 1):
+        answer = read(f"{question}\n> ")
+        try:
+            return validate(answer)
+        except TripBuilderError as e:
+            last = str(e)
+            write(f"  refused: {last}")
+            if attempt < attempts:
+                write(f"  {attempts - attempt} attempt(s) left.")
+    raise TripBuilderError(
+        f"{attempts} invalid answers in a row for {question!r}. Giving up rather "
+        f"than looping. Nothing has been written. Last refusal: {last}"
+    )
+
+
+def interactive_session(
+    read: Callable[[str], str],
+    write: Callable[[str], None] = print,
+    today: Optional[date] = None,
+):
+    """
+    Walk a user through a trip. Returns the same tuple the flags path builds.
+
+    Blank ends each repeating section. Blank is NOT a validated value - it is
+    an end-of-list marker checked before any validator runs, so "" can never be
+    coerced into a leg.
+    """
+    name = _prompt("Trip name (letters, digits, _ - .)", validate_name, read, write)
+    travelers = _prompt("Travellers on every leg", validate_travelers, read, write)
+    cabin = _prompt(
+        f"Cabin for every flight leg ({'/'.join(CABINS)})", validate_cabin, read, write
+    )
+
+    flights: List[FlightSpec] = []
+    while True:
+        answer = read(
+            f"Flight leg {len(flights) + 1} as ORIGIN:DEST:YYYY-MM-DD:CASH_USD "
+            f"(blank to finish)\n> "
+        )
+        if not answer.strip():
+            break
+        try:
+            flights.append(parse_leg_flag(answer, today))
+        except TripBuilderError as e:
+            write(f"  refused: {e}")
+            flights.append(
+                _prompt(
+                    f"Flight leg {len(flights) + 1}, again",
+                    lambda a: parse_leg_flag(a, today),
+                    read,
+                    write,
+                    attempts=MAX_PROMPT_ATTEMPTS - 1,
+                )
+            )
+
+    hotels: List[HotelSpec] = []
+    while True:
+        answer = read(
+            f"Hotel leg {len(hotels) + 1} as NAME:CHECKIN:NIGHTS:CASH_USD "
+            f"(blank to finish)\n> "
+        )
+        if not answer.strip():
+            break
+        try:
+            hotels.append(parse_hotel_flag(answer, today))
+        except TripBuilderError as e:
+            write(f"  refused: {e}")
+            hotels.append(
+                _prompt(
+                    f"Hotel leg {len(hotels) + 1}, again",
+                    lambda a: parse_hotel_flag(a, today),
+                    read,
+                    write,
+                    attempts=MAX_PROMPT_ATTEMPTS - 1,
+                )
+            )
+
+    return name, flights, hotels, travelers, cabin
+
+
 def echo_lines(fixture: Dict) -> List[str]:
     """
     What is about to be written, read back to the user before the write.

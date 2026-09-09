@@ -384,20 +384,32 @@ def print_key_banner(console: Console, resolution=None, note: str = "") -> None:
     console.print(f"[dim]{resolution.describe()}[/dim]")
 
 
-def run_new_trip(args, console: Console) -> int:
+def run_new_trip(args, console: Console, read=None):
     """
-    Build a fixture from the flags, echo it, write it, and say what it can't do.
+    Build a fixture, echo it, write it, and say what it cannot do.
 
-    Emits NO scored number. The one number it writes is the cash amount the
-    user typed, echoed back before the write.
+    Returns (exit_code, path). Emits NO scored number. The one number it writes
+    is the cash amount the user typed, echoed back before the write.
+
+    INTERACTIVE MODE IS THE SAME FUNCTION. With no --leg and no --hotel the
+    inputs come from prompts instead of flags, and both paths then call the
+    identical validators and the identical `build_fixture`. A test asserts the
+    two produce byte-identical files.
     """
     from src import trip_builder
 
-    name = trip_builder.validate_name(args.new_trip)
-    travelers = trip_builder.validate_travelers(args.travelers)
-    cabin = trip_builder.validate_cabin(args.cabin)
-    flights = [trip_builder.parse_leg_flag(raw) for raw in (args.legs or [])]
-    hotels = [trip_builder.parse_hotel_flag(raw) for raw in (args.hotels or [])]
+    if not (args.legs or args.hotels):
+        name, flights, hotels, travelers, cabin = trip_builder.interactive_session(
+            read=read or input,
+            write=lambda line: console.print(f"[yellow]{line}[/yellow]"),
+        )
+    else:
+        name = trip_builder.validate_name(args.new_trip)
+        travelers = trip_builder.validate_travelers(args.travelers)
+        cabin = trip_builder.validate_cabin(args.cabin)
+        flights = [trip_builder.parse_leg_flag(raw) for raw in (args.legs or [])]
+        hotels = [trip_builder.parse_hotel_flag(raw) for raw in (args.hotels or [])]
+
     fixture = trip_builder.build_fixture(name, flights, hotels, travelers, cabin)
 
     for line in trip_builder.echo_lines(fixture):
@@ -410,7 +422,7 @@ def run_new_trip(args, console: Console) -> int:
         f"[yellow]  python -m src.main --trip-fixture {name}.json --live "
         f"--balance UR=<n> --card \"<card>\"[/yellow]"
     )
-    return 0
+    return 0, path
 
 
 def parse_date_range(date_str: str) -> DateRange:
@@ -879,6 +891,37 @@ def main() -> int:
     console = Console(width=190)
 
     try:
+        if getattr(args, "offline", False) and getattr(args, "live", False):
+            console.print(
+                "[red]Error: --offline and --live are mutually exclusive.[/red]\n"
+                "[red]One says score the fixture's own prices with no transport; "
+                "the other says ask Seats.aero. This is a usage error rather "
+                "than a precedence rule, because a precedence rule would mean "
+                "one of the two flags you typed did nothing.[/red]"
+            )
+            return 1
+        if getattr(args, "new_trip", None):
+            if getattr(args, "from_snapshot", None):
+                console.print(
+                    "[red]Error: --new-trip cannot be combined with "
+                    "--from-snapshot.[/red]\n"
+                    "[red]A trip built one second ago has no snapshots, and "
+                    "replaying somebody else's manifest against it would hash "
+                    "the wrong trip - a percentage printed beside a certificate "
+                    "for a different itinerary. Build it, then run it --live "
+                    "once to write a manifest of its own.[/red]"
+                )
+                return 1
+            code, path = run_new_trip(args, console)
+            if code != 0:
+                return code
+            if not getattr(args, "live", False):
+                return code
+            # THE CHAIN IS NOT A SPECIAL CASE. The fixture that was just written
+            # is handed to the ORDINARY live path by filename, so the scoring
+            # half is identical to running --trip-fixture --live by hand.
+            args.trip_fixture = str(path)
+            return run_fixture(args, console)
         # Checked BEFORE dispatch. Handled inside run_search this would have
         # produced "--origin, --destination and --date are all required", which
         # answers a question the user did not ask and hides the real one.
@@ -949,17 +992,6 @@ def main() -> int:
                     "is nothing to cover.[/red]"
                 )
                 return 1
-        if getattr(args, "offline", False) and getattr(args, "live", False):
-            console.print(
-                "[red]Error: --offline and --live are mutually exclusive.[/red]\n"
-                "[red]One says score the fixture's own prices with no transport; "
-                "the other says ask Seats.aero. This is a usage error rather "
-                "than a precedence rule, because a precedence rule would mean "
-                "one of the two flags you typed did nothing.[/red]"
-            )
-            return 1
-        if getattr(args, "new_trip", None):
-            return run_new_trip(args, console)
         if args.trip_fixture:
             return run_fixture(args, console)
         return run_search(args, console)
