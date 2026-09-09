@@ -867,9 +867,20 @@ def print_trip_totals(
         )
     table.add_row("Cash still owed", _money(totals["cash_still_owed_usd"]))
     table.add_row("Legs where points win", str(int(totals["legs_where_points_win"])))
+    # H-4: the never-priced legs are subtracted here and reported on their own
+    # row, so "NO UR path at all" keeps meaning what it says.
+    never_priced = int(totals.get("legs_never_priced", 0))
     table.add_row(
-        "Legs with NO UR path at all", str(int(totals["legs_without_points_path"]))
+        "Legs with NO UR path at all",
+        str(int(totals["legs_without_points_path"]) - never_priced),
     )
+    if never_priced:
+        table.add_row(
+            "[yellow]Legs whose points side was NEVER PRICED\n"
+            "(no award data - NOT a claim about partners)[/yellow]",
+            f"[yellow]{never_priced} "
+            f"({', '.join(totals.get('legs_never_priced_ids') or [])})[/yellow]",
+        )
     table.add_row(
         "Legs where a UR partner exists but no\naward price was captured",
         str(int(totals.get("legs_points_unpriced", 0))),

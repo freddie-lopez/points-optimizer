@@ -799,11 +799,28 @@ def run_fixture(args, console: Console) -> int:
     print_trip_totals(totals, label=fixture.name, console=console)
     print_residue_report(trip_residue(results, wallet), console)
 
-    no_path = [r.leg.id for r in results if r.verdict == "cash (no points path)"]
+    # H-4. THE TWO REASONS A LEG HAS NO POINTS PATH ARE DIFFERENT FACTS and used
+    # to share one line. "(no partner exists)" is a claim about partnerships; an
+    # absent capture is a claim about our own inputs, and printing the first when
+    # the second is true is the house failure on a new surface.
+    no_path = [
+        r.leg.id
+        for r in results
+        if r.verdict == "cash (no points path)" and r.points_absence != "never_priced"
+    ]
+    never_priced = [
+        r.leg.id for r in results if r.points_absence == "never_priced"
+    ]
     if no_path:
         console.print(
             f"\n[bold]Legs with NO points path at all (no partner exists):[/bold] "
             f"{', '.join(no_path)}"
+        )
+    if never_priced:
+        console.print(
+            f"\n[bold yellow]Legs whose points side was NEVER PRICED (no award "
+            f"price captured and none fetched - this says NOTHING about whether "
+            f"a partner covers them):[/bold yellow] {', '.join(never_priced)}"
         )
     unpriced = [r.leg.id for r in results if r.verdict == "cash (points unpriced)"]
     if unpriced:

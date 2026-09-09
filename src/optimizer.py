@@ -1224,8 +1224,32 @@ def evaluate_leg(
                 f"{source_program} partner covers this leg - that question was "
                 f"never reached."
             )
+        elif leg.kind == "flight" and not leg.points_candidates:
+            # FINDING H-4. ABSENCE OF A CAPTURED PRICE IS NOT A FACT ABOUT
+            # AIRLINE PARTNERSHIPS - way (9) wearing another hat, on the verdict
+            # instead of on a storage layer.
+            #
+            # A --new-trip fixture carries NO points_candidates BY DESIGN and
+            # --offline is a documented mode for it, so SFO->MAD reported "No UR
+            # transfer partner covers this leg / (no partner exists)" while Trip
+            # B's own B1 scored an Air Canada Aeroplan path on that exact route
+            # in the same binary. `annotate_live_verdicts` was written to stop
+            # this text being used when the cause is a data gap and it runs on
+            # the LIVE path only; the honest answer belongs here, where the
+            # verdict is decided, on every path.
+            result.verdict = "cash (no points path)"
+            result.points_absence = "never_priced"
+            result.verdict_reason = (
+                f"NO AWARD PRICE WAS CAPTURED FOR THIS LEG and none was fetched, "
+                f"so the points side was never priced. NOTHING is claimed about "
+                f"whether a {source_program} transfer partner covers "
+                f"{leg.origin or 'this leg'}->{leg.destination or ''} - that "
+                f"question was never reached. Score it with --live or "
+                f"--from-snapshot, or add a captured award price to the fixture."
+            ).strip()
         else:
             result.verdict = "cash (no points path)"
+            result.points_absence = "no_partner"
             result.verdict_reason = (
                 f"No {source_program} transfer partner covers this leg. "
                 f"Cash is the only option."
@@ -2018,6 +2042,15 @@ def trip_totals(
         "legs_points_unpriced": sum(
             1 for r in results if r.verdict == "cash (points unpriced)"
         ),
+        # H-4. The subset of the above whose points side was NEVER PRICED. Not a
+        # claim about partnerships, and counted separately so the row that IS a
+        # claim keeps its literal meaning.
+        "legs_never_priced": sum(
+            1 for r in results if r.points_absence == "never_priced"
+        ),
+        "legs_never_priced_ids": [
+            r.leg.id for r in results if r.points_absence == "never_priced"
+        ],
         "legs_points_blocked": sum(
             1 for r in results if r.verdict == "cash (points blocked)"
         ),

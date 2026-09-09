@@ -223,3 +223,62 @@ def test_genuinely_absent_partner_still_reports_no_path(rm):
     leg = make_leg(cash=638.35, points=60000, program="Hilton Honors")
     r = evaluate_leg(leg, {"UR": None}, [CSR], rm, max_stranded_points=0)
     assert r.verdict == "cash (no points path)"
+
+
+# ---------------------------------------------------------------------------
+# H-4: an absent capture is not a claim about partnerships
+# ---------------------------------------------------------------------------
+
+
+def test_a_leg_with_no_captured_award_price_makes_no_claim_about_partners(tmp_path, rm):
+    """
+    A --new-trip fixture carries NO points_candidates by design and --offline is
+    a documented mode for it. It used to report "No UR transfer partner covers
+    this leg" on SFO->MAD - the exact route Trip B's own B1 scores an Aeroplan
+    path on, in the same binary.
+    """
+    from src import trip_builder
+    from src.surcharge import default_table
+    from src.trip_loader import load_trip_fixture
+    from src.wallet import Wallet
+
+    path = trip_builder.new_trip_from_flags(
+        "h4_unit", ["SFO:MAD:2027-01-15:395"], [], directory=tmp_path
+    )
+    fixture = load_trip_fixture(path)
+    results = evaluate_trip(
+        legs=fixture.legs,
+        ratios_manager=rm,
+        wallet=Wallet({"UR": 160000}),
+        transfer_date=date(2026, 9, 15),
+        surcharges=default_table(),
+    )
+    leg = results[0]
+    assert leg.verdict == "cash (no points path)"
+    assert leg.points_absence == "never_priced"
+    assert "No UR transfer partner covers this leg" not in leg.verdict_reason
+    assert "NO AWARD PRICE WAS CAPTURED" in leg.verdict_reason
+    assert "never reached" in leg.verdict_reason
+
+
+def test_a_leg_whose_recorded_programs_reach_nothing_still_says_so(rm):
+    """The real finding keeps its words: candidates existed and none was usable."""
+    from src.surcharge import default_table
+    from src.wallet import Wallet
+
+    leg = Leg(
+        id="L1", kind="flight", description="", date=date(2027, 1, 15),
+        origin="SFO", destination="MAD", travelers=1,
+        points_candidates=[
+            PointsCandidate(label="x", program="Not A Real Program", points=1000)
+        ],
+    )
+    results = evaluate_trip(
+        legs=[leg],
+        ratios_manager=rm,
+        wallet=Wallet({"UR": 160000}),
+        transfer_date=date(2026, 9, 15),
+        surcharges=default_table(),
+    )
+    assert results[0].points_absence == "no_partner"
+    assert "No UR transfer partner covers this leg" in results[0].verdict_reason

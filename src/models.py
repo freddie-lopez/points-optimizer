@@ -1713,6 +1713,12 @@ class LegResult:
     cash_total_score_usd: float = 0.0
 
     verdict: str = "cash"  # "points" | "cash" | "cash (no points path)"
+    # H-4. WHY there is no points path, when there is none. "no_partner" is a
+    # finding about partnerships; "never_priced" is an absence of award data and
+    # says nothing about partnerships. They rendered identically, so a fixture
+    # built by --new-trip (no candidates BY DESIGN) reported "no partner exists"
+    # on a route another leg of another trip scores in the same binary.
+    points_absence: str = ""  # "" | "no_partner" | "never_priced"
     verdict_reason: str = ""
     margin_usd: float = 0.0
     margin_pct: float = 0.0
