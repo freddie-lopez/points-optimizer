@@ -208,8 +208,16 @@ def test_a_non_positive_fx_rate_is_rejected(restore_fx):
 
 
 def test_the_fx_flag_works_through_the_cli():
+    """
+    v5 STEP 6, CASE (a). `--offline` was added and NOTHING ELSE CHANGED: the
+    same exit code and the same assertion. This test is about --fx, not about
+    which transport answers, and after the live-first flip a plain run in a
+    sandbox with no network correctly exits 3 instead of scoring badges. The
+    mode it always meant is now the mode it names.
+    """
     proc = subprocess.run(
         [sys.executable, "-m", "src.main", "--trip-fixture", "trip_b_europe.json",
+         "--offline",
          "--balance", "UR=180000", "--card", CSP, "--fx", "GBP=1.29",
          "--transfer-date", "2026-09-15"],
         cwd=ROOT, capture_output=True, text=True,

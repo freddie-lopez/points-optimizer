@@ -52,11 +52,15 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Score a real multi-leg trip fixture (no Seats.aero call needed)
-  python -m src.main --trip-fixture trip_b_europe.json
-
-  # Same, but constrained to a real UR balance
+  # Score a trip fixture LIVE (the default as of v5)
   python -m src.main --trip-fixture trip_b_europe.json --balance UR=160000
+
+  # Score it with no network at all, from the fixture's own prices
+  python -m src.main --trip-fixture trip_b_europe.json --offline --balance UR=160000
+
+  # Replay a previous live run exactly, with a manifest hash beside the margin
+  python -m src.main --trip-fixture trip_b_europe.json \
+      --from-snapshot tests/fixtures/seats_aero/live_trip_b/MANIFEST.md
 
   # Live award search for a single route
   python -m src.main --origin SFO --destination LHR --date 2027-01-15
@@ -64,11 +68,14 @@ Examples:
 EXIT CODES (the single authoritative list; README.md quotes this one):
   0  Success. A margin was produced and, if a balance was given, the plan is
      executable from it.
-  1  Error. Bad arguments, a missing or unreadable file, or an unhandled
-     failure. NOTHING was scored.
-  3  WITHHELD. --require-all-live was given and at least one leg did not come
-     back live, so no margin is quoted. This is a REFUSAL TO ANSWER, not a
-     finding of zero value.
+  1  Error. Bad arguments, a missing or unreadable file, an unreplayable
+     manifest, or an unhandled failure. NOTHING was scored.
+  2  WALLET ERROR. No balances or cards were supplied, or the wallet file is
+     malformed. The tool refuses to assume which cards and points you hold,
+     because a default wallet changes real answers. NOTHING was scored.
+  3  WITHHELD. At least one leg did not come back live (this is the DEFAULT as
+     of v5; --allow-badge-fallback opts out), so no margin is quoted. This is a
+     REFUSAL TO ANSWER, not a finding of zero value.
   4  NOT EXECUTABLE. A margin was produced, but the recommendation cannot be
      funded from the balance you supplied. The number is real; the plan is not
      actionable as printed.
@@ -76,6 +83,11 @@ EXIT CODES (the single authoritative list; README.md quotes this one):
   3 and 4 are deliberately different: "the number is not quotable" and "the
   plan cannot be executed" are different failures and a wrapping script must be
   able to tell them apart.
+
+DEFAULTS AS OF v5:
+  --trip-fixture implies live scoring unless --offline is passed. A run with no
+  network and no --offline exits 3 rather than quietly scoring Google badges.
+  --live and --require-all-live are still accepted and are no-ops.
         """,
     )
 
@@ -255,11 +267,12 @@ EXIT CODES (the single authoritative list; README.md quotes this one):
         "--live",
         action="store_true",
         help=(
-            "Score each FLIGHT leg of a trip fixture against real Seats.aero "
-            "award availability. Requires --trip-fixture. CASH IS NEVER TOUCHED: "
-            "screenshots remain the source of truth for cash and there is no "
-            "cash-price API in scope. Hotels are unaffected - Seats.aero is "
-            "flights-only."
+            "ACCEPTED AND NOW A NO-OP: as of v5 --trip-fixture is live by "
+            "default and --offline is the opt-out. Kept so existing scripts and "
+            "docs keep working and keep meaning what they said. CASH IS NEVER "
+            "TOUCHED: screenshots remain the source of truth for cash and there "
+            "is no cash-price API in scope. Hotels are unaffected - Seats.aero "
+            "is flights-only."
         ),
     )
     live.add_argument(
@@ -296,9 +309,11 @@ EXIT CODES (the single authoritative list; README.md quotes this one):
         "--require-all-live",
         action="store_true",
         help=(
-            "WITHHOLD the trip margin entirely unless every flight leg with a "
-            "points candidate came back live. For when a number is going to be "
-            "quoted. Exits non-zero when it withholds."
+            "ACCEPTED AND NOW A NO-OP: as of v5 this is the DEFAULT and "
+            "--allow-badge-fallback is the opt-out. It WITHHOLDS the trip margin "
+            "entirely unless every flight leg with a points candidate came back "
+            "live (or replayed from a snapshot that was live at capture). Exits "
+            "3 when it withholds."
         ),
     )
     live.add_argument(
@@ -511,7 +526,19 @@ def build_live(args, console: Console):
     from src.live_trip import LiveOptions
     from src.response_cache import ResponseCache
 
-    if not getattr(args, "live", False):
+    # v5 STEP 6. LIVE IS THE DEFAULT; OFFLINE IS THE EXCEPTION.
+    #
+    # Until v5 a plain `--trip-fixture` run scored the fixture's Google badges
+    # and printed a percentage, and going live was opt-in - which is backwards,
+    # because live is the actual mode of use and the badge is the fallback. The
+    # flip means a run with no network can no longer ARRIVE at a badge number by
+    # accident: it fails loudly (exit 3) instead. Auto-detecting the absence of
+    # a network and quietly falling back would be the failure-as-finding class
+    # with a different subject, so `--offline` is an explicit opt-out.
+    #
+    # `--live` remains accepted and is now a NO-OP, so every existing script and
+    # every line of the README keeps working and keeps meaning what it said.
+    if getattr(args, "offline", False):
         return None, LiveOptions(live=False), None
 
     if not args.trip_fixture:
@@ -534,7 +561,13 @@ def build_live(args, console: Console):
         flex_days=max(int(args.flex_days or 0), 0),
         refresh=bool(args.refresh),
         cache_ttl=args.cache_ttl,
-        require_all_live=bool(args.require_all_live),
+        # v5 STEP 6. --require-all-live IS THE DEFAULT. `--allow-badge-fallback`
+        # is the opt-out, and it is the ONE thing that lets a badge answer a
+        # question that was asked of the API and not answered. The result is
+        # then labelled `badge_fallback` and is quotable only with that
+        # qualifier, which travels on the same line as the number.
+        require_all_live=not bool(getattr(args, "allow_badge_fallback", False)),
+        allow_badge_fallback=bool(getattr(args, "allow_badge_fallback", False)),
         cache=cache,
         surcharges=default_table(),
     )
@@ -604,7 +637,9 @@ def build_replay(args, console: Console, fixture):
         flex_days=0,
         refresh=False,
         cache_ttl=None,
-        require_all_live=bool(args.require_all_live),
+        # v5 STEP 6: the default here too. A replay satisfies it (provenance
+        # `snapshot`) as long as every replayed leg answered at capture time.
+        require_all_live=not bool(getattr(args, "allow_badge_fallback", False)),
         # STRUCTURAL, not a flag check: there is no cache object to write to.
         cache=None,
         surcharges=default_table(),

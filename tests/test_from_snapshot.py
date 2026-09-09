@@ -553,19 +553,13 @@ def test_a_manifest_whose_rows_answer_nothing_replays_as_badge_fallback(
     assert code == 0
     assert "badge_fallback" in out
 
-    code, out = run_cli(
-        REPLAY_BASE
-        + [
-            "--from-snapshot",
-            str(manifest),
-            "--allow-badge-fallback",
-            "--require-all-live",
-        ],
-        capsys,
-    )
+    # And WITHOUT the opt-out - which is to say, under v5's default - the same
+    # manifest withholds entirely rather than quoting a badge margin beside a
+    # manifest hash.
+    code, out = run_cli(REPLAY_BASE + ["--from-snapshot", str(manifest)], capsys)
     assert code == 3
     assert "WITHHELD" in out
-    assert not PCT.search(out.split("WITHHELD")[1]) or True
+    assert not PCT.search(out), "a withheld run must print no percentage at all"
 
 
 # ---------------------------------------------------------------------------

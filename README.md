@@ -82,12 +82,32 @@ refusal to answer apart from an unfundable plan apart from a crash.
 | Code | Meaning |
 |---|---|
 | `0` | Success. A margin was produced and, if a balance was given, the plan is executable from it. |
-| `1` | Error. Bad arguments, a missing or unreadable file, or an unhandled failure. **Nothing was scored.** |
-| `3` | **WITHHELD.** `--require-all-live` was given and at least one leg did not come back live, so no margin is quoted. A refusal to answer, **not** a finding of zero value. |
+| `1` | Error. Bad arguments, a missing or unreadable file, an unreplayable manifest, or an unhandled failure. **Nothing was scored.** |
+| `2` | **WALLET ERROR.** No balances or cards were supplied, or the wallet file is malformed. The tool refuses to assume which cards and points you hold. **Nothing was scored.** |
+| `3` | **WITHHELD.** At least one leg did not come back live — the default as of v5; `--allow-badge-fallback` opts out — so no margin is quoted. A refusal to answer, **not** a finding of zero value. |
 | `4` | **NOT EXECUTABLE.** A margin was produced, but the recommendation cannot be funded from the balance you supplied. The number is real; the plan is not actionable as printed. |
 
 `3` and `4` are deliberately distinct: "the number is not quotable" and "the plan
-cannot be executed" are different failures. There is no code `2`.
+cannot be executed" are different failures.
+
+Code `2` was implemented from v1 and was missing from this table until v5, which
+is its own small version of the bug this project keeps making: a behaviour that
+exists, is correct, and is not written down anywhere the reader looks.
+
+### Defaults as of v5
+
+`--trip-fixture` scores **live** unless you pass `--offline`. A run with no
+network and no `--offline` exits `3` rather than quietly scoring Google Flights
+badges and printing a percentage. Auto-detecting the absence of a network and
+falling back would be the same failure-as-finding shape with a different
+subject, so the opt-out is explicit.
+
+`--require-all-live` is the default; `--allow-badge-fallback` opts out and
+labels the margin `badge_fallback`, on the same line as the number.
+
+`--live` and `--require-all-live` are still accepted and are now no-ops, so
+every script and every example above keeps working and keeps meaning what it
+said.
 
 The same table is printed by `python -m src.main --help`; if the two ever
 disagree, `--help` is the one generated from the code.
