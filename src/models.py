@@ -661,9 +661,20 @@ class PointsCandidate:
 
 
 class PointsProvenance(str, Enum):
-    """Where a leg's points price came from. Three REPORTED states."""
+    """
+    Where a leg's points price came from. FOUR REPORTED states.
+
+    SNAPSHOT IS THE v5 ADDITION AND IT IS A SEPARATE VALUE ON PURPOSE. A
+    replayed run reuses `LIVE`'s bytes and none of its currency: the answer was
+    true when it was captured and says nothing about today. Reusing `LIVE` with
+    a flag beside it was the rejected alternative, and it was rejected because
+    the provenance string is the thing that gets QUOTED - a replayed number that
+    calls itself live is exactly the laundering `--from-snapshot` exists to
+    prevent.
+    """
 
     LIVE = "live"                    # queried Seats.aero; scoreable awards found
+    SNAPSHOT = "snapshot"            # replayed from committed bytes. NOT live.
     BADGE_FALLBACK = "badge_fallback"  # fixture badge kept; live did not supply
     UNAVAILABLE = "unavailable"      # no points side at all for this leg
 
@@ -837,6 +848,33 @@ class LiveLegOutcome:
           INVARIANT: `served_from_cache` with no `cache_fetched_at` raises. An
           answer of unknown age is not an answer about today, and render() used
           to print the literal string "fetched None".
+      (8) THE BYTES ARE A REPLAY OF A COMMITTED SNAPSHOT, NOT OF THE API. We
+          did not ask anyone anything on this run: `--from-snapshot` swapped the
+          transport for a file. -> fields `replayed_from_snapshot`,
+          `snapshot_name`, `snapshot_content_hash`, `snapshot_captured_at`,
+          `snapshot_parser_version`.
+          INVARIANT: `replayed_from_snapshot` with no `snapshot_content_hash`
+          raises - a replay whose bytes cannot be identified is not
+          reproducible, which is the entire point of replaying.
+          `replayed_from_snapshot` together with `served_from_cache` raises: the
+          bytes came from ONE place and the outcome must say which.
+          `provenance` may never be `PointsProvenance.LIVE` on a replayed
+          outcome; it is `SNAPSHOT`.
+          A `_replay_clause()` is appended to EVERY render unconditionally,
+          naming the snapshot file and its capture time, so no reader can
+          mistake a replayed observation of January for a fresh one.
+
+          ON `is_a_finding_about_award_space`. Replay adds no new STATE, so the
+          whitelist is unchanged, and that is deliberate rather than an
+          oversight: a snapshot's emptiness WAS a finding at capture time and
+          replay preserves findings. NO_AWARD_SPACE replays as NO_AWARD_SPACE,
+          and ANSWERED_INCOMPLETE replays as ANSWERED_INCOMPLETE, because the
+          truncation was a property of the bytes. What replay changes is
+          FRESHNESS, which is axis 5, which is why (8) lives here and not in the
+          enum. (The plan's §4.3 says "SNAPSHOT is added to the whitelist";
+          taken literally that would put a PointsProvenance value into a
+          LiveQueryState whitelist. The intent - that a replayed finding is
+          still a finding - is what is implemented.)
 
     HOW TO EXTEND THIS. If you find an eighth way, it does NOT get to be a new
     branch inside some renderer. It gets: a FIELD on this dataclass, a `raise`
@@ -886,6 +924,13 @@ class LiveLegOutcome:
     snapshot_path: Optional[Path] = None
     served_from_cache: bool = False
     cache_fetched_at: Optional[datetime] = None
+    # AXIS 5, WAY (8). These bytes are a replay of a COMMITTED SNAPSHOT. No
+    # request was made on this run and no cache was consulted; a file was read.
+    replayed_from_snapshot: bool = False
+    snapshot_name: str = ""
+    snapshot_content_hash: str = ""
+    snapshot_captured_at: Optional[datetime] = None
+    snapshot_parser_version: str = ""
     note: str = ""
 
     def __post_init__(self):
@@ -1000,6 +1045,35 @@ class LiveLegOutcome:
                 f"age of a replayed answer is part of the answer; without it "
                 f"render() prints the literal string 'fetched None'."
             )
+        # AXIS 5, WAY (8). Three raises, each forbidding a combination that
+        # would let a replayed number pass as something it is not.
+        if self.replayed_from_snapshot:
+            if not self.snapshot_content_hash:
+                raise ValueError(
+                    f"{self.leg_id}: replayed_from_snapshot with no "
+                    f"snapshot_content_hash. A replay whose bytes cannot be "
+                    f"identified is not reproducible, and reproducibility is the "
+                    f"only reason to replay anything. The hash is what a quoted "
+                    f"percentage is quoted AGAINST."
+                )
+            if self.served_from_cache:
+                raise ValueError(
+                    f"{self.leg_id}: replayed_from_snapshot AND "
+                    f"served_from_cache. The bytes came from ONE place and this "
+                    f"outcome must say which. A replay does not consult the "
+                    f"cache at all - ResponseCache is not constructed on that "
+                    f"path - so this combination means two transports disagree "
+                    f"about who answered."
+                )
+            if self.provenance is PointsProvenance.LIVE:
+                raise ValueError(
+                    f"{self.leg_id}: replayed_from_snapshot with provenance LIVE. "
+                    f"A replay reuses live bytes and none of their currency: the "
+                    f"answer was true when it was captured and says nothing about "
+                    f"today. Use PointsProvenance.SNAPSHOT. A replayed number "
+                    f"that calls itself live is the exact laundering this feature "
+                    f"exists to prevent."
+                )
         if self.state is LiveQueryState.OK and not self.awards_parsed:
             raise ValueError(
                 f"{self.leg_id}: OK with zero awards parsed is NO_AWARD_SPACE. "
@@ -1080,6 +1154,39 @@ class LiveLegOutcome:
             f"out award space there."
         )
 
+    def _replay_clause(self) -> str:
+        """
+        Whether anyone was asked anything on this run. NEVER omitted.
+
+        Third sibling of `_skipped_clause` and `_truncation_clause`, and it is
+        appended by `render()` for the same structural reason both of those are:
+        a branch cannot forget a clause it does not write. Way (8) does not get
+        to be a condition inside a renderer.
+
+        It names the capture time on EVERY leg because `--from-snapshot` makes a
+        stale number EASIER to quote, not harder (risk 9.2). A January manifest
+        replays perfectly in June and prints a confident percentage. The hash
+        proves reproducibility; it does not prove currency, and there is no
+        expiry - adding one would reintroduce the TTL mistake. This sentence is
+        what stands between a reader and that mistake.
+        """
+        if not self.replayed_from_snapshot:
+            return ""
+        captured = (
+            f" captured {self.snapshot_captured_at}"
+            if self.snapshot_captured_at
+            else " with NO recorded capture time"
+        )
+        return (
+            f" REPLAYED FROM A COMMITTED SNAPSHOT: nothing was asked of "
+            f"Seats.aero on this run. These bytes are "
+            f"{self.snapshot_name or '(unnamed file)'}{captured}, content hash "
+            f"{self.snapshot_content_hash[:16]}, parsed at capture by "
+            f"{self.snapshot_parser_version or 'an unrecorded parser version'}. "
+            f"Everything above was true THEN. It is not a statement about award "
+            f"space today."
+        )
+
     def render(self) -> str:
         """
         The line the user reads. An error and an absence NEVER share wording.
@@ -1087,14 +1194,15 @@ class LiveLegOutcome:
         This is the single place where a state becomes prose, so the two cannot
         drift into looking alike.
 
-        The two coverage clauses are appended ONCE, at the bottom, to whatever
-        the state branch returned - not inside the branches. A branch cannot
-        forget a clause it does not write.
+        The three coverage/freshness clauses are appended ONCE, at the bottom,
+        to whatever the state branch returned - not inside the branches. A
+        branch cannot forget a clause it does not write.
         """
         return (
             self._render_state()
             + self._skipped_clause()
             + self._truncation_clause()
+            + self._replay_clause()
         )
 
     def _render_state(self) -> str:

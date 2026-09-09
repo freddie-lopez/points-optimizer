@@ -719,6 +719,23 @@ def print_trip_totals(
     provenance_note = totals.get("margin_provenance_note", "")
     withheld = bool(totals.get("margin_withheld"))
 
+    # v5. THE MANIFEST HASH TRAVELS WITH THE PERCENTAGE, IN THE SAME CELL,
+    # EMITTED BY THIS CALL.
+    #
+    # v3 established that a percentage may never be printed without its
+    # provenance line, and made that structural by emitting both here. v5 adds a
+    # second thing that must travel with the number: on a replayed run the
+    # margin is only meaningful against the bytes it was derived from, so
+    # `mh_...` is appended to EVERY cell that carries a percentage - including
+    # the dim low/high rows, which are percentages too.
+    #
+    # Deliberately SHORT. The snapshot count and the parser-version pair go on
+    # their own rows below, which carry no percentage: a suffix long enough to
+    # wrap would put the number on one physical line and the hash on another,
+    # which is the failure this rule exists to prevent.
+    manifest_hash = str(totals.get("manifest_hash") or "")
+    hash_suffix = f"  {manifest_hash}" if manifest_hash else ""
+
     if not executable:
         # C-3: an unfundable plan gets no percentage at all. There is nothing to
         # qualify - the plan does not exist.
@@ -743,36 +760,57 @@ def print_trip_totals(
         table.add_row(
             "[bold]Optimizer beats paying cash by[/bold]",
             f"[bold]{totals['beat_cash_pct_low']:.2f}% - "
-            f"{totals['beat_cash_pct_high']:.2f}%[/bold]",
+            f"{totals['beat_cash_pct_high']:.2f}%{hash_suffix}[/bold]",
         )
         table.add_row(
             "[dim]  low end = what is actually defensible[/dim]",
-            f"[dim]{totals['beat_cash_pct_low']:.2f}%[/dim]",
+            f"[dim]{totals['beat_cash_pct_low']:.2f}%{hash_suffix}[/dim]",
         )
         table.add_row(
             "[dim]  high end = only if every unknown surcharge is $0[/dim]",
-            f"[dim]{totals['beat_cash_pct_high']:.2f}%[/dim]",
+            f"[dim]{totals['beat_cash_pct_high']:.2f}%{hash_suffix}[/dim]",
         )
     else:
         table.add_row(
             "[bold]Optimizer beats paying cash by[/bold]",
-            f"[bold]{totals['beat_cash_pct']:.2f}%[/bold]",
+            f"[bold]{totals['beat_cash_pct']:.2f}%{hash_suffix}[/bold]",
+        )
+
+    if manifest_hash:
+        # Rows that carry NO percentage, so their length cannot wrap a number
+        # away from its hash.
+        table.add_row(
+            "[cyan]  replayed from manifest[/cyan]",
+            f"[cyan]{manifest_hash}[/cyan]",
+        )
+        table.add_row(
+            "[cyan]  snapshots / parser at capture / parser now[/cyan]",
+            f"[cyan]{int(totals.get('manifest_snapshots', 0))} / "
+            f"{totals.get('manifest_parser_at_capture', 'unknown')} / "
+            f"{totals.get('manifest_parser_now', 'unknown')}[/cyan]",
         )
 
     style = {
         "live": "green",
+        "snapshot": "cyan",
         "mixed": "bold yellow",
         "badge": "yellow",
+        "badge_fallback": "bold yellow",
         "none": "dim",
     }.get(provenance, "yellow")
     table.add_row(
         f"[{style}]  margin provenance[/{style}]",
         f"[{style}]{provenance}[/{style}]",
     )
+    counted = int(totals.get("legs_points_live", 0))
+    label = "live"
+    if int(totals.get("legs_points_snapshot", 0)):
+        counted = int(totals.get("legs_points_snapshot", 0)) + counted
+        label = "live or replayed"
     table.add_row(
         f"[{style}]  {provenance_note}[/{style}]",
-        f"[{style}]{int(totals.get('legs_points_live', 0))} of "
-        f"{int(totals.get('legs_flight_total', 0))} legs live[/{style}]",
+        f"[{style}]{counted} of "
+        f"{int(totals.get('legs_flight_total', 0))} legs {label}[/{style}]",
     )
     table.add_row("Points spent", f"{int(totals['points_spent']):,}")
     spend = totals.get("trip_points_spend") or {}

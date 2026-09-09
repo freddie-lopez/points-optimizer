@@ -224,6 +224,30 @@ def query_leg(
         if (snapshot_name and opts.cache is not None)
         else None
     )
+    # v5 STEP 3, WAY (8). Read exactly the way every other piece of byte
+    # provenance here is read - off the transport, by name, with a safe default.
+    # `query_leg` gains no branch: the object it was handed either says it
+    # replayed a file or it does not, and the five fields travel to every
+    # outcome below through one dict so no construction site can forget them.
+    replayed = bool(getattr(client, "last_replayed_from_snapshot", False))
+    replay_fields = {
+        "replayed_from_snapshot": replayed,
+        "snapshot_name": (str(snapshot_name or "") if replayed else ""),
+        "snapshot_content_hash": str(
+            getattr(client, "last_snapshot_content_hash", "") or ""
+        ),
+        "snapshot_captured_at": getattr(client, "last_snapshot_captured_at", None),
+        "snapshot_parser_version": str(
+            getattr(client, "last_snapshot_parser_version", "") or ""
+        ),
+    }
+    if replayed and opts.cache is None:
+        # There is no cache on the replay path, so `snapshot_path` above is
+        # None. The file that WAS read is still worth naming.
+        snapshot_path = (
+            getattr(client, "snapshot_dir", None) and
+            getattr(client, "snapshot_dir") / snapshot_name
+        ) or None
 
     on_date = sum(1 for a in awards if a.date == leg.date)
     off_date = len(awards) - on_date
@@ -250,6 +274,7 @@ def query_leg(
                 f"out during this leg's own request, so it was never completed. "
                 f"Nothing was cached and nothing was archived."
             ),
+            **replay_fields,
         ), []
 
     state_for_manifest = (
@@ -296,6 +321,7 @@ def query_leg(
             snapshot_path=snapshot_path,
             served_from_cache=served_from_cache,
             cache_fetched_at=fetched_at,
+            **replay_fields,
         ), []
 
     if not awards and result_incomplete:
@@ -321,6 +347,7 @@ def query_leg(
             snapshot_path=snapshot_path,
             served_from_cache=served_from_cache,
             cache_fetched_at=fetched_at,
+            **replay_fields,
         ), []
 
     if not awards:
@@ -345,12 +372,18 @@ def query_leg(
             snapshot_path=snapshot_path,
             served_from_cache=served_from_cache,
             cache_fetched_at=fetched_at,
+            **replay_fields,
         ), []
 
     return LiveLegOutcome(
         leg_id=leg.id,
         state=LiveQueryState.OK,
-        provenance=PointsProvenance.LIVE,
+        # WAY (8): a replayed outcome is never LIVE. `LiveLegOutcome` RAISES on
+        # that combination, so this is not politeness - the alternative refuses
+        # to be constructed.
+        provenance=(
+            PointsProvenance.SNAPSHOT if replayed else PointsProvenance.LIVE
+        ),
         queried=spec,
         awards_parsed=len(awards),
         awards_on_leg_date=on_date,
@@ -368,6 +401,7 @@ def query_leg(
         snapshot_path=snapshot_path,
         served_from_cache=served_from_cache,
         cache_fetched_at=fetched_at,
+        **replay_fields,
     ), awards
 
 
@@ -616,7 +650,14 @@ def apply_live(
         # trip stops cleanly rather than half-filling itself and leaving the
         # reader to guess which legs were real. An exhausted budget is an ERROR
         # state, never an absence of award space.
-        if opts.live and client is not None and not budget_blown:
+        # v5 STEP 3. A REPLAY SPENDS NO BUDGET, so it is not subject to one.
+        # `SnapshotTransport.spends_api_budget` is False and makes no calls; a
+        # replay refused because an earlier live run in the same process had
+        # exhausted the cap would be a budget failure reported over bytes that
+        # are sitting on disk.
+        spends_budget = bool(getattr(client, "spends_api_budget", True))
+
+        if opts.live and client is not None and spends_budget and not budget_blown:
             remaining_calls = SeatsClient._budget_remaining()
             if remaining_calls <= 0:
                 budget_blown = True
@@ -624,6 +665,7 @@ def apply_live(
         if budget_blown or (
             opts.live
             and client is not None
+            and spends_budget
             and SeatsClient._budget_remaining() <= 0
         ):
             budget_blown = True
@@ -725,7 +767,14 @@ def _record(
         )
         for a in usable
     ]
-    leg.points_provenance = PointsProvenance.LIVE
+    # v5 STEP 3. A replayed leg is SNAPSHOT, never LIVE. The provenance string
+    # is what gets quoted, and a replayed number that calls itself live is the
+    # laundering `--from-snapshot` exists to prevent.
+    leg.points_provenance = (
+        PointsProvenance.SNAPSHOT
+        if outcome.replayed_from_snapshot
+        else PointsProvenance.LIVE
+    )
 
 
 def supersession_lines(leg: Leg) -> List[str]:
@@ -838,6 +887,11 @@ def provenance_counts(results: List[LegResult]) -> Dict[str, object]:
     """
     flights = [r for r in results if r.leg.kind == "flight"]
     live = [r for r in flights if r.leg.points_provenance is PointsProvenance.LIVE]
+    # v5 STEP 3. Replayed legs are counted SEPARATELY from live ones and the
+    # two are never summed into a single "live" count.
+    snapshot = [
+        r for r in flights if r.leg.points_provenance is PointsProvenance.SNAPSHOT
+    ]
     badge = [
         r for r in flights if r.leg.points_provenance is PointsProvenance.BADGE_FALLBACK
     ]
@@ -876,13 +930,37 @@ def provenance_counts(results: List[LegResult]) -> Dict[str, object]:
         and r.leg.live_outcome.state is not LiveQueryState.NOT_QUERIED
     ]
 
+    # v5 STEP 6/3. Was a live or replay run even ATTEMPTED on this trip? A run
+    # that never asked and a run that asked and got nothing are different
+    # failures, and until v5 both were reported as `badge`.
+    attempted = [
+        r
+        for r in flights
+        if r.leg.live_outcome is not None
+        and r.leg.live_outcome.state is not LiveQueryState.NOT_QUERIED
+    ]
+
     scoreable = [r for r in flights if r.leg.points_candidates]
-    if not scoreable and not live:
+    fresh = live + snapshot
+    if not scoreable and not fresh:
         provenance = "none"
-    elif live and not badge and not never_answered and len(live) == len(scoreable):
-        provenance = "live"
-    elif live:
+    elif fresh and not badge and not never_answered and len(fresh) == len(scoreable):
+        # v5. A run whose every scoreable leg was REPLAYED is `snapshot`, not
+        # `live`. It satisfies --require-all-live only when every replayed leg
+        # was live AT CAPTURE TIME - which it was, because a snapshot only
+        # exists for a leg the API answered. A manifest row that replays to a
+        # badge fallback lands in `badge_fallback` below instead, so replay
+        # reproduces a number without laundering it.
+        provenance = "snapshot" if snapshot and not live else "live"
+    elif fresh:
         provenance = "mixed"
+    elif attempted:
+        # v5 STEP 6. A live or replay attempt was made, it produced nothing
+        # usable on any leg, and the fixture's badges answered instead. That is
+        # NOT the same as a run that never asked, and quoting it needs the
+        # qualifier attached - so it gets its own value rather than sharing
+        # `badge` with the offline case.
+        provenance = "badge_fallback"
     else:
         provenance = "badge"
 
@@ -905,9 +983,35 @@ def provenance_counts(results: List[LegResult]) -> Dict[str, object]:
             f"Seats.aero availability ({', '.join(r.leg.id for r in live)}). "
             f"Cash is from captures, as it always is."
         )
+    elif provenance == "snapshot":
+        note = (
+            f"{len(snapshot)} of {len(flights)} flight legs REPLAYED from "
+            f"committed snapshots ({', '.join(r.leg.id for r in snapshot)}). "
+            f"NOTHING was asked of Seats.aero on this run. Every one of those "
+            f"legs was answered live AT CAPTURE TIME, which is why this margin "
+            f"is quotable - but it is a reproducible number, not a fresh one, "
+            f"and each leg names its own capture date. Cash is from captures, "
+            f"as it always is."
+        )
+    elif provenance == "badge_fallback":
+        note = (
+            f"A live/replay run WAS attempted and produced nothing scoreable on "
+            f"any of the {len(flights)} flight legs "
+            f"({', '.join(r.leg.id for r in attempted)}). The fixture's badges "
+            f"answered instead. THIS NUMBER IS QUOTABLE ONLY WITH THAT "
+            f"QUALIFIER ATTACHED: it is a badge margin produced by a run that "
+            f"asked for live data and did not get it."
+        )
     elif provenance == "mixed":
-        parts = [f"{len(live)} of {len(flights)} flight legs live "
-                 f"({', '.join(r.leg.id for r in live)})"]
+        parts = []
+        if live:
+            parts.append(f"{len(live)} of {len(flights)} flight legs live "
+                         f"({', '.join(r.leg.id for r in live)})")
+        if snapshot:
+            parts.append(
+                f"{len(snapshot)} replayed from snapshots "
+                f"({', '.join(r.leg.id for r in snapshot)})"
+            )
         if badge:
             parts.append(
                 f"{len(badge)} badge-derived ({', '.join(r.leg.id for r in badge)})"
@@ -969,6 +1073,8 @@ def provenance_counts(results: List[LegResult]) -> Dict[str, object]:
         "legs_unreadable_ids": unreadable,
         "legs_flight_total": len(flights),
         "legs_points_live": len(live),
+        "legs_points_snapshot": len(snapshot),
+        "legs_snapshot_ids": [r.leg.id for r in snapshot],
         "legs_points_badge": len(badge),
         "legs_points_unavailable": len(unavailable),
         "legs_no_award_space": len(no_space),

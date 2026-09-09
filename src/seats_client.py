@@ -711,6 +711,18 @@ class SeatsClient:
             # it names all four locations in priority order.
             raise ValueError(str(e)) from None
         self.api_key = self.key_resolution.key
+        self._init_run_state()
+
+    def _init_run_state(self) -> None:
+        """
+        Every `last_*` field, set to its "nothing has happened yet" value.
+
+        Split out of `__init__` in v5 Step 3 so `SnapshotTransport` - which
+        needs the same bookkeeping and NO key, because a replay asks nobody
+        anything - initialises it by calling this rather than by copying it.
+        Two copies of this list is how a replay ends up with a stale flag from
+        a previous run attached to a number.
+        """
         # Records why the last search failed, so callers can tell "no award
         # availability" apart from "we never reached the API". Conflating those
         # two is how a tool ends up silently reporting an empty result as fact -
@@ -730,6 +742,13 @@ class SeatsClient:
         self.last_pages_fetched: int = 0
         self.last_rows_seen: int = 0
         self.last_rows_skipped: int = 0
+        # v5 STEP 3, WAY (8). Provenance of the BYTES on the replay path. A
+        # normal client resets these to False/"" on every search, so a live run
+        # can never claim to be a replay by inheriting a stale flag.
+        self.last_replayed_from_snapshot: bool = False
+        self.last_snapshot_content_hash: str = ""
+        self.last_snapshot_captured_at = None
+        self.last_snapshot_parser_version: str = ""
 
     # -- rate limiting ---------------------------------------------------
 
@@ -1163,6 +1182,12 @@ class SeatsClient:
         """
         self.last_error = None
         self.last_pagination_note = ""
+        # v5 STEP 3. Reset before anything else, so a live search can never
+        # inherit a replay flag from an earlier call on the same object.
+        self.last_replayed_from_snapshot = False
+        self.last_snapshot_content_hash = ""
+        self.last_snapshot_captured_at = None
+        self.last_snapshot_parser_version = ""
         self.last_incomplete = False
         self.last_incomplete_reason = ""
         self.last_pages_fetched = 0

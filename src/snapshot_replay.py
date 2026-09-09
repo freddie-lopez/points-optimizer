@@ -52,6 +52,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from src import response_cache
+from src.seats_client import (
+    PARSER_VERSION,
+    RawSearchResult,
+    SeatsAeroError,
+    SeatsClient,
+)
 
 # The prefix that marks a manifest hash in output. Short enough to read aloud,
 # distinctive enough to grep for.
@@ -497,3 +503,163 @@ def manifest_hash(rows: List[ManifestRow], snapshot_dir: Path) -> str:
 def parser_versions(rows: List[ManifestRow]) -> List[str]:
     """The distinct parser versions the selected rows were captured under."""
     return sorted({r.parser_version_display for r in rows})
+
+
+# ---------------------------------------------------------------------------
+# The transport
+# ---------------------------------------------------------------------------
+
+
+class SnapshotTransport(SeatsClient):
+    """
+    A SeatsClient-shaped object whose `search_raw` reads a COMMITTED FILE.
+
+    THE SEAM, AND WHY IT IS A SUBSTITUTION RATHER THAN A BRANCH.
+
+        --live          : query_leg -> client.search_raw -> HTTP (or disk cache)
+        --from-snapshot : query_leg -> this.search_raw   -> committed file
+        --offline       : query_leg not called at all
+
+    `query_leg` does not learn a third branch. It gets a different object, and
+    everything downstream of `search_raw` - parse, award_to_candidate, _record,
+    apply_live, evaluate_trip, the formatter - is byte-identical across all
+    three. That equality is the property the replay tests assert directly, and
+    it is the only reason a replay can be trusted to reproduce a live run.
+
+    `search()` is INHERITED, not overridden. Overriding it would mean a second
+    copy of the parse-and-bookkeeping path, which could drift from the real one
+    and produce a replay that differs from the live run it replays.
+
+    IT SPENDS NO BUDGET AND CONSULTS NO CACHE. `spends_api_budget` is False, and
+    the in-process award cache is an INSTANCE dict rather than the class one, so
+    a replay can neither read a live run's parsed awards nor leave any behind.
+    """
+
+    # Instance-level in __init__; declared here so the attribute is documented.
+    spends_api_budget = False
+
+    def __init__(
+        self,
+        rows: List[ManifestRow],
+        snapshot_dir: Path,
+        manifest_hash_value: str = "",
+    ):
+        # __init__ is NOT called on the base class: it resolves an API key, and
+        # a replay must not require one. Only the run-state bookkeeping is
+        # reused, from the one method that owns it.
+        self.api_key = None
+        self.key_resolution = None
+        self.snapshot_dir = Path(snapshot_dir)
+        self.manifest_hash = manifest_hash_value
+        self.current_parser_version = PARSER_VERSION
+        self._by_leg: Dict[str, ManifestRow] = {r.leg_id: r for r in rows}
+        # Isolated from SeatsClient.CACHE / CACHE_META, which are CLASS
+        # attributes shared by every client in the process. Without this a
+        # replay could return a previous live run's parsed awards and report
+        # them as served from cache - which way (8) forbids by construction.
+        self.CACHE: Dict[str, Any] = {}
+        self.CACHE_META: Dict[str, Dict[str, Any]] = {}
+        self._init_run_state()
+
+    def rows_for(self, leg_id: str) -> Optional[ManifestRow]:
+        return self._by_leg.get(leg_id)
+
+    def search_raw(
+        self,
+        origin: str,
+        destination: str,
+        date_range,
+        *,
+        cache=None,
+        cache_ttl=None,
+        refresh: bool = False,
+        leg_id: Optional[str] = None,
+        trip_id: Optional[str] = None,
+    ):
+        """
+        The archived pages for this leg, in the shape the transport returns.
+
+        Raises SeatsAeroError - which `query_leg` already turns into an
+        API_ERROR outcome - if the leg has no row. In practice this cannot
+        happen: `verify_covers_legs` refuses the whole run before anything is
+        scored. It is here so the failure has a state rather than a traceback.
+        """
+        row = self._by_leg.get(leg_id or "")
+        if row is None:
+            raise SeatsAeroError(
+                f"no manifest row for leg {leg_id!r}. This run should have been "
+                f"refused before scoring; it is being reported as a transport "
+                f"failure rather than as an absence of award space."
+            )
+
+        path = self.snapshot_dir / row.snapshot_name
+        envelope = json.loads(path.read_text())
+        pages = envelope.get("pages") or []
+        meta = envelope.get("_meta") or {}
+        recomputed = response_cache.content_hash(pages)
+
+        # WAY (8)'s fields, set on the transport for `query_leg` to read - the
+        # same `getattr` pattern every other piece of byte provenance uses.
+        self.last_replayed_from_snapshot = True
+        self.last_snapshot_content_hash = recomputed
+        self.last_snapshot_captured_at = _parse_dt(str(meta.get("fetched_at") or ""))
+        self.last_snapshot_parser_version = str(meta.get("parser_version") or UNKNOWN)
+
+        return RawSearchResult(
+            pages=pages,
+            http_status=meta.get("http_status"),
+            pages_fetched=len(pages),
+            pagination_note=str(meta.get("pagination_note") or ""),
+            # NOT a cache hit. The cache is not constructed on this path at all,
+            # and `LiveLegOutcome` RAISES on replayed + served_from_cache.
+            served_from_cache=False,
+            fetched_at=_parse_dt(str(meta.get("fetched_at") or "")),
+            request=dict(meta.get("request") or {}),
+            request_key=str(meta.get("request_key") or ""),
+            snapshot_name=row.snapshot_name,
+            manifest_key="",
+            budget_exhausted=False,
+            # Coverage is RECOMPUTED from the archived pages by the parser, not
+            # copied from `_meta`: `_meta` records what the fetch believed, and
+            # the bytes are what the replay actually has.
+            incomplete=False,
+            incomplete_reason="",
+        )
+
+
+def verify_covers_legs(
+    rows: List[ManifestRow], queryable_leg_ids: List[str]
+) -> List[Problem]:
+    """
+    Every queryable leg must have a row. A leg with none refuses the WHOLE run.
+
+    This is axis (1) - "we never asked" - on the replay path, and it is
+    deliberately NOT allowed to become a NOT_QUERIED leg inside a hashed run.
+    A percentage printed beside a hash must cover everything the trip contains,
+    or the hash certifies a subset and looks like it certifies the whole.
+    """
+    have = {r.leg_id for r in rows}
+    problems = [
+        Problem(
+            "leg_not_covered",
+            None,
+            f"leg {leg_id} is queryable and the manifest has no row for it. A "
+            f"partial replay would print a percentage beside a hash that covers "
+            f"only part of the trip.",
+        )
+        for leg_id in queryable_leg_ids
+        if leg_id not in have
+    ]
+    extra = sorted(have - set(queryable_leg_ids))
+    if extra:
+        problems.append(
+            Problem(
+                "row_for_unknown_leg",
+                None,
+                f"the manifest has rows for legs this trip does not contain "
+                f"({', '.join(extra)}). It was written for a different trip, and "
+                f"hashing it here would quote a number against the wrong "
+                f"itinerary.",
+            )
+        )
+    return problems
