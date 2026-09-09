@@ -743,7 +743,30 @@ def print_trip_totals(
     # wrap would put the number on one physical line and the hash on another,
     # which is the failure this rule exists to prevent.
     manifest_hash = str(totals.get("manifest_hash") or "")
-    hash_suffix = f"  {manifest_hash}" if manifest_hash else ""
+    # v5 FIX C-2. THE QUALIFIER, NOT JUST THE HASH, RIDES WITH THE NUMBER.
+    #
+    # The hash used to be appended to every percentage on every --from-snapshot
+    # run, unconditionally. A replay in which not one snapshot contributed a
+    # point still printed the OFFLINE Google-badge margin - byte-identical -
+    # with `mh_...` glued to it, while the qualifier that corrects it
+    # (`badge_fallback`) sat two rows below, where a copy-paste loses it. The
+    # only token on the number was the false one.
+    #
+    # Step 6's acceptance criterion is "the qualifier is on the same line". It
+    # is now implemented for EVERY provenance, and the hash is quoted only
+    # against a number the hashed bytes actually produced: `snapshot` means
+    # every scoreable leg was replayed from them. Anything else says what the
+    # number really is, on the number.
+    hash_covers_margin = bool(manifest_hash) and provenance == "snapshot"
+    if hash_covers_margin:
+        qualifier = f"  ({provenance} {manifest_hash})"
+    elif manifest_hash:
+        qualifier = f"  ({provenance} - NOT from {manifest_hash})"
+    else:
+        qualifier = f"  ({provenance})"
+    # Kept as a separate name so the "percentage never without its hash" rule
+    # reads the same as before wherever the hash IS earned.
+    hash_suffix = qualifier
 
     if not executable:
         # C-3: an unfundable plan gets no percentage at all. There is nothing to
@@ -787,10 +810,17 @@ def print_trip_totals(
 
     if manifest_hash:
         # Rows that carry NO percentage, so their length cannot wrap a number
-        # away from its hash.
+        # away from its hash. C-2: when the margin did NOT come from these
+        # bytes, this row says so in its own label - a reader who sees a hash
+        # anywhere on the page must not have to work out what it covers.
         table.add_row(
-            "[cyan]  replayed from manifest[/cyan]",
-            f"[cyan]{manifest_hash}[/cyan]",
+            "[cyan]  replayed from manifest[/cyan]"
+            if hash_covers_margin
+            else "[bold yellow]  replayed from manifest (these bytes produced\n"
+            "NO part of the margin above)[/bold yellow]",
+            f"[cyan]{manifest_hash}[/cyan]"
+            if hash_covers_margin
+            else f"[bold yellow]{manifest_hash}[/bold yellow]",
         )
         table.add_row(
             "[cyan]  snapshots / parser at capture / parser now[/cyan]",
