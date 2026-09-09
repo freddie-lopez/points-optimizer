@@ -54,6 +54,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from src import response_cache
 from src.seats_client import (
     PARSER_VERSION,
+    coverage_of_pages as seats_client_coverage,
     RawSearchResult,
     SeatsAeroError,
     SeatsClient,
@@ -605,6 +606,27 @@ class SnapshotTransport(SeatsClient):
         self.last_snapshot_captured_at = _parse_dt(str(meta.get("fetched_at") or ""))
         self.last_snapshot_parser_version = str(meta.get("parser_version") or UNKNOWN)
 
+        # WAY (9). THE ARCHIVE IS A STORAGE LAYER AND IT USED TO ANSWER
+        # `incomplete=False` LITERALLY, with a comment claiming the parser
+        # recomputed coverage. It did not. Both halves are real now:
+        #   * `provenance_from_meta` restores every field the LiveLegOutcome
+        #     invariants read, through the SAME derived key set `put` writes -
+        #     so a field cannot be persisted and not restored;
+        #   * `coverage_of_pages` re-asks the archived bytes the question the
+        #     live pagination loop asks, so a snapshot written before way (9)
+        #     was known - which carries no coverage keys at all - still replays
+        #     as INCOMPLETE when its last page advertises a page nobody kept.
+        # A truncated capture therefore renders the same way on the fetch that
+        # made it and on every read of it afterwards.
+        stored = response_cache.provenance_from_meta(meta)
+        recomputed, recomputed_why = seats_client_coverage(pages)
+        incomplete = bool(stored.get("incomplete")) or recomputed
+        reasons = [
+            r
+            for r in (str(stored.get("incomplete_reason") or ""), recomputed_why)
+            if r
+        ]
+
         return RawSearchResult(
             pages=pages,
             http_status=meta.get("http_status"),
@@ -619,11 +641,8 @@ class SnapshotTransport(SeatsClient):
             snapshot_name=row.snapshot_name,
             manifest_key="",
             budget_exhausted=False,
-            # Coverage is RECOMPUTED from the archived pages by the parser, not
-            # copied from `_meta`: `_meta` records what the fetch believed, and
-            # the bytes are what the replay actually has.
-            incomplete=False,
-            incomplete_reason="",
+            incomplete=incomplete,
+            incomplete_reason="; ".join(reasons) if incomplete else "",
         )
 
 

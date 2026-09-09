@@ -118,6 +118,89 @@ def content_hash(pages: List[Dict[str, Any]]) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
+# ---------------------------------------------------------------------------
+# WAY (9): the round trip, in ONE place, keyed off ONE derived set
+# ---------------------------------------------------------------------------
+#
+# Both halves loop over `models.PERSISTED_PROVENANCE_KEYS`, which is derived
+# from the fields LiveLegOutcome's invariants read (see the classification in
+# models.py). Neither half has a key list of its own, so a field cannot be
+# written and not read, or read and not written.
+
+# How a persisted value is turned back into the type the transport uses. Keys
+# with no entry here round-trip as themselves.
+_FROM_JSON = {"fetched_at": lambda v: _parse_iso(str(v or "")) if v else None}
+_TO_JSON = {"fetched_at": lambda v: _iso(v) if v else None}
+
+
+def _persisted_keys():
+    """The derived key set, imported lazily (models does not import this)."""
+    from src import models
+
+    return models.PERSISTED_PROVENANCE_KEYS
+
+
+def provenance_meta(source: Any) -> Dict[str, Any]:
+    """
+    The persisted provenance of a fetch, read off whatever carries it.
+
+    `source` is a `RawSearchResult` or any object/dict with the same field
+    names - which they are, by construction: `CARRIED_BY_THE_TRANSPORT` maps
+    each outcome field to the ONE string used as both the transport's field name
+    and the `_meta` key.
+    """
+    from src import models
+
+    out: Dict[str, Any] = {}
+    for key in models.PERSISTED_PROVENANCE_KEYS:
+        value = (
+            source.get(key) if isinstance(source, dict) else getattr(source, key, None)
+        )
+        out[key] = _TO_JSON.get(key, lambda v: v)(value)
+    return out
+
+
+def provenance_from_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    The persisted provenance, as keyword arguments for `RawSearchResult`.
+
+    A key that is absent comes back as None, NOT as a default that asserts
+    something: the caller unions it with the coverage RECOMPUTED from the stored
+    bytes, so a pre-way-(9) envelope that carries no `incomplete` key is read
+    from its pages rather than assumed complete.
+    """
+    from src import models
+
+    meta = meta or {}
+    out: Dict[str, Any] = {}
+    for key in models.PERSISTED_PROVENANCE_KEYS:
+        if key not in meta:
+            out[key] = None
+            continue
+        out[key] = _FROM_JSON.get(key, lambda v: v)(meta.get(key))
+    return out
+
+
+def assert_persists_provenance(meta: Dict[str, Any], where: str) -> None:
+    """
+    Refuse to write an envelope that drops a field an invariant depends on.
+
+    ValueError, not assert: `python -O` deletes asserts, and this is the guard
+    that stops way (9) coming back the next time somebody edits an envelope.
+    """
+    from src import models
+
+    missing = [k for k in models.PERSISTED_PROVENANCE_KEYS if k not in (meta or {})]
+    if missing:
+        raise ValueError(
+            f"{where} is missing {missing}, which LiveLegOutcome's invariants "
+            f"read. An envelope that drops it answers differently on the second "
+            f"read than on the first: that is way (9), and it is the reason a "
+            f"truncated result used to come back from the cache as a confident "
+            f"finding of no award space."
+        )
+
+
 # How many hex characters of `content_hash` go in the manifest column. Short
 # enough to read in a table, long enough that a collision is not a thing anyone
 # needs to think about. The FULL hash is recomputed from the file at verify
@@ -368,9 +451,20 @@ class ResponseCache:
                 "state": meta.get("state", ""),
                 "awards_parsed": meta.get("awards_parsed"),
                 "rows_seen": meta.get("rows_seen"),
+                # WAY (9). NOT an entry in this literal: the keys below are
+                # DERIVED from the fields LiveLegOutcome's invariants read, and
+                # `assert_persists_provenance` refuses the write if one is
+                # missing. The literal above is what a reader wants; the derived
+                # block is what the invariants require, and the two must not be
+                # the same list maintained by hand.
+                **provenance_meta({**meta, "fetched_at": fetched_at}),
+                # Named so a reviewer of an envelope can see WHICH keys carry an
+                # invariant rather than having to know.
+                "provenance_keys": list(_persisted_keys()),
             },
             "pages": pages,
         }
+        assert_persists_provenance(envelope["_meta"], where="a Seats.aero cache entry")
 
         text = json.dumps(envelope, indent=2, sort_keys=False)
         assert_no_key_material(text, where="a Seats.aero cache entry")

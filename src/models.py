@@ -1,4 +1,5 @@
 """Data models for points transfer optimizer."""
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
@@ -886,13 +887,41 @@ class LiveLegOutcome:
           LiveQueryState whitelist. The intent - that a replayed finding is
           still a finding - is what is implemented.)
 
-    HOW TO EXTEND THIS. If you find an eighth way, it does NOT get to be a new
+    AXIS 6 - WILL THE ANSWER STILL BE THE SAME ANSWER NEXT TIME IT IS READ?
+      (9) EVERY INVARIANT ABOVE IS ENFORCED AT CONSTRUCTION TIME AND NONE OF
+          THEM SURVIVED A ROUND TRIP THROUGH STORAGE. The fields the invariants
+          READ were not the fields storage WROTE, so the same bytes answered
+          differently depending on how many times they had been read: a
+          truncated fetch was ANSWERED_INCOMPLETE live, and on the second read -
+          from the disk cache or from `--from-snapshot` - it was
+          NO_AWARD_SPACE, "THIS IS A FINDING: there is no award to buy on this
+          date". Nothing raised, because by the time the outcome was built the
+          truncation no longer existed to raise about.
+          -> fields: whichever ones the invariants read. There is no new field
+          here, and that is the point of the way: it is a property of the
+          STORAGE LAYERS, not of one axis.
+          INVARIANT (and it is not in `__post_init__`, because a constructor
+          cannot see a file): every field an invariant reads is CLASSIFIED
+          below, and the classification is checked against the fields the
+          invariants actually read - derived from this method's own source, not
+          from a list somebody maintains. A field classified
+          `CARRIED_BY_THE_TRANSPORT` is written by every storage layer and read
+          back by every storage layer through ONE derived key set
+          (`PERSISTED_PROVENANCE_KEYS`), so a tenth field cannot be added
+          without either classifying it - or this module refusing to import.
+          Coverage is additionally RECOMPUTED FROM THE STORED BYTES on read
+          (`seats_client.coverage_of_pages`), so bytes written before this way
+          was known still answer the same way twice.
+
+    HOW TO EXTEND THIS. If you find a tenth way, it does NOT get to be a new
     branch inside some renderer. It gets: a FIELD on this dataclass, a `raise`
     in `__post_init__` forbidding the combination that would let it be reported
-    as a finding, an unconditional clause in `render()`, and a numbered entry
-    above. `is_a_finding_about_award_space` is a WHITELIST for the same reason -
-    a new state cannot silently default to "yes, this tells you about award
-    space".
+    as a finding, an unconditional clause in `render()`, a numbered entry above,
+    AND - way (9) - a classification below saying whether it is recomputed from
+    the bytes, carried by the transport (therefore persisted everywhere), or
+    local to one run. `is_a_finding_about_award_space` is a WHITELIST for the
+    same reason - a new state cannot silently default to "yes, this tells you
+    about award space".
     """
 
     leg_id: str
@@ -1274,6 +1303,174 @@ class LiveLegOutcome:
         # `self.note` is guaranteed non-empty by __post_init__ for NOT_QUERIED,
         # so there is no default reason to invent here any more.
         return f"Not queried: {self.note}."
+
+
+# ---------------------------------------------------------------------------
+# WAY (9): the classification, and why it is derived rather than listed
+# ---------------------------------------------------------------------------
+#
+# `ResponseCache.put` used to build its `_meta` from an EXPLICIT KEY LIST, and
+# `incomplete` / `incomplete_reason` were handed to it and were not on the list.
+# `SnapshotTransport.search_raw` hard-coded `incomplete=False`. Both are the
+# same mistake: the set of fields storage persists was maintained by hand, next
+# to a set of invariants that grew. A list someone must remember to update is
+# not an invariant, and this project has now been caught by that shape twice
+# (way (6) reaching nothing, and then way (6) reaching nothing THROUGH STORAGE).
+#
+# So the persisted set is DERIVED from the fields the invariants read. Adding a
+# field to an invariant without classifying it here makes this module fail to
+# import - which is louder than any test, and survives `python -O`.
+
+
+def _fields_read_by_invariants(cls) -> frozenset:
+    """
+    Every `self.X` that `cls.__post_init__` reads, parsed out of its own source.
+
+    Deliberately AST over source rather than a maintained list: the question
+    "which fields do the invariants depend on?" has exactly one truthful answer
+    and it is the code. `inspect.getsource` works under `python -O` (which
+    strips asserts, not docstrings or source files). If the source genuinely
+    cannot be read - a frozen or zipped deployment - the classification below
+    cannot be checked against anything, and `INVARIANT_FIELDS_DERIVED` records
+    that so a caller can say so rather than assume the check ran.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    try:
+        source = textwrap.dedent(inspect.getsource(cls.__post_init__))
+    except (OSError, TypeError):  # pragma: no cover - frozen deployments only
+        return frozenset()
+    tree = ast.parse(source)
+    names = {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+    }
+    return frozenset(names)
+
+
+# (a) RECOMPUTED FROM THE STORED BYTES on every read, by the parser. Nothing to
+#     persist: the pages ARE the storage, and a second read of the same pages
+#     produces the same numbers. Persisting these would create a second source
+#     of truth that could disagree with the bytes.
+RECOMPUTED_FROM_BYTES = frozenset(
+    {
+        "state",
+        "awards_parsed",
+        "rows_seen",
+        "rows_skipped",
+        "rows_unreadable",
+        "rows_without_availability",
+    }
+)
+
+# (b) CARRIED BY THE TRANSPORT, therefore MUST ROUND-TRIP THROUGH EVERY STORAGE
+#     LAYER. Facts about the fetch that the bytes alone do not state. The value
+#     is the `_meta` key AND the `RawSearchResult` field name - they are
+#     deliberately the same string, so a rename cannot make the two halves of a
+#     round trip drift apart silently.
+#
+#     `cache_fetched_at` was the only member of this set that ever worked, which
+#     is exactly why way (7) survived storage and way (6) did not.
+CARRIED_BY_THE_TRANSPORT = {
+    "result_incomplete": "incomplete",
+    "incomplete_reason": "incomplete_reason",
+    "cache_fetched_at": "fetched_at",
+}
+
+# (c) LOCAL TO THIS RUN. Facts about THIS read, not about the bytes: who
+#     answered, whether a file or a socket produced them, which leg asked.
+#     Persisting these would let a run inherit another run's provenance, which
+#     is the laundering ways (7) and (8) exist to prevent.
+LOCAL_TO_THIS_RUN = frozenset(
+    {
+        "leg_id",
+        "provenance",
+        "error",
+        "note",
+        "served_from_cache",
+        "replayed_from_snapshot",
+        "snapshot_content_hash",
+    }
+)
+
+INVARIANT_FIELDS = _fields_read_by_invariants(LiveLegOutcome)
+INVARIANT_FIELDS_DERIVED = bool(INVARIANT_FIELDS)
+
+# The one set every storage layer loops over. Writers write these keys, readers
+# read these keys, and neither has a list of its own.
+PERSISTED_PROVENANCE_KEYS = tuple(sorted(CARRIED_BY_THE_TRANSPORT.values()))
+
+
+def _check_way_nine_classification() -> None:
+    """
+    Every field an invariant reads is classified exactly once. Import-time.
+
+    A ValueError rather than an assert, for the reason every other rule in this
+    file is a ValueError: `python -O` deletes asserts and this is a rule that
+    must survive every optimisation flag.
+    """
+    declared = (
+        set(RECOMPUTED_FROM_BYTES)
+        | set(CARRIED_BY_THE_TRANSPORT)
+        | set(LOCAL_TO_THIS_RUN)
+    )
+    overlap = (
+        (RECOMPUTED_FROM_BYTES & set(CARRIED_BY_THE_TRANSPORT))
+        | (RECOMPUTED_FROM_BYTES & LOCAL_TO_THIS_RUN)
+        | (set(CARRIED_BY_THE_TRANSPORT) & LOCAL_TO_THIS_RUN)
+    )
+    if overlap:
+        raise ValueError(
+            f"way (9): {sorted(overlap)} is classified twice. A field is "
+            f"recomputed from the bytes, carried by the transport, or local to "
+            f"this run - exactly one of the three."
+        )
+    known = {f.name for f in dataclasses.fields(LiveLegOutcome)}
+    invented = declared - known
+    if invented:
+        raise ValueError(
+            f"way (9): {sorted(invented)} is classified but is not a field of "
+            f"LiveLegOutcome. A classification that names nothing protects "
+            f"nothing."
+        )
+    unclassified = (INVARIANT_FIELDS & known) - declared
+    if unclassified:
+        raise ValueError(
+            f"way (9): the invariants in LiveLegOutcome.__post_init__ read "
+            f"{sorted(unclassified)}, which no storage classification covers. "
+            f"Every field an invariant depends on must be recomputed from the "
+            f"bytes, carried by the transport (and therefore persisted by every "
+            f"storage layer), or explicitly local to one run. An unclassified "
+            f"field is one that answers differently on the second read - that "
+            f"is way (9), and it is not allowed to be added silently."
+        )
+
+
+_check_way_nine_classification()
+
+
+def assert_transport_carries(raw_cls) -> None:
+    """
+    Every persisted key is a real field of the transport's result type.
+
+    Called at import of `seats_client`, so the two halves of the round trip -
+    "what the invariants need" and "what the transport can supply" - are checked
+    against each other in the running process rather than in a test somebody may
+    not run.
+    """
+    fields = {f.name for f in dataclasses.fields(raw_cls)}
+    missing = set(PERSISTED_PROVENANCE_KEYS) - fields
+    if missing:
+        raise ValueError(
+            f"way (9): {sorted(missing)} must round-trip through storage but "
+            f"{raw_cls.__name__} has no such field, so nothing can carry it "
+            f"from the bytes to LiveLegOutcome."
+        )
 
 
 @dataclass

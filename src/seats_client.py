@@ -40,7 +40,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-from src import config, regions, response_cache
+from src import config, models, regions, response_cache
 from src.models import Award, DateRange
 
 
@@ -204,6 +204,50 @@ class RawSearchResult:
     @property
     def rows_seen(self) -> int:
         return sum(len(_rows_of(p)) for p in self.pages)
+
+
+# WAY (9), CHECKED IN THE RUNNING PROCESS. Every field the LiveLegOutcome
+# invariants need carried from the bytes must exist on the transport's result
+# type, under the same name storage uses. Raises at import if it does not.
+models.assert_transport_carries(RawSearchResult)
+
+
+def coverage_of_pages(pages: List[Dict[str, Any]]) -> Tuple[bool, str]:
+    """
+    Truncation as a FUNCTION OF THE STORED BYTES. Way (9)'s second half.
+
+    Persisting `incomplete` fixes every envelope written from now on. It does
+    nothing for the ones already on disk, and `SnapshotTransport` used to carry
+    a comment claiming coverage "is RECOMPUTED from the archived pages by the
+    parser" while passing `incomplete=False`. This is that recomputation, and it
+    is now true: the last archived page is asked the same question the live
+    pagination loop asks it, with the same code. If it says there is more, the
+    archive ends before the result set does, whatever `_meta` claims.
+
+    Returns (incomplete, reason). An EMPTY page list is not an answer either way
+    and is refused upstream (a zero-page snapshot is not a fetch); it returns
+    False here rather than inventing a reason.
+    """
+    if not pages:
+        return False, ""
+    last = pages[-1]
+    if not isinstance(last, dict):
+        return False, ""
+    next_params, stall_reason = SeatsClient._next_page_params(last, None)
+    if stall_reason:
+        return True, (
+            f"RECOMPUTED FROM THE STORED BYTES: the last archived page says "
+            f"{stall_reason}."
+        )
+    if next_params:
+        return True, (
+            "RECOMPUTED FROM THE STORED BYTES: the last archived page advertises "
+            "a further page ("
+            + ", ".join(f"{k}={v}" for k, v in sorted(next_params.items()))
+            + ") which is not in this archive, so these pages are part of the "
+            "result set and not the whole of it."
+        )
+    return False, ""
 
 
 # ---------------------------------------------------------------------------
@@ -874,6 +918,19 @@ class SeatsClient:
         if cache is not None and not refresh:
             hit = cache.get(key, ttl=cache_ttl)
             if hit is not None:
+                # WAY (9). The persisted provenance and the coverage recomputed
+                # from the cached bytes, unioned: a value that was stored is
+                # honoured, a value that was never stored (an envelope written
+                # before way (9) was known) is recovered from the pages. Neither
+                # half can quietly answer "complete" for the other.
+                stored = response_cache.provenance_from_meta(hit.meta)
+                recomputed, recomputed_why = coverage_of_pages(hit.pages)
+                incomplete = bool(stored.get("incomplete")) or recomputed
+                reasons = [
+                    r
+                    for r in (str(stored.get("incomplete_reason") or ""), recomputed_why)
+                    if r
+                ]
                 return RawSearchResult(
                     pages=hit.pages,
                     http_status=hit.http_status,
@@ -890,12 +947,24 @@ class SeatsClient:
                     request=request,
                     request_key=key,
                     cache_path=hit.path,
-                    # MR-1. A truncated result set that was cached used to come
-                    # back with incomplete=False, because the flag was never
-                    # persisted - so the SECOND run of a truncated query lost the
-                    # coverage warning entirely and reported a clean finding.
-                    incomplete=bool(hit.meta.get("incomplete", False)),
-                    incomplete_reason=str(hit.meta.get("incomplete_reason", "")),
+                    # MR-1, MADE TRUE BY WAY (9). `put` now writes the coverage
+                    # keys (derived from the fields the invariants read, not from
+                    # a hand-maintained list), and the pages are re-asked as
+                    # well. Before this, the flag was never persisted, so the
+                    # SECOND run of a truncated query lost the coverage warning
+                    # entirely and reported a clean finding of no award space.
+                    incomplete=incomplete,
+                    incomplete_reason=(
+                        "; ".join(reasons)
+                        if incomplete
+                        else ""
+                    )
+                    or (
+                        "the cached response is INCOMPLETE and the envelope "
+                        "records no reason."
+                        if incomplete
+                        else ""
+                    ),
                 )
 
         pages: List[Dict[str, Any]] = []
@@ -1059,10 +1128,12 @@ class SeatsClient:
                         "leg_id": leg_id,
                         "trip_id": trip_id,
                         "rows_seen": sum(len(_rows_of(p)) for p in pages),
-                        # MR-1: coverage is part of the response's provenance and
-                        # must survive the round trip through the cache.
-                        "incomplete": result.incomplete,
-                        "incomplete_reason": result.incomplete_reason,
+                        # WAY (9). NOT written out by hand: every field an
+                        # invariant reads is derived from the classification in
+                        # models.py and copied off `result` here, so a tenth
+                        # field cannot be added to an invariant and left out of
+                        # the write.
+                        **response_cache.provenance_meta(result),
                     },
                 )
             except OSError as e:
@@ -1216,12 +1287,15 @@ class SeatsClient:
             self.last_snapshot_name = entry.get("snapshot_name")
             self.last_fetched_at = entry.get("fetched_at")
             self.last_request_key = entry.get("request_key", "")
-            # MR-1. The in-process short-circuit replays a PARSED result. If the
-            # bytes behind it were truncated, the replay is truncated too, and
-            # dropping the flag here would make the second call in a process
-            # report a clean finding where the first reported an incomplete one.
-            self.last_incomplete = bool(entry.get("incomplete", False))
-            self.last_incomplete_reason = str(entry.get("incomplete_reason", ""))
+            # MR-1 / WAY (9). The in-process short-circuit replays a PARSED
+            # result. If the bytes behind it were truncated, the replay is
+            # truncated too, and dropping the flag here would make the second
+            # call in a process report a clean finding where the first reported
+            # an incomplete one. Read back through the SAME derived key set the
+            # write above uses.
+            carried = {k: entry.get(k) for k in models.PERSISTED_PROVENANCE_KEYS}
+            self.last_incomplete = bool(carried.get("incomplete", False))
+            self.last_incomplete_reason = str(carried.get("incomplete_reason") or "")
             self.last_served_from_cache = True
             self.last_pagination_note = (
                 f"served from the IN-PROCESS cache; no API call made. The bytes "
@@ -1292,14 +1366,17 @@ class SeatsClient:
                 "rows_without_availability": parsed.rows_without_availability,
                 "unreadable_reasons": list(parsed.unreadable_reasons),
                 "snapshot_name": raw.snapshot_name,
+                "request_key": raw.request_key,
+                "pagination_note": self.last_pagination_note,
+                # WAY (9). THE IN-PROCESS CACHE IS A STORAGE LAYER TOO, and it
+                # gets the same derived key set as the disk cache and the
+                # snapshot - by name, so a tenth carried field lands here
+                # without anyone editing this dict.
+                **{k: getattr(raw, k) for k in models.PERSISTED_PROVENANCE_KEYS},
                 # Bytes fetched THIS run carry no cache timestamp of their own,
                 # so record when we saw them. The replay must not claim they were
                 # fetched during whatever run reads this next.
                 "fetched_at": raw.fetched_at or datetime.now(timezone.utc),
-                "request_key": raw.request_key,
-                "pagination_note": self.last_pagination_note,
-                "incomplete": raw.incomplete,
-                "incomplete_reason": raw.incomplete_reason,
             }
         return self._filter(awards, airlines)
 
