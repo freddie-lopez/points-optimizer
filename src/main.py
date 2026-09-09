@@ -91,6 +91,59 @@ EXIT CODES (the single authoritative list; README.md quotes this one):
         help="Travel date (YYYY-MM-DD) or range (YYYY-MM-DD:YYYY-MM-DD)",
     )
 
+    build = parser.add_argument_group(
+        "building a trip (v5) - writes a fixture that can ONLY be scored live"
+    )
+    build.add_argument(
+        "--new-trip",
+        dest="new_trip",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Write tests/fixtures/trips/NAME.json from the flags below. The "
+            "fixture carries NO points_candidates key on any leg - not an empty "
+            "one, none - so the only way it can ever be scored on points is "
+            "--live or --from-snapshot. Unknown airport codes are refused, not "
+            "guessed, and each leg's description is GENERATED from its codes so "
+            "the two cannot disagree."
+        ),
+    )
+    build.add_argument(
+        "--leg",
+        action="append",
+        dest="legs",
+        metavar="ORIGIN:DEST:YYYY-MM-DD:CASH_USD",
+        help="A flight leg; repeatable. Codes are validated against data/airports.csv.",
+    )
+    build.add_argument(
+        "--hotel",
+        action="append",
+        dest="hotels",
+        metavar="NAME:CHECKIN:NIGHTS:CASH_USD",
+        help=(
+            "A hotel leg; repeatable. Gets no origin/destination - Seats.aero is "
+            "flights-only and a hotel leg carrying airport codes would be queried."
+        ),
+    )
+    build.add_argument(
+        "--travelers",
+        type=str,
+        default="1",
+        metavar="N",
+        help="Travellers on every leg (default 1). APD is charged PER PASSENGER.",
+    )
+    build.add_argument(
+        "--cabin",
+        default="Y",
+        metavar="Y|W|J|F",
+        help="Cabin for every flight leg (default Y).",
+    )
+    build.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing NAME.json. Without this an existing file is refused.",
+    )
+
     bal = parser.add_argument_group("wallet (REQUIRED - nothing is assumed)")
     bal.add_argument(
         "--wallet",
@@ -329,6 +382,35 @@ def print_key_banner(console: Console, resolution=None, note: str = "") -> None:
         console.print(f"[dim]Seats.aero key: not required ({note})[/dim]")
         return
     console.print(f"[dim]{resolution.describe()}[/dim]")
+
+
+def run_new_trip(args, console: Console) -> int:
+    """
+    Build a fixture from the flags, echo it, write it, and say what it can't do.
+
+    Emits NO scored number. The one number it writes is the cash amount the
+    user typed, echoed back before the write.
+    """
+    from src import trip_builder
+
+    name = trip_builder.validate_name(args.new_trip)
+    travelers = trip_builder.validate_travelers(args.travelers)
+    cabin = trip_builder.validate_cabin(args.cabin)
+    flights = [trip_builder.parse_leg_flag(raw) for raw in (args.legs or [])]
+    hotels = [trip_builder.parse_hotel_flag(raw) for raw in (args.hotels or [])]
+    fixture = trip_builder.build_fixture(name, flights, hotels, travelers, cabin)
+
+    for line in trip_builder.echo_lines(fixture):
+        console.print(f"[cyan]{line}[/cyan]")
+
+    path = trip_builder.write_fixture(fixture, force=bool(args.force))
+    console.print(f"[green]Wrote {path}[/green]")
+    console.print(
+        "[yellow]This fixture has NO points prices. Score it with:[/yellow]\n"
+        f"[yellow]  python -m src.main --trip-fixture {name}.json --live "
+        f"--balance UR=<n> --card \"<card>\"[/yellow]"
+    )
+    return 0
 
 
 def parse_date_range(date_str: str) -> DateRange:
@@ -876,6 +958,8 @@ def main() -> int:
                 "one of the two flags you typed did nothing.[/red]"
             )
             return 1
+        if getattr(args, "new_trip", None):
+            return run_new_trip(args, console)
         if args.trip_fixture:
             return run_fixture(args, console)
         return run_search(args, console)
