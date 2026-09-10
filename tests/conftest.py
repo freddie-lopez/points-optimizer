@@ -38,3 +38,80 @@ def no_network_egress(monkeypatch):
     monkeypatch.setattr(requests, "post", _refuse)
     monkeypatch.setattr(requests.Session, "get", _refuse)
     monkeypatch.setattr(requests.Session, "request", _refuse)
+
+
+# ---------------------------------------------------------------------------
+# THE SUITE OWNS ITS ENVIRONMENT - in this process AND in every child.
+#
+# The guard above only patches `requests` in THIS process. Most CLI tests run
+# `python -m src.main` as a SUBPROCESS, which it cannot reach, and on Tsuki's
+# Mac seven tests failed because of what leaked into those children:
+#
+#   * his REAL key. SEATS_AERO_KEY is exported from ~/.zshrc, children inherit
+#     os.environ, and nothing removed it. They reached the live API.
+#   * a FAKE key, in the sandbox. `config.load_env()` writes os.environ
+#     directly, and a key-resolution test called it after
+#     `monkeypatch.delenv(..., raising=False)` - which records nothing for an
+#     absent variable - so "from_repo" leaked into every later test. Run alone,
+#     the seven "no network" tests exited 1 ("no key"), not 3. They only ever
+#     passed because of another test's leak meeting the sandbox's egress block.
+#   * his real runtime CACHE. `main` builds its cache on config.CACHE_DIR, the
+#     repo's data/cache/, and archives into config.SNAPSHOT_DIR - the COMMITTED
+#     corpus. A test asking for Trip B's own B1 got a cache hit from his live
+#     run. A pytest run could write fixtures.
+#
+# So, per test: the environment is snapshotted and restored whole; the key is
+# gone; HOME, the key files, the cache and the snapshot directory point into
+# tmp; and every child gets the same, through environment variables it reads
+# at import, plus a sitecustomize that makes `requests` raise ConnectionError.
+# "No network" is now a stated property of the harness, not of the machine.
+# ---------------------------------------------------------------------------
+import os
+from pathlib import Path
+
+CHILD_GUARD_DIR = Path(__file__).parent / "_child_guard"
+# Refused before any socket opens: port 9 on loopback is the discard port and
+# nothing listens there. A belt to the sitecustomize's braces, so that a child
+# that somehow skipped site customisation still cannot reach the internet.
+DEAD_PROXY = "http://127.0.0.1:9"
+
+
+@pytest.fixture(autouse=True)
+def isolated_environment(monkeypatch, tmp_path_factory):
+    from src import config
+
+    snapshot = dict(os.environ)
+    home = tmp_path_factory.mktemp("home")
+    state = tmp_path_factory.mktemp("state")
+
+    monkeypatch.delenv(config.KEY_ENV_VAR, raising=False)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("POINTS_OPTIMIZER_ENV_FILE", str(state / "absent.env"))
+    monkeypatch.setenv("POINTS_OPTIMIZER_CACHE_DIR", str(state / "cache"))
+    monkeypatch.setenv("POINTS_OPTIMIZER_SNAPSHOT_DIR", str(state / "snapshots"))
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        os.pathsep.join(
+            p for p in (str(CHILD_GUARD_DIR), os.environ.get("PYTHONPATH", "")) if p
+        ),
+    )
+    for var in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        monkeypatch.setenv(var, DEAD_PROXY)
+    for var in ("NO_PROXY", "no_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.delenv(var, raising=False)
+
+    # In-process, the module already imported with the real paths.
+    monkeypatch.setattr(config, "_ENV_PATH", state / "absent.env")
+    monkeypatch.setattr(
+        config, "USER_CONFIG_ENV_PATH", home / ".config" / "points-optimizer" / ".env"
+    )
+    monkeypatch.setattr(config, "_ENV_INJECTED", {})
+    monkeypatch.setattr(config, "CACHE_DIR", state / "cache")
+    monkeypatch.setattr(config, "SNAPSHOT_DIR", state / "snapshots")
+
+    yield
+
+    # Anything written to os.environ WITHOUT monkeypatch (config.load_env is
+    # the known case) is undone here, before the next test can inherit it.
+    os.environ.clear()
+    os.environ.update(snapshot)
