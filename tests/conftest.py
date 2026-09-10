@@ -16,8 +16,25 @@ that raises. A test that legitimately exercises the HTTP path patches it itself
 (`@patch("src.seats_client.requests.get")`), which takes effect after this
 fixture and is restored before it.
 """
-import pytest
-import requests
+# ---------------------------------------------------------------------------
+# BEFORE ANYTHING IMPORTS `src`. `src.config` runs `load_env()` AT IMPORT, and
+# test modules import `src.*` during COLLECTION - before any fixture exists. So
+# module-level test code (a skipif, a parametrize list) saw the developer's real
+# key, `config._ENV_INJECTED` held it, and the per-test snapshot below restored
+# it into os.environ after every test. The key and the key files are removed
+# from this PROCESS here, once, at the first moment pytest reads this file.
+# ---------------------------------------------------------------------------
+import os as _os
+import tempfile as _tempfile
+
+REAL_HOME = _os.path.expanduser("~")
+_SESSION_HOME = _tempfile.mkdtemp(prefix="points-optimizer-test-home-")
+_os.environ.pop("SEATS_AERO_KEY", None)
+_os.environ["POINTS_OPTIMIZER_ENV_FILE"] = _os.path.join(_SESSION_HOME, "absent.env")
+_os.environ["HOME"] = _SESSION_HOME
+
+import pytest  # noqa: E402
+import requests  # noqa: E402
 
 
 class NetworkAccessAttempted(AssertionError):

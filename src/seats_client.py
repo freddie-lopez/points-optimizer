@@ -63,7 +63,14 @@ class SeatsAeroError(RuntimeError):
 # It is NOT part of the manifest hash. The hash is over BYTES, so a reparse
 # under a new parser reproduces the same hash and a different award count -
 # which is the honest pair.
-PARSER_VERSION = "2026-09-09.v5"
+# 2026-09-10: BUMPED. The parse of a given page changed: a 0 tax figure on an
+# available cabin, and any figure from qatar/turkish/singapore, now yield
+# UNKNOWN taxes; six more sources are named; qatar/finnair carry an indirect UR
+# path. A replay of a snapshot captured under the previous version must say it
+# was REPARSED - the same bytes now produce a different answer, and Tsuki's
+# first real corpus (captured 2026-09-10 under the previous version, with a
+# qatar row at tax 0) is exactly such a snapshot.
+PARSER_VERSION = "2026-09-10.taxes-trust"
 
 
 def _rows_of(payload: Dict[str, Any]) -> List[Any]:
@@ -775,6 +782,14 @@ def parse_availability_row(row: Dict[str, Any]) -> List[Award]:
             known, src_amount, src_cur, usd, tax_note = convert_taxes(
                 tax_cents, taxes_currency
             )
+            if not known and src_amount is not None and src_amount < 0:
+                # A NEGATIVE figure is corrupt, not a figure in a currency we
+                # cannot price. Leaving the amount set routed it down the
+                # "unconvertible" path, which (a) told the reader USD has no FX
+                # rate, and (b) kept the live rule "the figure may already contain
+                # UK APD" - about a figure that contains nothing. Nothing usable
+                # was reported; the note says what was.
+                src_amount = None
         carriers = parse_carriers(row.get(f"{cabin}Airlines"))
         seats = _as_int(row.get(f"{cabin}RemainingSeats"))
 

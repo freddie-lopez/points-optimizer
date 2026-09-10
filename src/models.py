@@ -317,6 +317,11 @@ REASON_CODES = frozenset(
         # An award in a program UR reaches only in two hops (UR -> BA Avios ->
         # combine). Not scored, and NOT the NOT_A_PARTNER claim either.
         "INDIRECT_PATH_UNVERIFIED",
+        # A live award's TAXES are unknown (none usable, unreported source, 0,
+        # negative, unconvertible, or below the UK duty they must contain). Kept
+        # apart from SURCHARGE_UNKNOWN so a reader - and the trip counters - can
+        # tell a carrier's YQ from government taxes.
+        "TAXES_UNKNOWN",
         # v3 fix. The trip-level balance ceiling demoted this leg to cash
         # because earlier legs had already spent the shared balance.
         "TRIP_BALANCE_EXHAUSTED",
@@ -1834,6 +1839,11 @@ class LegResult:
     # unknown could possibly take. If even that loses to cash, the unknown cannot
     # change the verdict and the answer is certain after all.
     points_floor_usd: Optional[float] = None
+    # WHICH candidate set `points_floor_usd`. The floor can come from the chosen
+    # option (unscoreable leg) or from a REJECTED alternative whose cash is
+    # unknown; what the floor assumes - and whether UK APD belongs in it - is a
+    # property of that candidate, not of the leg's winner.
+    points_floor_candidate: Optional["PointsCandidate"] = None
     surcharge_cannot_change_verdict: bool = False
     mandatory_fees_usd: float = 0.0
     # --- v5 Step 7: UK Air Passenger Duty ---------------------------------
@@ -2083,6 +2093,9 @@ TRIP_LEVEL_ANSWERS = {
     ),
     "APD_UNKNOWN": TripTreatment(
         WIDENS_THE_TRIP_RANGE, totals_key="legs_apd_unknown"
+    ),
+    "TAXES_UNKNOWN": TripTreatment(
+        WIDENS_THE_TRIP_RANGE, totals_key="legs_taxes_unknown"
     ),
     "APD_INCLUSION_UNVERIFIED": TripTreatment(
         COUNTED_AT_TRIP_LEVEL, totals_key="legs_apd_unverified"

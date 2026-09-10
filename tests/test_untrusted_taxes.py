@@ -163,13 +163,19 @@ def _run_trip_b(b4_row_kwargs, tmp_path):
         route = (params.get("origin_airport"), params.get("destination_airport"))
         iso = ROUTES[route]
         if route == ("LHR", "SFO"):
-            row = _row(origin="LHR", dest="SFO", iso=iso, **b4_row_kwargs)
-            row["Route"]["OriginRegion"] = "Europe"
-            row["Route"]["DestinationRegion"] = "North America"
+            rows = []
+            for i, kw in enumerate(
+                b4_row_kwargs if isinstance(b4_row_kwargs, list) else [b4_row_kwargs]
+            ):
+                row = _row(origin="LHR", dest="SFO", iso=iso, **kw)
+                row["ID"] = f"b4-{i}"
+                row["Route"]["OriginRegion"] = "Europe"
+                row["Route"]["DestinationRegion"] = "North America"
+                rows.append(row)
         else:
-            row = _row(origin=route[0], dest=route[1], iso=iso)
+            rows = [_row(origin=route[0], dest=route[1], iso=iso)]
         r = MagicMock()
-        r.json.return_value = {"data": [row]}
+        r.json.return_value = {"data": rows}
         r.status_code = 200
         r.raise_for_status.return_value = None
         return r

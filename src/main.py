@@ -834,6 +834,13 @@ def run_fixture(args, console: Console) -> int:
             f"[bold yellow]Legs where a points path exists but its carrier-imposed "
             f"surcharge is UNKNOWN (NOT $0):[/bold yellow] {', '.join(unknown)}"
         )
+    taxes_unknown = totals.get("legs_taxes_unknown_ids") or []
+    if taxes_unknown:
+        console.print(
+            f"[bold yellow]Legs where an award's TAXES are UNKNOWN (NOT $0) - "
+            f"Seats.aero sent no usable figure:[/bold yellow] "
+            f"{', '.join(taxes_unknown)}"
+        )
 
     if not totals.get("trip_funding_executable", True):
         # Non-zero, and a DIFFERENT code from the --require-all-live withholding
@@ -917,10 +924,40 @@ def run_search(args, console: Console) -> int:
                 "from this run.[/red]"
             )
         else:
-            console.print(
-                "\n[yellow]Seats.aero returned no award availability for this "
-                "route and date range.[/yellow]"
-            )
+            # optimize() returns STRATEGIES - awards it could fund. An empty list
+            # is a statement about THIS WALLET unless the API also returned no
+            # awards. Reading it as "no award availability" turned a Qatar award
+            # (reachable only indirectly) and an American award (not a UR
+            # partner) into a claim that there was nothing on the route.
+            try:
+                awards = seats_client.search(args.origin, args.destination, date_range)
+            except Exception:  # noqa: BLE001 - the in-process cache answers this
+                awards = []
+            if not awards:
+                console.print(
+                    "\n[yellow]Seats.aero returned no award availability for this "
+                    "route and date range.[/yellow]"
+                )
+            else:
+                console.print(
+                    f"\n[yellow]Seats.aero returned {len(awards)} award(s) for this "
+                    f"route and date range, and NONE of them can be funded from the "
+                    f"wallet above. That is a finding about your transfer partners, "
+                    f"NOT about award space:[/yellow]"
+                )
+                for a in awards[:20]:
+                    if getattr(a, "indirect_ur_path", ""):
+                        why = f"reachable only INDIRECTLY - {a.indirect_ur_path}"
+                    elif not (a.program or "").strip():
+                        why = "the response named no program it could be attributed to"
+                    elif a.ur_transferable is False:
+                        why = "not a transfer partner of any currency you hold"
+                    else:
+                        why = "no fundable transfer path from the wallet above"
+                    console.print(
+                        f"  [dim]{a.program or '(program not named)'} {a.award_type} "
+                        f"{a.cost:,} on {a.date}: {why}[/dim]"
+                    )
 
     # Which pagination path the client took, printed on EVERY run, empty result
     # or not. Seats.aero's cached search is known to paginate and the one

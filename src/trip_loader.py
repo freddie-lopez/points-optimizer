@@ -8,6 +8,44 @@ from typing import List
 from src.models import CashOption, Leg, MandatoryFee, PointsCandidate, PointsProvenance
 
 
+def _finite_amount(value, what: str) -> float:
+    """A money amount that is a real, finite number - or a TripFixtureError."""
+    import math
+
+    try:
+        amount = float(value)
+    except (TypeError, ValueError) as e:
+        raise TripFixtureError(f"{what} is {value!r}, which is not a number.") from e
+    if not math.isfinite(amount):
+        raise TripFixtureError(
+            f"{what} is {value!r}, which is not a finite amount of money."
+        )
+    return amount
+
+
+def _currency(value, what: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise TripFixtureError(f"{what} is {value!r}, which is not a currency code.")
+    return value.strip().upper()
+
+
+def _strict_date(value, what: str) -> "date | None":
+    """
+    Absent -> None. Present but unreadable -> TripFixtureError.
+
+    For a cash option's `date` - the travel date a price is FOR - None means
+    "the leg's own date". A malformed value ("2027-02-30", "tomorrow") silently
+    becoming None therefore became a CLAIM: a fare for some other day scored as
+    the own-date fare. An unreadable date is refused, not reinterpreted.
+    """
+    if value in (None, ""):
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (TypeError, ValueError) as e:
+        raise TripFixtureError(f"{what} is {value!r}, which is not an ISO date.") from e
+
+
 def _maybe_date(value) -> "date | None":
     """A date if the fixture supplied one, else None. Never a guessed date."""
     if not value:
@@ -68,10 +106,16 @@ def load_trip_fixture(path: Path) -> TripFixture:
     """Load a multi-leg trip fixture from JSON. Raises TripFixtureError, never KeyError."""
     path = Path(path)
     try:
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except json.JSONDecodeError as e:
         raise TripFixtureError(f"{path.name} is not valid JSON: {e}") from e
+    except UnicodeDecodeError as e:
+        raise TripFixtureError(f"{path.name} is not UTF-8 text: {e}") from e
+    except IsADirectoryError as e:
+        raise TripFixtureError(f"{path.name} is a directory, not a trip fixture file.") from e
+    except PermissionError as e:
+        raise TripFixtureError(f"{path.name} cannot be read: permission denied.") from e
     if not isinstance(data, dict):
         raise TripFixtureError(
             f"{path.name} is not a trip fixture: its top level is a "
@@ -115,8 +159,8 @@ def _build_trip_fixture(data: dict) -> TripFixture:
         cash_options = [
             CashOption(
                 label=c["label"],
-                amount=float(c["amount"]),
-                currency=c.get("currency", "USD"),
+                amount=_finite_amount(c["amount"], f"leg {raw.get('id')!r} cash option amount"),
+                currency=_currency(c.get("currency", "USD"), f"leg {raw.get('id')!r} cash option currency"),
                 notes=c.get("notes", ""),
                 unavoidable_cash_note=c.get("unavoidable_cash_note", ""),
                 source=c.get("source", raw.get("cash_source", "unknown")),
@@ -124,7 +168,7 @@ def _build_trip_fixture(data: dict) -> TripFixture:
                 # The travel date this price is FOR. Absent means the leg's own
                 # date. A leg may carry several, which is the ONLY honest route
                 # by which an off-date live award becomes scoreable.
-                date=_maybe_date(c.get("date")),
+                date=_strict_date(c.get("date"), f"leg {raw.get('id')!r} cash option date"),
             )
             for c in raw.get("cash_options", [])
         ]
@@ -134,8 +178,13 @@ def _build_trip_fixture(data: dict) -> TripFixture:
                 label=p["label"],
                 program=p["program"],
                 points=int(p.get("points", 0) or 0),
-                cash_surcharge=float(p.get("cash_surcharge", 0.0)),
-                surcharge_currency=p.get("surcharge_currency", "USD"),
+                cash_surcharge=_finite_amount(
+                    p.get("cash_surcharge", 0.0), f"leg {raw.get('id')!r} cash_surcharge"
+                ),
+                surcharge_currency=_currency(
+                    p.get("surcharge_currency", "USD"),
+                    f"leg {raw.get('id')!r} surcharge_currency",
+                ),
                 source=p.get("source", "google_badge_unverified"),
                 source_note=p.get("source_note", ""),
                 program_attribution_assumed=bool(
@@ -166,8 +215,8 @@ def _build_trip_fixture(data: dict) -> TripFixture:
         mandatory_fees = [
             MandatoryFee(
                 label=f["label"],
-                amount=float(f["amount"]),
-                currency=f.get("currency", "USD"),
+                amount=_finite_amount(f["amount"], f"leg {raw.get('id')!r} fee amount"),
+                currency=_currency(f.get("currency", "USD"), f"leg {raw.get('id')!r} fee currency"),
                 per=f.get("per", "stay"),
                 payable_on_points=bool(f.get("payable_on_points", True)),
                 source=f.get("source", "captured"),

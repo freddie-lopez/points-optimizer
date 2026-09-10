@@ -30,9 +30,11 @@ REAL = json.loads(
     (ROOT / "tests" / "fixtures" / "seats_aero" / "sfo_mad_real.json").read_text()
 )
 COMMITTED_CORPUS = ROOT / "tests" / "fixtures" / "seats_aero" / "live_trip_b"
-# Evaluated at IMPORT, i.e. at collection, before any fixture moves HOME: this is
-# the developer's real user-config path, which no child may resolve.
-REAL_USER_CONFIG = Path.home() / ".config" / "points-optimizer" / ".env"
+# The developer's REAL user-config path (conftest records the real HOME before
+# it moves HOME for the whole session). No child may resolve it.
+from tests.conftest import REAL_HOME  # noqa: E402
+
+REAL_USER_CONFIG = Path(REAL_HOME) / ".config" / "points-optimizer" / ".env"
 MARKER = "network disabled by the points-optimizer test harness"
 FAKE_KEY = "test_key_not_a_real_one"
 CSP = "Chase Sapphire Preferred"
@@ -132,6 +134,17 @@ def test_a_live_cli_child_fails_as_an_api_failure_and_says_why():
 # ---------------------------------------------------------------------------
 # This process
 # ---------------------------------------------------------------------------
+
+
+# Captured at COLLECTION, before any fixture patches `_ENV_INJECTED` to {}.
+_INJECTED_AT_COLLECTION = dict(config._ENV_INJECTED)
+_KEY_AT_COLLECTION = os.environ.get("SEATS_AERO_KEY")
+
+
+def test_nothing_was_injected_from_a_key_file_at_import():
+    """`load_env()` ran at import, after conftest moved the key files away."""
+    assert config.KEY_ENV_VAR not in _INJECTED_AT_COLLECTION
+    assert _KEY_AT_COLLECTION is None
 
 
 def test_the_developers_key_is_not_visible_in_process():

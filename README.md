@@ -405,15 +405,23 @@ When a partner exists but **no award price was captured**, the tool reports a
 An empty award search distinguishes "no availability" from "the API was never
 reached". Conflating those is how a tool reports a network failure as fact.
 
-### The five PAY CASH sub-states are distinct
+### The PAY CASH sub-states are distinct
+
+Every verdict the code can produce is listed here;
+`tests/test_verdicts_are_documented.py` fails if one is added without a row.
 
 | Verdict | Means |
 |---|---|
-| `cash` | Points lose on the merits. A real answer. |
+| `points` | Points win on the merits, against a captured cash fare. |
+| `cash` | Points lose on the merits. A real answer - including a leg where an unknown can only ADD to the points side and points already lose at its floor. |
 | `cash (no points path)` | No transfer partner covers this leg at all. |
 | `cash (points unpriced)` | A partner exists; no award price was captured. |
 | `cash (points blocked)` | A path exists but the balance or stranding ceiling rejects it. |
-| `cash (surcharge unknown)` | **New in v1.** A fundable path exists and cannot be scored, because the surcharge is unknown. Reported with a break-even, never as $0. |
+| `cash (surcharge unknown)` | A fundable path exists and cannot be scored, because the carrier surcharge **or the award's taxes** are unknown. Reported with a floor and a break-even, never as $0. The table cell says which (`surch unknown` / `taxes unknown`). |
+| `cash (APD unknown)` | UK Air Passenger Duty is owed on this departure and its amount is unknown, so the points side cannot be scored. |
+| `cash (award unattributed)` | Seats.aero returned awards but named no program the tool can attribute. No claim about partners. |
+| `cash (indirect path not scored)` | The award's program is reachable only indirectly (Chase UR -> British Airways Avios -> combine into Qatar Privilege Club or Finnair Plus). The path and its conditions are printed; it is not scored, and it is not "no points path". |
+| `cash (no live points data)` | Live mode was asked and Seats.aero was not reached, or was reached and could not be read. Says NOTHING about award space. |
 
 ---
 

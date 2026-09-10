@@ -376,7 +376,19 @@ def optimize(
                 seen[key] = strategy
 
     results = list(seen.values())
-    results.sort(key=lambda s: (s.total_value, s.points_cost))
+    # AN UNKNOWN CASH COST CANNOT BE RANKED ON. `total_value` for such a strategy
+    # counts the unknown as 0.0, so sorting on it put a KrisFlyer award whose
+    # taxes Seats.aero does not report ABOVE a United award with $56 of known
+    # taxes, and the summary named it the top strategy at "$0.00". Every
+    # strategy whose cash is known ranks first, on its real total; the unknowns
+    # follow, ordered by points only, and are printed as UNKNOWN - never $0.
+    results.sort(
+        key=lambda s: (
+            0 if s.cash_cost_known else 1,
+            s.total_value if s.cash_cost_known else 0.0,
+            s.points_cost,
+        )
+    )
     return results[:max_results]
 
 
@@ -1039,23 +1051,41 @@ def evaluate_leg(
         # a false $0; saying nothing about it would hide that it exists.
         for other, other_plan, other_surch in unscoreable:
             floor = other_plan.score_usd + fees_on_points + other.extra_observed_taxes_usd
+            other_taxes = _candidate_taxes_unknown(other)
+            what = (
+                "TAXES are UNKNOWN (not $0)" if other_taxes
+                else "carrier-imposed surcharge is UNKNOWN (not $0)"
+            )
+            before = "before any taxes or surcharge" if other_taxes else "before any surcharge"
             result.warnings.append(
-                f"{other.label}: NOT SCORED - its carrier-imposed surcharge is "
-                f"UNKNOWN (not $0). At {other_plan.spend_summary()} its cost floor "
-                f"is ${floor:,.2f} before any surcharge, against "
-                f"${score:,.2f} for the option chosen above."
+                f"{other.label}: NOT SCORED - its {what}. At "
+                f"{other_plan.spend_summary()} its cost floor is ${floor:,.2f} "
+                f"{before}, against ${score:,.2f} for the option chosen above."
             )
             if floor < score:
-                result.add_reason(
-                    "SURCHARGE_UNKNOWN",
-                    f"{other.label} could beat the chosen option if its surcharge "
-                    f"is below ${score - floor:,.2f}. It was not scored because "
-                    f"that figure is unknown.",
-                    label=other.label,
-                )
+                # Literal codes, one per branch: way (10) discovers reason codes
+                # by parsing `add_reason("CODE", ...)` calls, by design.
+                if other_taxes:
+                    result.add_reason(
+                        "TAXES_UNKNOWN",
+                        f"{other.label} could beat the chosen option if its taxes "
+                        f"plus any surcharge come to less than "
+                        f"${score - floor:,.2f}. It was not scored because its "
+                        f"taxes are unknown.",
+                        label=other.label,
+                    )
+                else:
+                    result.add_reason(
+                        "SURCHARGE_UNKNOWN",
+                        f"{other.label} could beat the chosen option if its surcharge "
+                        f"is below ${score - floor:,.2f}. It was not scored because "
+                        f"that figure is unknown.",
+                        label=other.label,
+                    )
                 # The unknown could beat the winner, so it widens the low bound.
                 if result.points_floor_usd is None or floor < result.points_floor_usd:
                     result.points_floor_usd = floor
+                    result.points_floor_candidate = other
 
         # THE ONE-LINE ANSWER v0 could not give. When the option we CAN score
         # carries a structurally zero surcharge and the one we cannot is the
@@ -1108,13 +1138,21 @@ def evaluate_leg(
             # CERTAIN cash, not blocked. Only a break-even above zero means the
             # missing number actually decides the answer.
             result.points_floor_usd = plan.score_usd + fees_on_points + taxes
+            result.points_floor_candidate = cand
             if result.points_floor_usd >= result.cash_total_score_usd:
                 result.surcharge_cannot_change_verdict = True
-        result.add_reason(
-            "SURCHARGE_UNKNOWN",
-            surcharge.notes
-            or "No surcharge rule matched and none was captured. This is NOT zero.",
-        )
+        if _candidate_taxes_unknown(cand):
+            result.add_reason(
+                "TAXES_UNKNOWN",
+                surcharge.notes
+                or "The taxes on this award are unknown. This is NOT zero.",
+            )
+        else:
+            result.add_reason(
+                "SURCHARGE_UNKNOWN",
+                surcharge.notes
+                or "No surcharge rule matched and none was captured. This is NOT zero.",
+            )
         if not cand.has_known_metal:
             result.add_reason(
                 "CARRIER_UNKNOWN",
@@ -1123,11 +1161,15 @@ def evaluate_leg(
                 f"{cand.carrier_source}. The tool never guesses metal.",
             )
         _record_candidate_warnings(result, cand)
+        _taxes = _candidate_taxes_unknown(cand)
         result.warnings.append(
-            f"{cand.label}: the carrier-imposed surcharge is UNKNOWN, so this "
-            f"points option CANNOT be scored against cash. It is NOT $0. "
+            f"{cand.label}: the "
+            + ("TAXES on this award are" if _taxes else "carrier-imposed surcharge is")
+            + " UNKNOWN, so this points option CANNOT be scored against cash. It is "
+            "NOT $0. "
             + (
-                f"Points beat cash only if the surcharge is below "
+                f"Points beat cash only if "
+                f"{'its taxes plus any surcharge come to less than' if _taxes else 'the surcharge is below'} "
                 f"${result.break_even_surcharge_usd:,.2f}."
                 if result.break_even_surcharge_usd is not None
                 else ""
@@ -1629,11 +1671,7 @@ def _apd_inclusion_unverified(result: LegResult) -> Tuple[bool, str]:
     # captured-fee checks, which still apply.
     # NOT the unconvertible case: there a TotalTaxes figure EXISTS in a currency
     # we cannot price, and it may well contain the duty - so the live rule holds.
-    live_taxes_unusable = bool(
-        candidate is not None
-        and getattr(candidate, "taxes_unknown", False)
-        and not getattr(candidate, "taxes_unconvertible", False)
-    )
+    live_taxes_unusable = _taxes_unusable_not_unconvertible(candidate)
     if (
         leg.points_provenance in (PointsProvenance.LIVE, PointsProvenance.SNAPSHOT)
         and not live_taxes_unusable
@@ -1740,6 +1778,50 @@ def _withhold_points_side_for_unknown_apd(
     ).strip()
 
 
+def _legs_with(results, code: str) -> List[str]:
+    """Leg ids carrying at least one reason with this code."""
+    return [r.leg.id for r in results if any(x.code == code for x in r.reasons)]
+
+
+def _candidate_taxes_unknown(cand) -> bool:
+    """A live candidate whose TAXES are unknown, for any reason (incl. unconvertible)."""
+    return bool(
+        cand is not None
+        and (
+            getattr(cand, "taxes_unknown", False)
+            or getattr(cand, "taxes_unconvertible", False)
+        )
+    )
+
+
+def _taxes_unusable_not_unconvertible(cand) -> bool:
+    """
+    No USABLE tax figure at all - so nothing counted can contain UK APD. Not the
+    unconvertible case, where a figure exists and may well contain it.
+    """
+    return bool(
+        cand is not None
+        and getattr(cand, "taxes_unknown", False)
+        and not getattr(cand, "taxes_unconvertible", False)
+    )
+
+
+def _rewrite_stale_break_even(result: LegResult, old_be: float, new_be: float, amount: float) -> None:
+    """
+    Replace a pre-APD break-even figure everywhere it was written - the verdict
+    reason AND the warnings - so the leg never prints $182 beside $43.89.
+    """
+    for stale in (f"below ${old_be:,.2f}.", f"less than ${old_be:,.2f}."):
+        fresh = stale.replace(
+            f"${old_be:,.2f}.",
+            f"${new_be:,.2f} - after UK Air Passenger Duty of ${amount:,.2f}, which "
+            f"is owed on top of it.",
+        )
+        if stale in (result.verdict_reason or ""):
+            result.verdict_reason = result.verdict_reason.replace(stale, fresh)
+        result.warnings = [w.replace(stale, fresh) for w in result.warnings]
+
+
 def _add_apd_to_unscored_floor(
     result: LegResult, amount: float, valuation_cpp: float
 ) -> None:
@@ -1761,13 +1843,7 @@ def _add_apd_to_unscored_floor(
     if old_be is not None:
         new_be = max(old_be - amount, 0.0)
         result.break_even_surcharge_usd = new_be
-        stale = f"is below ${old_be:,.2f}."
-        if stale in (result.verdict_reason or ""):
-            result.verdict_reason = result.verdict_reason.replace(
-                stale,
-                f"is below ${new_be:,.2f} - after UK Air Passenger Duty of "
-                f"${amount:,.2f}, which is owed on top of it.",
-            )
+        _rewrite_stale_break_even(result, old_be, new_be, amount)
     if cash == float("inf") or result.points_floor_usd < cash:
         return
     # The duty alone makes points lose: the unknown is now INERT, exactly as in
@@ -1876,6 +1952,25 @@ def apply_apd(
                 gbp=charge.total_gbp,
                 usd=charge.total_usd,
             )
+            # THE CHOSEN award's taxes may contain the duty; a REJECTED one's may
+            # not. When the leg's floor was set by a rejected alternative with NO
+            # usable tax figure, nothing counted in THAT floor can contain APD -
+            # and that floor is the leg's optimistic end. The duty is owed on its
+            # ticket as surely as on the winner's, so it goes into the floor.
+            floor_cand = result.points_floor_candidate
+            if (
+                floor_cand is not None
+                and floor_cand is not result.best_points
+                and _taxes_unusable_not_unconvertible(floor_cand)
+                and result.points_floor_usd is not None
+            ):
+                result.points_floor_usd += float(charge.total_usd)
+                result.warnings.append(
+                    f"{floor_cand.label}: its floor now includes UK Air Passenger "
+                    f"Duty of ${float(charge.total_usd):,.2f}, owed on that ticket "
+                    f"too - its own taxes are unknown, so nothing counted in it "
+                    f"could already contain the duty."
+                )
             continue
 
         amount = float(charge.total_usd)
@@ -2234,8 +2329,14 @@ def trip_totals(
     beat_pct_high = ((all_cash - optimized_low) / all_cash * 100) if all_cash else 0.0
 
     sensitive = [r.leg.id for r in results if r.verdict_sensitive]
+    # The verdict "cash (surcharge unknown)" is shared by a leg whose unknown is
+    # the carrier SURCHARGE and one whose unknown is the award's TAXES. This
+    # counts only the first; the second is `legs_taxes_unknown`. Counting both
+    # here printed one leg under "surcharge is UNKNOWN" AND "TAXES are UNKNOWN".
     unknown_surcharge = [
-        r.leg.id for r in results if r.verdict == "cash (surcharge unknown)"
+        r.leg.id for r in results
+        if r.verdict == "cash (surcharge unknown)"
+        and not _candidate_taxes_unknown(r.best_points)
     ]
     apd_unknown = [
         r.leg.id for r in results if r.apd is not None and not r.apd.is_known
@@ -2244,16 +2345,16 @@ def trip_totals(
     # unknown (none usable, or unconvertible) - as distinct from a carrier
     # surcharge that is unknown. The spread on these is partly TAXES, and a
     # headline label that names only "surcharge" says something false about it.
+    # Keyed on the REASON CODE, not on the chosen candidate: a rejected
+    # alternative with unknown taxes that sets the leg's floor is a taxes unknown
+    # in the trip range just as surely as a chosen one.
     taxes_unknown = [
-        r.leg.id
-        for r in results
-        if r.best_points is not None
-        and r.surcharge is not None
-        and not r.surcharge.is_known
-        and (
-            getattr(r.best_points, "taxes_unknown", False)
-            or getattr(r.best_points, "taxes_unconvertible", False)
-        )
+        r.leg.id for r in results
+        if any(x.code == "TAXES_UNKNOWN" for x in r.reasons)
+    ]
+    surcharge_unknown_any = [
+        r.leg.id for r in results
+        if any(x.code == "SURCHARGE_UNKNOWN" for x in r.reasons)
     ]
     apd_unverified = [
         r.leg.id
@@ -2345,21 +2446,21 @@ def trip_totals(
         "legs_surcharge_unknown_ids": unknown_surcharge,
         "legs_taxes_unknown": len(taxes_unknown),
         "legs_taxes_unknown_ids": taxes_unknown,
+        # Any leg carrying an unknown CARRIER SURCHARGE, on the chosen option or
+        # a rejected one - what the headline caveat must name. Separate from
+        # `legs_surcharge_unknown`, which counts the verdict.
+        "legs_any_surcharge_unknown": len(surcharge_unknown_any),
         "legs_verdict_sensitive": len(sensitive),
         "legs_verdict_sensitive_ids": sensitive,
         "legs_where_points_win": sum(1 for r in results if r.verdict == "points"),
-        "legs_indirect_path_unverified": sum(
-            1 for r in results if r.verdict == VERDICT_INDIRECT_PATH
-        ),
-        "legs_indirect_path_unverified_ids": [
-            r.leg.id for r in results if r.verdict == VERDICT_INDIRECT_PATH
-        ],
-        "legs_award_unattributed": sum(
-            1 for r in results if r.verdict == VERDICT_AWARD_UNATTRIBUTED
-        ),
-        "legs_award_unattributed_ids": [
-            r.leg.id for r in results if r.verdict == VERDICT_AWARD_UNATTRIBUTED
-        ],
+        # Both counted by REASON CODE, not by verdict. A leg carries one verdict
+        # but can carry an indirect-only award AND an unattributed one; keyed on
+        # the verdict, whichever branch won the elif hid the other from the trip
+        # block - and an unattributed award may be a DIRECT partner's.
+        "legs_indirect_path_unverified": len(_legs_with(results, "INDIRECT_PATH_UNVERIFIED")),
+        "legs_indirect_path_unverified_ids": _legs_with(results, "INDIRECT_PATH_UNVERIFIED"),
+        "legs_award_unattributed": len(_legs_with(results, "PROGRAM_UNATTRIBUTED")),
+        "legs_award_unattributed_ids": _legs_with(results, "PROGRAM_UNATTRIBUTED"),
         "rests_on_placeholder_fx": any(r.rests_on_placeholder_fx for r in results),
     }
     # WAY (10). The declarations in `models.TRIP_LEVEL_ANSWERS` are checked
