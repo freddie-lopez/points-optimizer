@@ -1333,23 +1333,71 @@ def _fields_read_by_invariants(cls) -> frozenset:
     cannot be read - a frozen or zipped deployment - the classification below
     cannot be checked against anything, and `INVARIANT_FIELDS_DERIVED` records
     that so a caller can say so rather than assume the check ran.
+
+    MR5-2(a). THE CALL GRAPH IS WALKED ONE LEVEL, because reading only
+    `__post_init__`'s own frame left a way round the guard that a coder would
+    find by doing something entirely reasonable. The Manager's probe: add a
+    field, enforce it in a HELPER METHOD, and call the helper from
+    `__post_init__`. The invariant fires at construction exactly as intended,
+    the field is read by no line of `__post_init__` itself, and so the module
+    IMPORTS HAPPILY with the field unclassified and unpersisted - way (9)'s
+    exact shape, reintroduced. `__post_init__` is already long enough that
+    extracting helpers out of it is likely, so this was a live risk and not a
+    theoretical one.
+
+    So every `self._helper()` called from `__post_init__` is resolved on the
+    class and its `self.X` reads are unioned in. ONE level, and the limit is
+    deliberate rather than lazy: a helper that calls a further helper is an
+    invariant two hops from the constructor, which is far enough from
+    "`__post_init__` enforces this" that the honest answer is to name the limit
+    here rather than to chase it silently. What this cannot see, it cannot see
+    LOUDLY - a field reachable only through a deeper chain, through `getattr`,
+    or through a free function taking the instance, is invisible, and the same
+    is true of the reason-code scan in way (10). The guard is a floor under the
+    obvious mistakes, not a proof.
     """
     import ast
     import inspect
     import textwrap
 
-    try:
-        source = textwrap.dedent(inspect.getsource(cls.__post_init__))
-    except (OSError, TypeError):  # pragma: no cover - frozen deployments only
+    def reads(func) -> tuple:
+        """The `self.X` attributes and the `self._helper()` calls in one function."""
+        try:
+            source = textwrap.dedent(inspect.getsource(func))
+        except (OSError, TypeError):  # pragma: no cover - frozen deployments only
+            return None, ()
+        tree = ast.parse(source)
+        attrs = {
+            node.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "self"
+        }
+        called = {
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "self"
+        }
+        return attrs, called
+
+    names, called = reads(cls.__post_init__)
+    if names is None:
         return frozenset()
-    tree = ast.parse(source)
-    names = {
-        node.attr
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Attribute)
-        and isinstance(node.value, ast.Name)
-        and node.value.id == "self"
-    }
+    for method_name in sorted(called):
+        # A called name is BOTH an attribute read and possibly a method. It is
+        # already in `names` from the walk above; that is harmless, because a
+        # method name is not a dataclass field and the classification check only
+        # ever intersects this set with real fields.
+        helper = getattr(cls, method_name, None)
+        if helper is None or not callable(helper):
+            continue
+        helper_names, _ = reads(helper)
+        if helper_names:
+            names |= helper_names
     return frozenset(names)
 
 
@@ -1386,6 +1434,22 @@ CARRIED_BY_THE_TRANSPORT = {
 #     answered, whether a file or a socket produced them, which leg asked.
 #     Persisting these would let a run inherit another run's provenance, which
 #     is the laundering ways (7) and (8) exist to prevent.
+#
+#     MR5-2(b). THIS IS THE CLASSIFICATION THAT NEEDS THE MOST JUSTIFICATION,
+#     NOT THE LEAST, and it is the one that looks cheapest. The way (9) check
+#     forces a DECISION; it cannot force the RIGHT decision, and of the three
+#     answers this is the only one that makes the error go away with a single
+#     line and no other work - no parser change, no `_meta` key, no storage
+#     round trip. Nothing tests that a field named here really is local. So a
+#     field belongs in this set only when persisting it would be WRONG - when a
+#     second run inheriting the value would be a lie about that run - and never
+#     merely because persisting it would be work. If the honest reason a name
+#     is here is "the import was failing and this fixed it", it is in the wrong
+#     set and it is way (9) wearing a label.
+#
+#     Adding a name here is therefore a REVIEWABLE EVENT: it is the one edit in
+#     this file that silences a guard without changing any behaviour, and it
+#     should carry a note saying why inheritance would be wrong.
 LOCAL_TO_THIS_RUN = frozenset(
     {
         "leg_id",
