@@ -1034,7 +1034,12 @@ def print_trip_totals(
             f"a single number.[/bold yellow] The spread is {what}"
             ". The low end is what the tool can defend today; the "
             f"high end assumes {assumption}, which is "
-            "the assumption that made v0's number wrong."
+            # CARRIED FORWARD: no version numbers in user-facing output. The
+            # reader is being told what the high end depends on, and "an
+            # earlier version of this tool got it wrong" is a fact about the
+            # tool's history, not about their trip. The WARNING survives; the
+            # changelog does not.
+            "the assumption that turns an unknown into a saving that is not there."
         )
     if totals.get("legs_verdict_sensitive_ids"):
         console.print(

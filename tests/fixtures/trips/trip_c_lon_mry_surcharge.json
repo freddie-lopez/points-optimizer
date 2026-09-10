@@ -1,11 +1,11 @@
 {
   "id": "trip_c_lon_mry_surcharge",
   "name": "TRIP C - the surcharge case (LON->MRY, plus a same-metal comparison)",
-  "description": "The flagship v1 acceptance case. C1 is Trip B's real LON->MRY leg, scored with the surcharge model. C2 is a constructed business-cabin leg that exercises the same-metal alternatives engine, which C1's economy cabin cannot.",
+  "description": "C1 is Trip B's real LON->MRY leg, scored with the surcharge model. C2 is a constructed business-cabin leg that exercises the same-metal alternatives engine, which C1's economy cabin cannot.",
   "source": "C1 transcribes the real LON->MRY capture (Google Flights, 2026-09-07, Tsuki). C2 is CONSTRUCTED for acceptance testing and is NOT a real captured itinerary - its award prices are labelled synthetic and must never be quoted as real.",
   "trip_level_flags": [
     "C2 IS SYNTHETIC. Its points prices are invented for the purpose of exercising the alternatives engine and are labelled as such on every candidate. C1 is real captured data.",
-    "v0 scored C1's British Airways option at a $0 surcharge and called it a $282 saving. That number does not exist. C1 must not reproduce it."
+    "C1's British Airways option carries a carrier-imposed surcharge that was NOT captured. Scoring it as $0 would show a saving of roughly $282 that does not exist. The surcharge is modelled as a range, never as zero."
   ],
   "legs": [
     {
