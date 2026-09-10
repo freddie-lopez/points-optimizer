@@ -14,6 +14,28 @@ from src.optimizer import (
 )
 
 
+def _taxes_are_what_is_unknown(r) -> bool:
+    """True when the unknown on this leg's points side is the award's TAXES."""
+    cand = getattr(r, "best_points", None)
+    return bool(
+        cand is not None
+        and (
+            getattr(cand, "taxes_unknown", False)
+            or getattr(cand, "taxes_unconvertible", False)
+        )
+    )
+
+
+def _be_subject(r) -> str:
+    """What a break-even figure is a break-even ON. Never 'the surcharge' alone
+    when the taxes are unknown too - that reads as though they were known."""
+    return (
+        "the total of its unknown taxes and any carrier surcharge"
+        if _taxes_are_what_is_unknown(r)
+        else "the surcharge"
+    )
+
+
 def _money(x: float) -> str:
     if x == float("inf"):
         return "n/a"
@@ -447,9 +469,9 @@ def print_leg_detail(results: List[LegResult], console: Console = None) -> None:
                 )
                 if r.break_even_surcharge_usd is not None:
                     console.print(
-                        f"        [red]Break-even: points beat cash only if the "
-                        f"surcharge is below {_money(r.break_even_surcharge_usd)}."
-                        f"[/red]"
+                        f"        [red]Break-even: points beat cash only if "
+                        f"{_be_subject(r)} is below "
+                        f"{_money(r.break_even_surcharge_usd)}.[/red]"
                     )
                 if r.surcharge.notes:
                     console.print(f"        [dim]{r.surcharge.notes}[/dim]")
@@ -677,17 +699,30 @@ def _print_live_scoring_block(r: LegResult, console: Console) -> None:
         taxes_clause = (
             f"+ the API's taxes of {_money(r.observed_taxes_usd)} "
             if r.observed_taxes_usd
-            else "with NO tax figure available to add "
+            else "with NO usable tax figure to add "
+        )
+        # A floor that silently contains UK APD reads as "points + nothing"; the
+        # duty is named whenever it was added to this leg's points side.
+        apd_clause = (
+            f"+ UK Air Passenger Duty of {_money(r.apd_added_usd)} "
+            if getattr(r, "apd_added_usd", 0.0)
+            else ""
         )
         console.print(
             f"     [bold]floor {_money(floor) if floor is not None else 'n/a'}[/bold]"
-            f"  (points at the run's valuation {taxes_clause}, with the "
+            f"  (points at the run's valuation {taxes_clause}{apd_clause}, with the "
             f"carrier surcharge at its $0 floor - the least this can possibly cost)"
         )
         if r.break_even_surcharge_usd is not None:
             console.print(
-                f"     points win ONLY if the carrier surcharge above those taxes "
-                f"is below [bold]{_money(r.break_even_surcharge_usd)}[/bold]"
+                (
+                    f"     points win ONLY if its unknown taxes plus any carrier "
+                    f"surcharge are below "
+                    if _taxes_are_what_is_unknown(r)
+                    else "     points win ONLY if the carrier surcharge above those "
+                    "taxes is below "
+                )
+                + f"[bold]{_money(r.break_even_surcharge_usd)}[/bold]"
             )
         console.print(
             f"     [bold red]surcharge UNKNOWN - this is NOT $0.[/bold red] "

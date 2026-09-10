@@ -323,3 +323,53 @@ def test_an_unattributed_row_on_b4_does_not_say_not_a_partner(tmp_path):
     b4_line = next(line for line in out.splitlines() if "│ B4" in line)
     assert "program NOT NAMED - no claim" in b4_line
     assert "not a partner" not in b4_line
+
+
+# ---------------------------------------------------------------------------
+# The full CLI: every sentence about B4 names the taxes, and names the duty
+# ---------------------------------------------------------------------------
+
+
+def test_the_cli_never_describes_unknown_taxes_as_a_surcharge_question(
+    tmp_path, capsys, monkeypatch
+):
+    import sys as _sys
+
+    from src.main import main
+
+    def side(*args, **kwargs):
+        params = kwargs.get("params") or {}
+        route = (params.get("origin_airport"), params.get("destination_airport"))
+        iso = ROUTES[route]
+        if route == ("LHR", "SFO"):
+            row = _row(origin="LHR", dest="SFO", iso=iso,
+                       **UNUSABLE_B4["united_missing"])
+            row["Route"]["OriginRegion"] = "Europe"
+            row["Route"]["DestinationRegion"] = "North America"
+        else:
+            row = _row(origin=route[0], dest=route[1], iso=iso)
+        r = MagicMock()
+        r.json.return_value = {"data": [row]}
+        r.status_code = 200
+        r.raise_for_status.return_value = None
+        return r
+
+    monkeypatch.setenv("SEATS_AERO_KEY", "test_key_not_a_real_one")
+    SeatsClient.reset_call_budget()
+    SeatsClient(api_key="k").clear_cache()
+    old = _sys.argv
+    _sys.argv = ["prog", "--trip-fixture", "trip_b_europe.json",
+                 "--balance", "UR=160000", "--card", CSP,
+                 "--transfer-date", "2026-09-15"]
+    try:
+        with patch("src.seats_client.requests.get", side_effect=side):
+            main()
+    finally:
+        _sys.argv = old
+    out = " ".join(capsys.readouterr().out.split())
+    assert "taxes from the API: NONE USABLE" in out
+    assert "the total of its unknown taxes and any carrier surcharge is below $43.89" in out
+    assert "points win ONLY if its unknown taxes plus any carrier surcharge are below $43.89" in out
+    assert "+ UK Air Passenger Duty of $138.11" in out
+    assert "only if the surcharge is below $43.89" not in out
+    assert "carrier surcharge above those taxes" not in out.split("B4 LON->MRY")[-1]
