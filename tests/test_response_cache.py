@@ -432,3 +432,55 @@ def test_the_snapshot_directory_exists_and_explains_itself():
     text = readme.read_text()
     assert "raw" in text.lower()
     assert "no key" in text.lower() or "key" in text.lower()
+
+
+# ---------------------------------------------------------------------------
+# MR5-4: a cache nobody gave a snapshot directory archives NOTHING
+# ---------------------------------------------------------------------------
+
+
+def test_a_cache_given_only_a_cache_dir_does_not_archive_anywhere(tmp_path):
+    """
+    `ResponseCache(tmp)` must not write into the committed corpus.
+
+    `snapshot_dir` used to default to `DEFAULT_SNAPSHOT_DIR` INDEPENDENTLY of
+    `cache_dir`, so a cache that reads as completely isolated still appended
+    snapshots and manifest rows to `tests/fixtures/seats_aero/live_trip_b/` -
+    the directory `--from-snapshot` treats as trusted, committed, hash-verified
+    input. The Manager's MR-1 probe polluted the repo corpus by accident that
+    way. A corpus that any code constructing a cache can append to is not
+    evidence.
+    """
+    cache = ResponseCache(cache_dir=tmp_path / "cache")
+    assert cache.snapshot_dir is None
+    assert cache.manifest_path is None
+    assert cache.archives is False
+    assert cache.snapshots() == []
+
+
+def test_the_committed_corpus_is_untouched_by_a_tmp_dir_cache(tmp_path):
+    """The pollution itself, end to end: a real put() writes no corpus file."""
+    corpus = Path(response_cache.DEFAULT_SNAPSHOT_DIR)
+    before = sorted(p.name for p in corpus.iterdir()) if corpus.exists() else []
+
+    request = {
+        "origin_airport": "LHR",
+        "destination_airport": "SFO",
+        "start_date": "2027-01-27",
+        "end_date": "2027-01-27",
+    }
+    key = response_cache.request_key("search", request)
+    cache = ResponseCache(cache_dir=tmp_path / "cache")
+    entry = cache.put(
+        key,
+        request,
+        [{"data": [{"ID": "x", "Date": "2027-01-27"}], "hasMore": False}],
+        meta={"leg_id": "B4", "rows_seen": 1},
+        now=datetime(2027, 1, 1, 12, 0, tzinfo=timezone.utc),
+    )
+
+    after = sorted(p.name for p in corpus.iterdir()) if corpus.exists() else []
+    assert after == before, f"the committed corpus was written to: {set(after) - set(before)}"
+    # The response is still CACHED - archiving is what was declined, not caching.
+    assert (tmp_path / "cache" / f"{key}.json").exists()
+    assert entry.meta["snapshot"] is None

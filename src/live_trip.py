@@ -219,9 +219,16 @@ def query_leg(
     manifest_key = getattr(client, "last_manifest_key", "")
     served_from_cache = bool(getattr(client, "last_served_from_cache", False))
     fetched_at = getattr(client, "last_fetched_at", None)
+    # MR5-4: a cache may archive nowhere (`snapshot_dir is None`), in which case
+    # there is no snapshot NAME either - but the two are read off different
+    # objects, so this does not assume they agree.
     snapshot_path = (
         (opts.cache.snapshot_dir / snapshot_name)
-        if (snapshot_name and opts.cache is not None)
+        if (
+            snapshot_name
+            and opts.cache is not None
+            and opts.cache.snapshot_dir is not None
+        )
         else None
     )
     # v5 STEP 3, WAY (8). Read exactly the way every other piece of byte

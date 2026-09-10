@@ -299,10 +299,25 @@ class ResponseCache:
       * `cache_dir` is runtime state, gitignored, keyed by request hash;
       * `snapshot_dir` is COMMITTED, browsably named, and is the regression
         corpus. Step 2's test replays every file in it through the parser.
+
+    MR5-4. `snapshot_dir` DEFAULTS TO None, AND ARCHIVING IS OFF UNTIL A CALLER
+    ASKS FOR IT. It used to default to `DEFAULT_SNAPSHOT_DIR` - the committed
+    corpus - INDEPENDENTLY of `cache_dir`, so `ResponseCache(some_tmp_dir)`,
+    which reads as completely isolated, still wrote snapshot files and appended
+    manifest rows into `tests/fixtures/seats_aero/live_trip_b/`. The Manager's
+    MR-1 cache probe created a `MANIFEST.md` and an `adhoc_LHR_SFO_....json` in
+    the repo corpus without asking for either.
+
+    That matters more than tidiness. `--from-snapshot` treats that directory as
+    trusted, committed, hash-verified input, and any code that merely
+    CONSTRUCTED a cache - a test run included - could append to it. A corpus
+    anything can write to is not evidence. Now a temp-dir cache is genuinely a
+    temp-dir cache, and the only writers are callers that named a directory on
+    purpose: the CLI, which always passes one, and tests that opt in.
     """
 
     cache_dir: Path = DEFAULT_CACHE_DIR
-    snapshot_dir: Path = DEFAULT_SNAPSHOT_DIR
+    snapshot_dir: Optional[Path] = None
     ttl_seconds: int = DEFAULT_TTL_SECONDS
     # Non-fatal problems worth printing: a corrupt entry, an expired entry that
     # was skipped. Never raised - a bad cache file must degrade to a miss, never
@@ -311,7 +326,16 @@ class ResponseCache:
 
     def __post_init__(self) -> None:
         self.cache_dir = Path(self.cache_dir)
-        self.snapshot_dir = Path(self.snapshot_dir)
+        # None stays None: it is the difference between "archive nowhere" and
+        # "archive into the committed corpus", and coercing it to a Path here
+        # would put that distinction back where MR5-4 found it.
+        if self.snapshot_dir is not None:
+            self.snapshot_dir = Path(self.snapshot_dir)
+
+    @property
+    def archives(self) -> bool:
+        """Whether this cache archives snapshots at all. False unless asked."""
+        return self.snapshot_dir is not None
 
     # -- paths ----------------------------------------------------------
 
@@ -319,7 +343,9 @@ class ResponseCache:
         return self.cache_dir / f"{key}.json"
 
     @property
-    def manifest_path(self) -> Path:
+    def manifest_path(self) -> Optional[Path]:
+        if self.snapshot_dir is None:
+            return None
         return self.snapshot_dir / MANIFEST_NAME
 
     # -- read -----------------------------------------------------------
@@ -532,7 +558,14 @@ class ResponseCache:
         A re-fetch that returns byte-identical data writes NO second file - the
         corpus is a set of distinct observations, not a log. The manifest row is
         written either way, so the fact that a re-fetch happened is not lost.
+
+        MR5-4: a cache with no `snapshot_dir` archives NOTHING and says so by
+        returning None, which `put` already records as `_meta["snapshot"] =
+        None`. The response is still cached; it is simply not added to a corpus
+        nobody asked for.
         """
+        if self.snapshot_dir is None:
+            return None
         self.snapshot_dir.mkdir(parents=True, exist_ok=True)
         digest = envelope["_meta"]["content_hash"]
         # The manifest row needs three facts the CALLER's meta does not carry:
@@ -676,7 +709,7 @@ class ResponseCache:
 
     def snapshots(self) -> List[Path]:
         """Every archived envelope, oldest name first. The regression corpus."""
-        if not self.snapshot_dir.exists():
+        if self.snapshot_dir is None or not self.snapshot_dir.exists():
             return []
         return sorted(self.snapshot_dir.glob("*.json"))
 

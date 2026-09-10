@@ -490,8 +490,16 @@ def print_live_banner(
         f"{SeatsClient.DAILY_CALL_CAP:,} calls remaining today"
     )
     if cache is not None:
-        console.print(f"  snapshots: {cache.snapshot_dir}")
-        console.print(f"  manifest:  {cache.manifest_path}")
+        # MR5-4: archiving is opt-in, so say plainly when nothing is being
+        # archived rather than printing a bare "None" that reads like a bug.
+        if cache.snapshot_dir is None:
+            console.print(
+                "  snapshots: [yellow]NOT ARCHIVED - this cache was given no "
+                "snapshot directory[/yellow]"
+            )
+        else:
+            console.print(f"  snapshots: {cache.snapshot_dir}")
+            console.print(f"  manifest:  {cache.manifest_path}")
         for warning in getattr(cache, "warnings", []):
             console.print(f"  [yellow]cache: {warning}[/yellow]")
     if opts is not None:
