@@ -132,3 +132,13 @@ def _isolate_client_state():
     SeatsClient.CACHE.clear()
     SeatsClient.CACHE_META.clear()
     SeatsClient._CALLS = {}
+
+
+# The main suite's environment isolation, applied here too. Without it these
+# probes read the developer's real key and real runtime cache exactly as the
+# main suite's CLI tests did: under the Mac's conditions (exported key, warm
+# data/cache/ from a live run) this directory read 21 red / 77 green instead of
+# 19 / 79 on master AND on the fix branch, because two probes got cache hits.
+# "Deviation from the recorded counts means a regression" is only true if the
+# counts do not depend on the machine.
+from tests.conftest import isolated_environment, no_network_egress  # noqa: E402,F401
