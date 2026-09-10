@@ -503,6 +503,54 @@ def convert_taxes(
     return True, amount, cur, usd, note
 
 
+# ---------------------------------------------------------------------------
+# (3b) A TAX FIGURE THE TOOL MAY NOT BELIEVE.
+#
+#     Seats.aero's developer docs mark three sources with the footnote "Taxes and
+#     surcharges are not available for this mileage program":
+#     https://developers.seats.aero/reference/concepts-copy (read 2026-09-10).
+#     Whatever number those rows carry in {X}TotalTaxes is therefore not a tax
+#     figure. In practice it is 0, and a KrisFlyer row - a DIRECT Chase UR
+#     partner - arriving with "$0 taxes" and a UR path is a false points win
+#     waiting to happen.
+#
+#     And for every source: an AVAILABLE cabin priced at exactly zero taxes is
+#     not a free ticket. No commercial award ticket carries zero government
+#     charges (a US domestic award still pays the security fee; an international
+#     departure pays departure taxes). The same payload writes 0 into every
+#     unavailable cabin's TotalTaxes, which is what 0 means here: nothing
+#     reported. Both cases are UNKNOWN - never $0.
+# ---------------------------------------------------------------------------
+TAXES_UNREPORTED_SOURCES = frozenset({"qatar", "turkish", "singapore"})
+
+
+def untrusted_tax_reason(source_code: Any, cents: Optional[int]) -> str:
+    """
+    Why this row's tax figure must not be believed, or "" if it may be.
+
+    Only answers the two questions above. A missing, negative or unconvertible
+    figure is `convert_taxes`'s business and is already UNKNOWN there.
+    """
+    code = str(source_code or "").strip().lower()
+    if code in TAXES_UNREPORTED_SOURCES:
+        shown = "nothing" if cents is None else f"{cents / 100.0:,.2f}"
+        return (
+            f"Seats.aero does not report taxes for the {code!r} source (its "
+            f"documentation: 'Taxes and surcharges are not available for this "
+            f"mileage program'), so the figure it sent ({shown}) is not a tax "
+            f"figure. The taxes on this award are UNKNOWN - not $0."
+        )
+    if cents == 0:
+        return (
+            "Seats.aero reported taxes of exactly 0 on a cabin it marks "
+            "available. No award ticket carries zero government taxes and "
+            "charges, and the same payload writes 0 into every cabin it has no "
+            "data for - so 0 here means NOT REPORTED. The taxes on this award "
+            "are UNKNOWN - not $0."
+        )
+    return ""
+
+
 def _route_regions(route: Dict[str, Any], origin: str, destination: str):
     """
     Route.OriginRegion / Route.DestinationRegion feed the surcharge model's
@@ -644,9 +692,20 @@ def parse_availability_row(row: Dict[str, Any]) -> List[Award]:
             # log records it as UNREADABLE - not as an absence of award space.
             continue
 
-        known, src_amount, src_cur, usd, tax_note = convert_taxes(
-            _as_int(row.get(f"{cabin}TotalTaxes")), taxes_currency
-        )
+        tax_cents = _as_int(row.get(f"{cabin}TotalTaxes"))
+        untrusted = untrusted_tax_reason(route.get("Source"), tax_cents)
+        if untrusted:
+            # Nothing USABLE was reported, so nothing is carried as a reported
+            # amount - a reported amount is what makes the scorer treat taxes as
+            # a figure that merely needs converting. The number the API sent is
+            # kept in raw_diagnostics below, labelled.
+            known, src_amount, src_cur, usd, tax_note = (
+                False, None, "", 0.0, untrusted
+            )
+        else:
+            known, src_amount, src_cur, usd, tax_note = convert_taxes(
+                tax_cents, taxes_currency
+            )
         carriers = parse_carriers(row.get(f"{cabin}Airlines"))
         seats = _as_int(row.get(f"{cabin}RemainingSeats"))
 
@@ -659,6 +718,11 @@ def parse_availability_row(row: Dict[str, Any]) -> List[Award]:
             f"{cabin}MileageCostRaw": row.get(f"{cabin}MileageCostRaw"),
             f"{cabin}TotalTaxesRaw": row.get(f"{cabin}TotalTaxesRaw"),
             f"{cabin}AirlinesRaw": row.get(f"{cabin}AirlinesRaw"),
+            # The clean figure is diagnostic too when it was not believed.
+            f"{cabin}TotalTaxes (NOT BELIEVED)" if untrusted else f"{cabin}TotalTaxes": (
+                row.get(f"{cabin}TotalTaxes")
+            ),
+            "TaxesCurrency": taxes_currency,
             "availability_id": row.get("ID"),
         }
 

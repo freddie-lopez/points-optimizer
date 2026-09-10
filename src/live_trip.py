@@ -506,6 +506,24 @@ def award_to_candidate(
         award.cash_component_source_amount is not None
         and not award.cash_component_known
     )
+    # THE SAME RULE FOR EVERY WAY TAXES CAN BE UNKNOWN. C-2 above covers a figure
+    # that exists and cannot be converted. It left the other ways out: no
+    # figure at all, a source Seats.aero does not report taxes for, or a 0 that
+    # means "nothing reported". Those have no amount, so `taxes_unconvertible` was
+    # False, the program-policy $0 made the award scoreable, and the missing
+    # taxes were scored as $0 - a United award with NO tax figure beat cash on
+    # Trip B's B4 by 5.82%. Unknown taxes are unknown cash, whatever the reason.
+    taxes_unknown = not award.cash_component_known
+    if taxes_unknown and not taxes_unconvertible:
+        scoreable = False
+        why = (
+            f"NOT SCORED: the taxes on this award are UNKNOWN. "
+            f"{award.cash_component_note} That is real cash of unknown size, so "
+            f"the carrier-side cash cost of this award is UNKNOWN - not $0. A "
+            f"program's no-carrier-surcharge policy is a statement about YQ/YR and "
+            f"does NOT price taxes. Reported as a floor plus a break-even instead "
+            f"of as a number the tool cannot defend."
+        )
     if taxes_unconvertible:
         scoreable = False
         why = (
@@ -575,6 +593,7 @@ def award_to_candidate(
         observed_taxes_note=award.cash_component_note,
         observed_taxes_are_the_surcharge=taxes_are_the_surcharge,
         taxes_unconvertible=taxes_unconvertible,
+        taxes_unknown=taxes_unknown,
         award_date=award.date,
         program_attribution_missing=program_missing,
         source=LIVE_SOURCE,

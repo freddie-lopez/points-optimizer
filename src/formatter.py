@@ -242,7 +242,20 @@ def print_leg_results(
             # $0 surcharge, which is the exact confusion v1 exists to remove.
             pts_score = f">= {_money(r.points_floor_usd)}"
         elif r.break_even_surcharge_usd is not None:
-            pts_score = f"[red]? (win if surch < {_money(r.break_even_surcharge_usd)})[/red]"
+            # When the award's TAXES are what is unknown, the break-even is on
+            # taxes plus surcharge. "win if surch < $182" on a leg whose taxes
+            # were never reported reads as though the taxes were known to be $0.
+            _cand = r.best_points
+            _what = (
+                "taxes+surch"
+                if _cand is not None
+                and (
+                    getattr(_cand, "taxes_unknown", False)
+                    or getattr(_cand, "taxes_unconvertible", False)
+                )
+                else "surch"
+            )
+            pts_score = f"[red]? (win if {_what} < {_money(r.break_even_surcharge_usd)})[/red]"
         else:
             pts_score = "-"
 
@@ -613,6 +626,15 @@ def _print_live_scoring_block(r: LegResult, console: Console) -> None:
             f"about YQ/YR and does NOT price these taxes. Supply the rate with "
             f"--fx to score this leg.[/dim]"
         )
+    elif getattr(cand, "taxes_unknown", False):
+        # Every other way a live award's taxes are unknown - none sent, a source
+        # that does not report them, or a 0 that means "not reported". Same
+        # loudness as C-2: this used to print nothing, and score as $0.
+        console.print(
+            "     [bold red]taxes from the API: NONE USABLE, so the cash side of "
+            "this award is UNKNOWN. IT IS NOT $0.[/bold red]"
+        )
+        console.print(f"     [red]{cand.observed_taxes_note}[/red]")
     elif cand.observed_taxes_known and cand.observed_taxes_reported:
         console.print(
             f"     taxes from the API: {_money(cand.observed_taxes_usd)} "
@@ -820,6 +842,11 @@ def print_trip_totals(
         table.add_row(
             "[dim]  high end = only if every unknown surcharge is $0"
             + (
+                " AND unknown award taxes add nothing beyond any UK APD shown"
+                if totals.get("legs_taxes_unknown")
+                else ""
+            )
+            + (
                 " AND the departure tax is $0"
                 if totals.get("legs_apd_unknown")
                 else ""
@@ -932,6 +959,13 @@ def print_trip_totals(
             "surcharge is UNKNOWN (NOT $0)[/red]",
             f"[red]{int(totals['legs_surcharge_unknown'])}[/red]",
         )
+    if totals.get("legs_taxes_unknown"):
+        table.add_row(
+            "[red]Legs where the award's TAXES are UNKNOWN\n"
+            "(NOT $0) - the leg is not scored[/red]",
+            f"[red]{int(totals['legs_taxes_unknown'])} "
+            f"({', '.join(totals.get('legs_taxes_unknown_ids') or [])})[/red]",
+        )
     # MR5-1, WAY (10). The leg line has always said this; the trip block said
     # nothing, and the trip block is where the number Tsuki quotes comes from.
     # An owed duty of unknown size is a real dollar missing from the points
@@ -1039,6 +1073,18 @@ def print_trip_totals(
         else:
             what = "carrier-imposed surcharges that are not known"
             assumption = "every unknown surcharge turns out to be $0"
+        # Same rule, for award taxes Seats.aero did not usefully report. Named
+        # only when this run has them, so the wording is unchanged otherwise.
+        if totals.get("legs_taxes_unknown"):
+            ids = ", ".join(totals.get("legs_taxes_unknown_ids") or [])
+            what += (
+                f", AND award TAXES on {ids} that Seats.aero did not report in a "
+                f"usable form"
+            )
+            assumption += (
+                " AND those award taxes turn out to be nothing beyond any UK Air "
+                "Passenger Duty already counted, which they will not be"
+            )
         console.print(
             "\n[bold yellow]The headline above is a RANGE and must not be quoted as "
             f"a single number.[/bold yellow] The spread is {what}"

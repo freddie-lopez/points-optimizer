@@ -590,9 +590,12 @@ class PointsCandidate:
     observed_taxes_usd: float = 0.0
     # False means the figure could not be converted to USD. It NEVER means $0.
     observed_taxes_known: bool = False
-    # True when the API reported a tax figure at all - convertible or not. The
-    # difference between "no tax figure" and "a tax figure we cannot price"
-    # matters: only the second one makes a leg unscoreable.
+    # True when the API reported a USABLE-LOOKING tax figure at all - convertible
+    # or not. It decides which MESSAGE a reader gets, never whether the leg is
+    # scoreable: "no tax figure" and "a tax figure we cannot price" are both
+    # unknown cash, and both make a live leg unscoreable (see `taxes_unknown`).
+    # This comment used to say only the second one did, which is how a United
+    # award with NO tax figure scored as a $0-tax points win.
     observed_taxes_reported: bool = False
     observed_taxes_amount: Optional[float] = None
     observed_taxes_currency: str = ""
@@ -606,6 +609,16 @@ class PointsCandidate:
     # says - including a program-policy $0, which is a statement about the
     # CARRIER SURCHARGE and says nothing about taxes the tool cannot convert.
     taxes_unconvertible: bool = False
+    # A LIVE award whose taxes are UNKNOWN for ANY reason: no figure, a source
+    # Seats.aero does not report taxes for, a 0 that means "not reported", a
+    # negative figure, or one that cannot be converted. Same consequence as
+    # `taxes_unconvertible` (which is the narrower case, kept for its message):
+    # the candidate's cash side is UNKNOWN and the leg cannot be scored.
+    # Only `live_trip.award_to_candidate` sets it. A fixture candidate's cash
+    # side is its modeled or captured surcharge, and its taxes are not "unknown"
+    # in this sense - defaulting this from `observed_taxes_known` would make
+    # every offline candidate unscoreable.
+    taxes_unknown: bool = False
     # The travel date this candidate's award is FOR. None means the leg's own
     # date. It exists so a promoted off-date award is scored against the cash
     # fare for ITS date rather than the cheapest fare on any date (finding H-5).
@@ -624,8 +637,8 @@ class PointsCandidate:
         Every consumer that builds a points-side total adds this. It is 0.0 both
         when there are no taxes and when they are already riding as the captured
         surcharge, so it can never double count - and it is 0.0 when the taxes
-        are UNKNOWN, which is why an unknown must also set
-        `taxes_unconvertible` and route the leg down the unscoreable path.
+        are UNKNOWN, which is why an unknown must also set `taxes_unknown`
+        and route the leg down the unscoreable path.
         """
         if self.observed_taxes_are_the_surcharge or not self.observed_taxes_known:
             return 0.0
