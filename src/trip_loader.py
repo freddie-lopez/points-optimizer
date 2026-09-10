@@ -45,11 +45,66 @@ class TripFixture:
     trip_level_flags: List[str] = field(default_factory=list)
 
 
-def load_trip_fixture(path: Path) -> TripFixture:
-    """Load a multi-leg trip fixture from JSON."""
-    with open(path, "r") as f:
-        data = json.load(f)
+class TripFixtureError(ValueError):
+    """
+    The file is not a loadable trip fixture. Names the file and what is wrong.
 
+    A ValueError so `main` prints it as one red line and exits 1. Before this,
+    pointing --trip-fixture at the wrong file (`trip_001_answer.json`, an
+    acceptance ANSWER file that sits beside the fixtures) printed a raw Python
+    traceback ending `KeyError: 'id'` - with the reader's own filesystem path
+    in it, which is how a checkout folder named `...-v5` tripped the
+    no-changelog scanner on Tsuki's Mac.
+    """
+
+
+# Only `id`. A v0 single-route fixture (trip_001.json, trip_002.json) carries no
+# `legs` and has always loaded as a trip with none; that is a supported shape and
+# tests render it. What it may not do is crash.
+REQUIRED_TOP_LEVEL = ("id",)
+
+
+def load_trip_fixture(path: Path) -> TripFixture:
+    """Load a multi-leg trip fixture from JSON. Raises TripFixtureError, never KeyError."""
+    path = Path(path)
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        raise TripFixtureError(f"{path.name} is not valid JSON: {e}") from e
+    if not isinstance(data, dict):
+        raise TripFixtureError(
+            f"{path.name} is not a trip fixture: its top level is a "
+            f"{type(data).__name__}, not a JSON object."
+        )
+    missing = [k for k in REQUIRED_TOP_LEVEL if k not in data]
+    if missing:
+        hint = (
+            " It looks like an acceptance-test ANSWER file (it carries "
+            "'human_booking'), not a trip - pass the trip it answers instead."
+            if "human_booking" in data or path.name.endswith("_answer.json")
+            else ""
+        )
+        raise TripFixtureError(
+            f"{path.name} is not a trip fixture: it has no "
+            f"{' and no '.join(repr(k) for k in missing)}.{hint}"
+        )
+    if not isinstance(data.get("legs", []), list):
+        raise TripFixtureError(
+            f"{path.name}: 'legs' must be a list, not a {type(data['legs']).__name__}."
+        )
+    try:
+        return _build_trip_fixture(data)
+    except KeyError as e:
+        raise TripFixtureError(
+            f"{path.name}: a leg, cash option, points candidate or fee is missing "
+            f"the required field {e.args[0]!r}."
+        ) from e
+    except (TypeError, ValueError, AttributeError) as e:
+        raise TripFixtureError(f"{path.name}: {e}") from e
+
+
+def _build_trip_fixture(data: dict) -> TripFixture:
     legs: List[Leg] = []
     for raw in data.get("legs", []):
         # v3: cash provenance is READ, never assumed. A cash option with no

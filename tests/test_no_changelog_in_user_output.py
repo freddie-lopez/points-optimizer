@@ -50,6 +50,19 @@ CHANGELOG = re.compile(
 ALLOWED = re.compile(r"\b(?:A3[0-9]{2}|B7[0-9]{2}|CRJ[0-9]+)\b")
 
 
+def _scrub_repo_root(text: str, root: Path = ROOT) -> str:
+    """
+    Remove EXACTLY this checkout's own path, and nothing else.
+
+    On Tsuki's Mac the checkout lives in `.../points-optimizer-v5/`, so any line
+    naming a file under it contains `v5` - a fact about where he unzipped the
+    project, not this project's history reaching him. Excluding every path-shaped
+    string would be a hole (a real "v5" leak inside a path-like note would pass);
+    removing the one known root is not.
+    """
+    return text.replace(str(root), "<repo>")
+
+
 def _run(fixture: str):
     proc = subprocess.run(
         [
@@ -63,24 +76,74 @@ def _run(fixture: str):
         ],
         cwd=ROOT, capture_output=True, text=True,
     )
-    return proc.stdout + proc.stderr
+    return proc.returncode, proc.stdout + proc.stderr
 
 
-@pytest.mark.parametrize(
-    "fixture", sorted(p.name for p in TRIPS.glob("*.json"))
-)
-def test_no_release_or_finding_reference_reaches_the_reader(fixture):
-    output = _run(fixture)
-    assert output.strip(), f"{fixture} produced no output to check"
+def _scan(output: str):
     offenders = []
-    for line in output.splitlines():
+    for line in _scrub_repo_root(output).splitlines():
         clean = ALLOWED.sub("", line)
         for match in CHANGELOG.finditer(clean):
             offenders.append(f"{match.group(0)!r} in: {line.strip()[:160]}")
+    return offenders
+
+
+# TRIP fixtures only. The directory also holds acceptance-test ANSWER files
+# (`*_answer.json`, read by test_acceptance.py), which are not trips. Globbing
+# them in fed them to the CLI, which crashed with a raw traceback - and the scan
+# then ran over the crash. In the sandbox that "passed" (no `v5` in the path), so
+# two parametrisations had been certifying a traceback as clean output.
+TRIP_FIXTURES = sorted(
+    p.name for p in TRIPS.glob("*.json") if not p.name.endswith("_answer.json")
+)
+
+
+def test_the_discovered_set_is_every_loadable_trip_and_nothing_else():
+    """The glob is checked against the loader, not trusted."""
+    from src.trip_loader import TripFixtureError, load_trip_fixture
+
+    for p in sorted(TRIPS.glob("*.json")):
+        try:
+            load_trip_fixture(p)
+            loadable = True
+        except TripFixtureError:
+            loadable = False
+        assert loadable == (p.name in TRIP_FIXTURES), (
+            f"{p.name}: loadable={loadable} but "
+            f"{'in' if p.name in TRIP_FIXTURES else 'not in'} the scanned set"
+        )
+
+
+@pytest.mark.parametrize("fixture", TRIP_FIXTURES)
+def test_no_release_or_finding_reference_reaches_the_reader(fixture):
+    code, output = _run(fixture)
+    assert output.strip(), f"{fixture} produced no output to check"
+    # A scan of a crash is not a scan.
+    assert "Traceback (most recent call last)" not in output, output[-1500:]
+    assert code == 0, f"{fixture} exited {code}; nothing was rendered to scan"
+    offenders = _scan(output)
     assert not offenders, (
         f"{fixture}: this project's own history reached the reader:\n  "
         + "\n  ".join(offenders)
     )
+
+
+def test_the_checkout_folder_name_is_not_a_changelog_leak():
+    root = Path("/Users/someone/Downloads/points-optimizer-v5")
+    line = f'  File "{root}/src/main.py", line 698, in run_fixture'
+    assert _scan(line) != [], "sanity: a foreign root is not scrubbed, so v5 matches"
+    assert _scrub_repo_root(line, root).count("v5") == 0
+    # Only the root is removed: a real reference elsewhere on the line survives.
+    leak = f"{root}/data/x.csv - the assumption that made v5 wrong"
+    assert "v5" in _scrub_repo_root(leak, root)
+
+
+def test_an_answer_file_passed_as_a_trip_is_one_clean_error():
+    code, output = _run("trip_001_answer.json")
+    assert code == 1
+    assert "Traceback" not in output
+    assert "is not a trip fixture" in output
+    assert "ANSWER file" in output
 
 
 def test_the_surcharge_table_cites_sources_a_reader_can_evaluate():
