@@ -43,6 +43,9 @@ from src.wallet import Wallet
 # the response named no program for the awards it returned, so the partnership
 # question was never reached (finding M-5).
 VERDICT_AWARD_UNATTRIBUTED = "cash (award unattributed)"
+# An award in a program the wallet reaches only INDIRECTLY (UR -> BA Avios ->
+# combine into Qatar / Finnair Avios). Not scored, and NOT "no points path".
+VERDICT_INDIRECT_PATH = "cash (indirect path not scored)"
 
 
 def _fmt_usd(x: float) -> str:
@@ -800,6 +803,7 @@ def evaluate_leg(
     unscoreable: List[Tuple[PointsCandidate, FundingPlan, SurchargeEstimate]] = []
     blocked_partner_candidates: List[str] = []
     unattributed_candidates: List[PointsCandidate] = []
+    indirect_candidates: List[PointsCandidate] = []
     # The cash context each candidate was scored against, keyed by id(cand), so
     # the winner's own date's fare can become the leg's reported cash.
     cash_context: Dict[int, Tuple[float, Optional[CashOption], Optional[date]]] = {}
@@ -840,6 +844,26 @@ def evaluate_leg(
             ratios_manager.is_partner(currency, target, transfer_date)
             for currency in wallet.currencies
         )
+        if not reachable and getattr(cand, "indirect_ur_path", ""):
+            # THERE IS A PATH; IT IS TWO HOPS AND IT IS NOT SCORED. Falling
+            # through to NOT_A_PARTNER below would print "no points path" and
+            # count the leg under "NO UR path at all" - a claim about the wallet
+            # that is false, because UR -> BA Avios -> combine reaches it.
+            indirect_candidates.append(cand)
+            result.warnings.append(
+                f"{cand.label}: {cand.program} is not a DIRECT transfer partner, "
+                f"but it IS reachable indirectly - NOT scored. "
+                f"{cand.indirect_ur_path}"
+            )
+            result.add_reason(
+                "INDIRECT_PATH_UNVERIFIED",
+                f"{cand.program} is reachable only indirectly "
+                f"({cand.points:,} points). The path has conditions this tool "
+                f"cannot check against your accounts, so it is not scored; no "
+                f"claim is made that no points path exists.",
+                points=cand.points,
+            )
+            continue
         if not reachable:
             held = ", ".join(sorted(wallet.currencies)) or "(no currencies supplied)"
             result.warnings.append(
@@ -1226,6 +1250,19 @@ def evaluate_leg(
                 f"({'; '.join(blocked_partner_candidates)}), but every transfer "
                 f"path was blocked by the balance ceiling or the stranded-points "
                 f"constraint. This is a constraint, not a missing partner."
+            )
+        elif indirect_candidates:
+            best_indirect = min(indirect_candidates, key=lambda c: c.points)
+            result.verdict = VERDICT_INDIRECT_PATH
+            result.verdict_reason = (
+                f"Pay cash BY DEFAULT, not by finding. Seats.aero returned "
+                f"{len(indirect_candidates)} award(s) for this leg in "
+                f"{', '.join(sorted({c.program for c in indirect_candidates}))}, "
+                f"which your {source_program} balance reaches only INDIRECTLY "
+                f"(cheapest: {best_indirect.points:,} points). "
+                f"{best_indirect.indirect_ur_path} Whether that path is open to "
+                f"you depends on your own accounts, so it is NOT scored - and it "
+                f"is NOT a finding that no points path exists."
             )
         elif unattributed_candidates:
             # FINDING M-5's verdict half. Saying "No UR transfer partner covers
@@ -2311,6 +2348,12 @@ def trip_totals(
         "legs_verdict_sensitive": len(sensitive),
         "legs_verdict_sensitive_ids": sensitive,
         "legs_where_points_win": sum(1 for r in results if r.verdict == "points"),
+        "legs_indirect_path_unverified": sum(
+            1 for r in results if r.verdict == VERDICT_INDIRECT_PATH
+        ),
+        "legs_indirect_path_unverified_ids": [
+            r.leg.id for r in results if r.verdict == VERDICT_INDIRECT_PATH
+        ],
         "legs_award_unattributed": sum(
             1 for r in results if r.verdict == VERDICT_AWARD_UNATTRIBUTED
         ),

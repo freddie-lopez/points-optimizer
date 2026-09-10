@@ -7,7 +7,11 @@ from rich.table import Table
 from src import config
 from src.live_trip import LIVE_SOURCE, VERDICT_NO_LIVE_DATA, supersession_lines
 from src.models import LegResult, LiveQueryState, PointsProvenance, Strategy
-from src.optimizer import VERDICT_APD_UNKNOWN, VERDICT_AWARD_UNATTRIBUTED
+from src.optimizer import (
+    VERDICT_APD_UNKNOWN,
+    VERDICT_AWARD_UNATTRIBUTED,
+    VERDICT_INDIRECT_PATH,
+)
 
 
 def _money(x: float) -> str:
@@ -213,6 +217,21 @@ def print_leg_results(
         elif r.break_even_programs:
             path_desc = f"{r.break_even_programs[0]} (no price)"
             pts = f"<{r.break_even_points:,}?"
+        elif r.verdict == VERDICT_INDIRECT_PATH:
+            # "none - not a partner" here would be false: UR reaches it in two
+            # hops. The cell names the program and says it was not scored.
+            _ind = min(
+                (c for c in r.leg.points_candidates
+                 if getattr(c, "indirect_ur_path", "")),
+                key=lambda c: c.points,
+            )
+            path_desc = f"{_ind.program} (indirect, not scored)"
+            pts = f"{_ind.points:,}"
+        elif r.verdict == VERDICT_AWARD_UNATTRIBUTED:
+            # The same falsehood on the unattributed path: the program is not
+            # NAMED, which says nothing about whether it is a partner.
+            path_desc = "program NOT NAMED - no claim"
+            pts = "-"
         else:
             path_desc = "none - not a partner"
             pts = "-"
@@ -273,6 +292,10 @@ def print_leg_results(
             # no program for them. Also says nothing about partnerships.
             VERDICT_AWARD_UNATTRIBUTED:
                 "[bold yellow]PAY CASH (award unattributed)[/bold yellow]",
+            # A path exists in two hops (UR -> BA Avios -> combine). Not scored,
+            # and not "no path".
+            VERDICT_INDIRECT_PATH:
+                "[bold yellow]PAY CASH (indirect, not scored)[/bold yellow]",
             # WAY (10). A GOVERNMENT departure tax is owed and its size is not
             # known, so the points side cannot be scored. Deliberately worded
             # like the surcharge-unknown cell above and deliberately NOT the
@@ -958,6 +981,14 @@ def print_trip_totals(
             "[red]Legs where a points path exists but its\n"
             "surcharge is UNKNOWN (NOT $0)[/red]",
             f"[red]{int(totals['legs_surcharge_unknown'])}[/red]",
+        )
+    if totals.get("legs_indirect_path_unverified"):
+        table.add_row(
+            "[yellow]Legs with an award reachable only INDIRECTLY\n"
+            "(UR -> BA Avios -> combine) - NOT scored[/yellow]",
+            f"[yellow]{int(totals['legs_indirect_path_unverified'])} "
+            f"({', '.join(totals.get('legs_indirect_path_unverified_ids') or [])})"
+            f"[/yellow]",
         )
     if totals.get("legs_taxes_unknown"):
         table.add_row(

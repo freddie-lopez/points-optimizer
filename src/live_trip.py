@@ -548,7 +548,10 @@ def award_to_candidate(
         operating, carrier_source = "", "seats_aero_ambiguous"
 
     ur_note = ""
-    if award.ur_transferable is False:
+    if award.indirect_ur_path:
+        # NOT "no UR path": there is one, it is two hops, and it is not scored.
+        ur_note = ""
+    elif award.ur_transferable is False:
         ur_note = (
             f" NO UR PATH: {award.program} is not a Chase UR transfer partner. "
             f"The award is real and bookable, just not from a UR balance."
@@ -596,6 +599,7 @@ def award_to_candidate(
         taxes_unknown=taxes_unknown,
         award_date=award.date,
         program_attribution_missing=program_missing,
+        indirect_ur_path=award.indirect_ur_path,
         source=LIVE_SOURCE,
         source_note=(
             f"{award.source_note} {why}{ur_note}{fetched}{snapshot}."

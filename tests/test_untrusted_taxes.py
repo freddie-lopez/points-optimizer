@@ -293,3 +293,33 @@ def test_a_real_tax_figure_on_b4_is_scored_exactly_as_before(tmp_path):
     assert b4.best_points.taxes_unknown is False
     assert b4.verdict == "cash"
     assert b4.apd_added_usd == 0.0
+
+
+# ---------------------------------------------------------------------------
+# The per-leg table's path cell must not contradict the verdict
+# ---------------------------------------------------------------------------
+
+
+def test_a_qatar_row_on_b4_is_named_indirect_in_the_table(tmp_path):
+    b4, totals, out = _run_trip_b(
+        dict(source="qatar", cost="33000", taxes=0, currency="USD",
+             airlines="BA, QR"),
+        tmp_path,
+    )
+    assert b4.verdict == "cash (indirect path not scored)"
+    assert "Qatar Privilege Club (indirect, not scored)" in out
+    assert "B4" not in totals["legs_no_partner_ids"]
+
+
+def test_an_unattributed_row_on_b4_does_not_say_not_a_partner(tmp_path):
+    """
+    The cell used to read "none - not a partner" beside a verdict saying the
+    program was never named - the M-5 claim, one column over.
+    """
+    _, _, out = _run_trip_b(
+        dict(source="hawaiianairlines", cost="33000", taxes=4460),
+        tmp_path,
+    )
+    b4_line = next(line for line in out.splitlines() if "│ B4" in line)
+    assert "program NOT NAMED - no claim" in b4_line
+    assert "not a partner" not in b4_line

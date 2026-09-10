@@ -264,14 +264,46 @@ def coverage_of_pages(pages: List[Dict[str, Any]]) -> Tuple[bool, str]:
 class SeatsSource:
     code: str
     program: str
+    # DIRECT Chase UR transfer. See `indirect_ur_path` for the other kind.
     ur_transferable: bool
     note: str = ""
+    indirect_ur_path: str = ""
 
 
 _OBSERVED = "Observed in the SFO-MAD capture of 2026-09-08."
+_OBSERVED_TRIP_B = "Observed in the live Trip B run of 2026-09-10."
 _DOCS = (
-    "From Seats.aero's published source list. NOT observed in any captured "
-    "response - the code string itself is unverified."
+    "From Seats.aero's published source table "
+    "(developers.seats.aero/reference/concepts-copy, read 2026-09-10). NOT yet "
+    "observed in a captured response."
+)
+
+# THE AVIOS FAMILY. Chase UR transfers 1:1 to British Airways Club, and BA Club
+# Avios can be combined into Qatar Privilege Club and Finnair Plus - British
+# Airways lists both on its own combine page
+# (britishairways.com/content/the-british-airways-club/avios/combine-avios).
+# That is a real path from a UR balance into these programs, so saying "no UR
+# path" about them is FALSE. It is also not a plain 1:1 partner: it is two hops,
+# and each hop has conditions this tool cannot check against anyone's accounts.
+# So these awards are NAMED, the path and its conditions are PRINTED, and they are
+# NOT SCORED. Whether to score two-hop paths is Tsuki's decision, not this map's.
+_AVIOS_VIA_BA = (
+    "No DIRECT Chase UR transfer. An INDIRECT path exists: Chase UR -> British "
+    "Airways Club Avios (1:1) -> combine into {program} Avios (1:1)."
+)
+_QATAR_CONDITIONS = (
+    " Conditions (Thrifty Traveler, updated 2026-06-30): both accounts at least 30 "
+    "days old; an ID upload for Qatar to approve linking the accounts; matching "
+    "names and two-factor authentication on both. To book a COMPANION with Qatar "
+    "Avios, the companion needs their OWN Privilege Club account, at least 30 days "
+    "old, that has earned Avios by flying or card spend. Combining can be paused "
+    "without notice. Not scored by this tool."
+)
+_FINNAIR_CONDITIONS = (
+    " Conditions (finnair.com, transfer Avios between Finnair and British "
+    "Airways): Finnair Plus account at least 30 days old; age 18+; two-factor "
+    "authentication on both accounts; names and email addresses must match. Not "
+    "scored by this tool."
 )
 
 SEATS_AERO_SOURCES: Dict[str, SeatsSource] = {
@@ -314,7 +346,44 @@ SEATS_AERO_SOURCES: Dict[str, SeatsSource] = {
     "connectmiles": SeatsSource("connectmiles", "Copa ConnectMiles", False, _DOCS),
     "velocity": SeatsSource("velocity", "Virgin Australia Velocity", False, _DOCS),
     "saudia": SeatsSource("saudia", "Saudia AlFursan", False, _DOCS),
+    # --- Added 2026-09-10 from the published table ------------------------
+    "lufthansa": SeatsSource("lufthansa", "Lufthansa Miles & More", False, _DOCS),
+    "ethiopian": SeatsSource("ethiopian", "Ethiopian ShebaMiles", False, _DOCS),
+    "frontier": SeatsSource("frontier", "Frontier Airlines", False, _DOCS),
+    "spirit": SeatsSource("spirit", "Spirit Airlines", False, _DOCS),
+    # --- No direct UR transfer, but an indirect one via BA Avios ----------
+    "qatar": SeatsSource(
+        "qatar", "Qatar Privilege Club", False,
+        _OBSERVED_TRIP_B + " Taxes are NOT reported for this source.",
+        indirect_ur_path=(
+            _AVIOS_VIA_BA.format(program="Qatar Privilege Club")
+            + _QATAR_CONDITIONS
+        ),
+    ),
+    "finnair": SeatsSource(
+        "finnair", "Finnair Plus", False, _DOCS,
+        indirect_ur_path=(
+            _AVIOS_VIA_BA.format(program="Finnair Plus") + _FINNAIR_CONDITIONS
+        ),
+    ),
 }
+
+# Sources observed in the live Trip B run (2026-09-10): the note says so rather
+# than "unverified". Recorded from Tsuki's run output, not re-derived.
+for _code in ("flyingblue", "jetblue", "american", "alaska", "qantas"):
+    _src = SEATS_AERO_SOURCES[_code]
+    SEATS_AERO_SOURCES[_code] = SeatsSource(
+        _src.code, _src.program, _src.ur_transferable,
+        _OBSERVED_TRIP_B + (" Not a Chase UR partner." if not _src.ur_transferable else ""),
+        _src.indirect_ur_path,
+    )
+del _code, _src
+
+
+def resolve_indirect_path(code: Optional[str]) -> str:
+    """The indirect UR path into this source's program, or "" if none is known."""
+    src = SEATS_AERO_SOURCES.get(str(code or "").strip().lower())
+    return src.indirect_ur_path if src is not None else ""
 
 
 def resolve_source(code: Optional[str]) -> Tuple[str, Optional[bool], str]:
@@ -729,7 +798,10 @@ def parse_availability_row(row: Dict[str, Any]) -> List[Award]:
         note_bits = [tax_note]
         if source_note:
             note_bits.append(source_note)
-        if ur is False:
+        indirect = resolve_indirect_path(route.get("Source"))
+        if indirect:
+            note_bits.append(f"INDIRECT UR PATH ONLY: {indirect}")
+        elif ur is False:
             note_bits.append(
                 f"NO CHASE UR PATH: {program} is not a Chase UR transfer partner. "
                 f"This award is real and bookable, but not from a UR balance."
@@ -763,6 +835,7 @@ def parse_availability_row(row: Dict[str, Any]) -> List[Award]:
                 source_note=" ".join(b for b in note_bits if b),
                 program_source_code=str(route.get("Source") or "").strip().lower(),
                 ur_transferable=ur,
+                indirect_ur_path=indirect,
                 candidate_carriers=carriers,
                 carrier_source=(
                     "seats_aero_single"

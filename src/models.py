@@ -145,6 +145,12 @@ class Award:
     # False means "this award is real but there is no Chase UR path into the
     # program". That is a REPORTABLE result, not a reason to drop the row.
     ur_transferable: Optional[bool] = None
+    # Set when there is no DIRECT UR transfer but a known INDIRECT one exists
+    # (Chase UR -> British Airways Avios -> combine into this program's Avios).
+    # The text names the hops and the conditions. It is not scored: two-hop
+    # transfers are not modelled, and whether the traveller's accounts meet the
+    # conditions is not something this tool knows.
+    indirect_ur_path: str = ""
 
     # `{X}Airlines` is a comma-separated list of POSSIBLE operating carriers.
     # One entry does not make it confirmed metal; several make the metal
@@ -308,6 +314,9 @@ REASON_CODES = frozenset(
         # same claim as NOT_A_PARTNER, which asserts something about the user's
         # transfer partners; this one asserts something about the response.
         "PROGRAM_UNATTRIBUTED",
+        # An award in a program UR reaches only in two hops (UR -> BA Avios ->
+        # combine). Not scored, and NOT the NOT_A_PARTNER claim either.
+        "INDIRECT_PATH_UNVERIFIED",
         # v3 fix. The trip-level balance ceiling demoted this leg to cash
         # because earlier legs had already spent the shared balance.
         "TRIP_BALANCE_EXHAUSTED",
@@ -628,6 +637,9 @@ class PointsCandidate:
     # "no transfer partner covers this leg" about it is a claim we cannot make
     # (finding M-5).
     program_attribution_missing: bool = False
+    # Carried from Award.indirect_ur_path. A candidate with an indirect path is
+    # never scored and is never reported as "not a partner / no points path".
+    indirect_ur_path: str = ""
 
     @property
     def extra_observed_taxes_usd(self) -> float:
@@ -2080,6 +2092,9 @@ TRIP_LEVEL_ANSWERS = {
     ),
     "PROGRAM_UNATTRIBUTED": TripTreatment(
         COUNTED_AT_TRIP_LEVEL, totals_key="legs_award_unattributed"
+    ),
+    "INDIRECT_PATH_UNVERIFIED": TripTreatment(
+        COUNTED_AT_TRIP_LEVEL, totals_key="legs_indirect_path_unverified"
     ),
     "CARRIER_UNKNOWN": TripTreatment(
         DELIBERATELY_LEG_ONLY,
