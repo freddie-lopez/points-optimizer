@@ -33,7 +33,11 @@ def _base(**over):
         "points_spent": 0,
         "cash_still_owed_usd": 0.0,
         "legs_where_points_win": 0,
-        "legs_without_points_path": 0,
+        # MR5-3: the "NO UR path at all" row is driven by `legs_no_partner`,
+        # one predicate shared with the footer, and no longer by subtracting
+        # `legs_never_priced` from `legs_without_points_path` - a subtraction
+        # of two differently-derived counts that reached the screen as -1.
+        "legs_no_partner": 0,
         "trip_funding_executable": True,
         "margin_provenance": "badge",
         "margin_provenance_note": "note",

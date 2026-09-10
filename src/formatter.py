@@ -874,12 +874,23 @@ def print_trip_totals(
         )
     table.add_row("Cash still owed", _money(totals["cash_still_owed_usd"]))
     table.add_row("Legs where points win", str(int(totals["legs_where_points_win"])))
-    # H-4: the never-priced legs are subtracted here and reported on their own
-    # row, so "NO UR path at all" keeps meaning what it says.
+    # H-4: the never-priced legs are reported on their own row, so "NO UR path
+    # at all" keeps meaning what it says.
+    #
+    # MR5-3. THIS ROW USED TO PRINT `legs_without_points_path - legs_never_priced`
+    # AND IT PRINTED -1. The two counts come from DIFFERENT predicates - one
+    # reads a VERDICT, the other a `points_absence` - and `annotate_live_verdicts`
+    # rewrites the verdict on the live path while leaving the absence set, so
+    # four legs left the first set, stayed in the second, and 3 - 4 reached the
+    # screen as a count of legs. The footer of that same run named B5, B6, B7
+    # correctly, because `main.py` builds it from the compound condition. There
+    # is now ONE predicate - `optimizer.leg_has_no_partner` - and the table and
+    # the footer both ask it. A derived count that can go negative is a count
+    # nobody checked, so the derivation is gone rather than repaired.
     never_priced = int(totals.get("legs_never_priced", 0))
     table.add_row(
         "Legs with NO UR path at all",
-        str(int(totals["legs_without_points_path"]) - never_priced),
+        str(int(totals["legs_no_partner"])),
     )
     if never_priced:
         table.add_row(

@@ -2021,6 +2021,28 @@ def trip_funding_report(
     return report
 
 
+def leg_has_no_partner(result: LegResult) -> bool:
+    """
+    MR5-3. "No points path at all" means NO PARTNER EXISTS, and one predicate says so.
+
+    The totals table used to print `legs_without_points_path - legs_never_priced`.
+    Those two counts are derived from DIFFERENT predicates - a verdict and a
+    `points_absence` - and `live_trip.annotate_live_verdicts` rewrites the
+    verdict on the live path while leaving the absence set. Legs therefore left
+    the first set, stayed in the second, and the table printed
+
+        Legs with NO UR path at all | -1
+
+    while the footer of the same run correctly named B5, B6, B7. A derived count
+    that can go negative is a count nobody checked, so the derivation is gone:
+    this is the footer's own condition (`main.py`), and both callers ask it.
+    """
+    return (
+        result.verdict == "cash (no points path)"
+        and result.points_absence != "never_priced"
+    )
+
+
 def trip_totals(
     results: List[LegResult], wallet: Optional[Wallet] = None
 ) -> Dict[str, float]:
@@ -2093,6 +2115,8 @@ def trip_totals(
         if r.apd is not None and r.apd.is_known and r.apd.inclusion_unverified
     ]
     apd_added = [r.leg.id for r in results if r.apd_added_usd]
+    # MR5-3's predicate, written once and read by the totals AND the footer.
+    no_partner = [r.leg.id for r in results if leg_has_no_partner(r)]
     fee_unpriceable = [r.leg.id for r in results if r.mandatory_fees_unpriceable]
 
     # v3 STEP 7: the margin carries its own provenance, or it is not emitted.
@@ -2161,6 +2185,14 @@ def trip_totals(
         "legs_apd_added": len(apd_added),
         "legs_apd_added_ids": apd_added,
         "apd_added_usd": sum(r.apd_added_usd for r in results),
+        # MR5-3. THE SAME PREDICATE THE FOOTER USES, not a subtraction of two
+        # counts derived from different predicates. `legs_without_points_path`
+        # counts a VERDICT and `legs_never_priced` counts a `points_absence`;
+        # the live path rewrites the verdict and leaves the absence set, so
+        # legs left the first set, stayed in the second, and the difference
+        # printed as -1 legs.
+        "legs_no_partner": len(no_partner),
+        "legs_no_partner_ids": no_partner,
         "legs_mandatory_fee_unpriceable": len(fee_unpriceable),
         "legs_mandatory_fee_unpriceable_ids": fee_unpriceable,
         "legs_surcharge_unknown": len(unknown_surcharge),
