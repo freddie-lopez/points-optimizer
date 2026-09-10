@@ -7,7 +7,7 @@ from rich.table import Table
 from src import config
 from src.live_trip import LIVE_SOURCE, VERDICT_NO_LIVE_DATA, supersession_lines
 from src.models import LegResult, LiveQueryState, PointsProvenance, Strategy
-from src.optimizer import VERDICT_AWARD_UNATTRIBUTED
+from src.optimizer import VERDICT_APD_UNKNOWN, VERDICT_AWARD_UNATTRIBUTED
 
 
 def _money(x: float) -> str:
@@ -260,6 +260,13 @@ def print_leg_results(
             # no program for them. Also says nothing about partnerships.
             VERDICT_AWARD_UNATTRIBUTED:
                 "[bold yellow]PAY CASH (award unattributed)[/bold yellow]",
+            # WAY (10). A GOVERNMENT departure tax is owed and its size is not
+            # known, so the points side cannot be scored. Deliberately worded
+            # like the surcharge-unknown cell above and deliberately NOT the
+            # same cell: one is a carrier's YQ and this is HMRC's duty, and the
+            # whole point of keeping APD out of the surcharge table is that the
+            # reader can tell which of the two is missing.
+            VERDICT_APD_UNKNOWN: "[bold red]WITHHELD (APD unknown)[/bold red]",
         }[r.verdict]
         if r.demoted_for_trip_balance:
             # C-3: this leg WOULD have been points; the trip ran out of balance.
@@ -896,6 +903,32 @@ def print_trip_totals(
             "surcharge is UNKNOWN (NOT $0)[/red]",
             f"[red]{int(totals['legs_surcharge_unknown'])}[/red]",
         )
+    # MR5-1, WAY (10). The leg line has always said this; the trip block said
+    # nothing, and the trip block is where the number Tsuki quotes comes from.
+    # An owed duty of unknown size is a real dollar missing from the points
+    # side, so it gets its own row and names its legs - it is NOT folded into
+    # the surcharge row above, because a carrier's YQ and HMRC's duty are
+    # different quantities with different payers and the reader must be able to
+    # tell which one is missing.
+    if totals.get("legs_apd_unknown"):
+        table.add_row(
+            "[red]Legs where UK APD is OWED but its amount\n"
+            "is UNKNOWN (NOT $0)[/red]",
+            f"[red]{int(totals['legs_apd_unknown'])} "
+            f"({', '.join(totals.get('legs_apd_unknown_ids') or [])})[/red]",
+        )
+    # The amount IS known here and excluding it is defensible - the cash figure
+    # came from Seats.aero's TotalTaxes and nobody has checked whether it
+    # already contains the duty, so adding it could double-charge. That is a
+    # decision, not an oversight, and it stays. But a tax the headline left out
+    # must not be INVISIBLE at trip level, which is what it was.
+    if totals.get("legs_apd_unverified"):
+        table.add_row(
+            "[yellow]Legs carrying UK APD that is STATED but NOT\n"
+            "ADDED (unverified whether the fare includes it)[/yellow]",
+            f"[yellow]{int(totals['legs_apd_unverified'])} "
+            f"({', '.join(totals.get('legs_apd_unverified_ids') or [])})[/yellow]",
+        )
     if totals.get("legs_verdict_sensitive"):
         table.add_row(
             "[yellow]Legs whose verdict FLIPS inside the\n"
@@ -955,11 +988,33 @@ def print_trip_totals(
         )
 
     if totals.get("headline_is_a_range") and not totals.get("margin_withheld"):
+        # MR5-1, WAY (10). This sentence used to say the spread was carrier
+        # surcharges FULL STOP, on runs where part of it was an unknown
+        # government departure tax - a sentence that was actively false about
+        # what the reader was looking at. It names the tax when the tax is
+        # actually in the spread, and does NOT name it otherwise: a caveat that
+        # lists an ingredient this run does not contain is the same kind of
+        # false as the one it replaces. On a run with no unknown duty the
+        # wording is unchanged to the byte.
+        if totals.get("legs_apd_unknown"):
+            what = (
+                "carrier-imposed surcharges that are not known AND UK AIR "
+                "PASSENGER DUTY that is OWED on "
+                f"{', '.join(totals.get('legs_apd_unknown_ids') or [])} in an "
+                "amount this tool does not know"
+            )
+            assumption = (
+                "every unknown surcharge turns out to be $0 AND the departure "
+                "tax turns out to be $0, which it will not be"
+            )
+        else:
+            what = "carrier-imposed surcharges that are not known"
+            assumption = "every unknown surcharge turns out to be $0"
         console.print(
             "\n[bold yellow]The headline above is a RANGE and must not be quoted as "
-            "a single number.[/bold yellow] The spread is carrier-imposed surcharges "
-            "that are not known. The low end is what the tool can defend today; the "
-            "high end assumes every unknown surcharge turns out to be $0, which is "
+            f"a single number.[/bold yellow] The spread is {what}"
+            ". The low end is what the tool can defend today; the "
+            f"high end assumes {assumption}, which is "
             "the assumption that made v0's number wrong."
         )
     if totals.get("legs_verdict_sensitive_ids"):

@@ -25,6 +25,7 @@ from src.models import (
     Transfer,
     TransferPath,
     Trip,
+    check_trip_level_answers,
 )
 from src.ratio_manager import RatioManager
 from src.regions import UnknownAirportError
@@ -1485,10 +1486,11 @@ def evaluate_trip(
     results = [_score_leg(leg, full_wallet) for leg in legs]
 
     if not enforce_trip_balance:
-        return apply_apd(results, today=today)
+        return apply_apd(results, today=today, valuation_cpp=valuation_cpp)
     return apply_apd(
         _apply_trip_balance_ceiling(legs, results, full_wallet, _score_leg),
         today=today,
+        valuation_cpp=valuation_cpp,
     )
 
 
@@ -1587,7 +1589,88 @@ def _apd_inclusion_unverified(result: LegResult) -> Tuple[bool, str]:
     return False, ""
 
 
-def apply_apd(results: List[LegResult], today: Optional[date] = None):
+VERDICT_APD_UNKNOWN = "cash (APD unknown)"
+
+
+def _withhold_points_side_for_unknown_apd(
+    result: LegResult, charge, valuation_cpp: float
+) -> None:
+    """
+    WAY (10), THE APD HALF. An OWED-BUT-UNKNOWN duty is not a $0 duty.
+
+    An unknown carrier surcharge already resolves this way: the points side
+    becomes UNSCOREABLE (+inf), so the trip's pessimistic end takes CASH for
+    this leg while `points_floor_usd` - the cheapest the points side could
+    conceivably be, i.e. the duty at its floor of $0 - keeps the optimistic end
+    honest. A government departure tax whose size nobody knows is exactly the
+    same quantity of ignorance about exactly the same dollar, so it gets exactly
+    the same treatment.
+
+    WHAT WENT WRONG WITHOUT THIS. `apd_added_usd` was set to 0.0 and none of the
+    four score fields were touched, so an unknown duty entered NEITHER end of
+    the range whose whole job is to bracket unknowns. Setting B4's cabin to one
+    the table cannot price moved the trip headline from $63.89 / 2.04%-11.03% to
+    $202.00 / 6.46%-15.45%: knowing LESS made the recommendation look three
+    times better, and returned the number to its pre-APD value. Fifteen of the
+    63 rows in `data/apd_bands.csv` are band UNKNOWN, so this is reachable from
+    an ordinary UK departure to Mexico, Brazil, Turkey, South Korea or South
+    Africa - not from a contrived fixture.
+
+    A leg with no points path is left alone: there is no points side to withhold
+    and the APD line still prints, because the tax is still owed.
+    """
+    if not result.has_points_path:
+        return
+    if result.points_total_score_usd == float("inf"):
+        return  # already unscoreable, for some other unknown. Nothing to add.
+
+    # The floor is the points side BEFORE the duty - APD can only ever add, so
+    # this is the least this leg could possibly cost on points.
+    floor = min(result.points_total_score_usd, result.points_score_low_usd)
+    result.points_floor_usd = (
+        floor if result.points_floor_usd is None else min(result.points_floor_usd, floor)
+    )
+    result.points_total_score_usd = float("inf")
+    result.points_score_low_usd = float("inf")
+    result.points_score_high_usd = float("inf")
+    result.apd_unknown_withheld = True
+
+    cash = result.cash_total_score_usd
+    if cash != float("inf") and result.points_floor_usd >= cash:
+        # The unknown is real but INERT: cash already wins with the duty at $0,
+        # and a duty can only add. Same reasoning as the unknown-surcharge case.
+        result.verdict = "cash"
+        result.margin_usd = result.points_floor_usd - cash
+        result.margin_pct = (result.margin_usd / cash * 100) if cash else 0.0
+        result.verdict_reason = (
+            f"Cash is cheaper: ${cash:,.2f} vs at least "
+            f"${result.points_floor_usd:,.2f} on points at "
+            f"{valuation_cpp * 100:.1f}cpp. UK Air Passenger Duty IS owed on this "
+            f"leg and its amount is UNKNOWN, but it can only ADD to the points "
+            f"side, so cash wins whatever it turns out to be."
+        )
+        return
+
+    result.verdict = VERDICT_APD_UNKNOWN
+    result.margin_usd = 0.0
+    result.margin_pct = 0.0
+    result.verdict_reason = (
+        f"UK AIR PASSENGER DUTY IS OWED on this leg and its amount is UNKNOWN, so "
+        f"the points side CANNOT be scored against "
+        f"${result.cash_total_score_usd:,.2f} cash. It is NOT $0. The points side "
+        f"costs AT LEAST ${result.points_floor_usd:,.2f} - that figure is a LOWER "
+        f"BOUND with the duty at zero, and points win only if the duty turns out "
+        f"to be below "
+        f"${max(result.cash_total_score_usd - result.points_floor_usd, 0.0):,.2f}. "
+        f"{charge.unknown_reason}"
+    ).strip()
+
+
+def apply_apd(
+    results: List[LegResult],
+    today: Optional[date] = None,
+    valuation_cpp: float = config.DEFAULT_VALUATION_CPP,
+):
     """
     One additive term on the offline points-side total, AFTER evaluate_leg ran.
 
@@ -1662,6 +1745,7 @@ def apply_apd(results: List[LegResult], today: Optional[date] = None):
                 charge.render(),
                 destination_country=charge.destination_country,
             )
+            _withhold_points_side_for_unknown_apd(result, charge, valuation_cpp)
             continue
         if charge.inclusion_unverified:
             result.apd_added_usd = 0.0
@@ -2000,6 +2084,16 @@ def trip_totals(
     unknown_surcharge = [
         r.leg.id for r in results if r.verdict == "cash (surcharge unknown)"
     ]
+    apd_unknown = [
+        r.leg.id for r in results if r.apd is not None and not r.apd.is_known
+    ]
+    apd_unverified = [
+        r.leg.id
+        for r in results
+        if r.apd is not None and r.apd.is_known and r.apd.inclusion_unverified
+    ]
+    apd_added = [r.leg.id for r in results if r.apd_added_usd]
+    fee_unpriceable = [r.leg.id for r in results if r.mandatory_fees_unpriceable]
 
     # v3 STEP 7: the margin carries its own provenance, or it is not emitted.
     # `evaluate_leg` is untouched; this is a pure aggregation over what
@@ -2014,7 +2108,7 @@ def trip_totals(
     # unusable must not be separable by accident.
     funding = trip_funding_report(results, wallet)
 
-    return {
+    totals = {
         **funding,
         **provenance,
         "legs_unpriceable": len(unpriced),
@@ -2054,10 +2148,37 @@ def trip_totals(
         "legs_points_blocked": sum(
             1 for r in results if r.verdict == "cash (points blocked)"
         ),
+        # WAY (10). Every leg-level UNKNOWN gets a trip-level answer, and for
+        # these two the answer is a COUNTER with the leg ids in it. The first
+        # also moves the pessimistic end of the range (see
+        # `_withhold_points_side_for_unknown_apd`); the second does not, because
+        # there the amount IS known and only its inclusion is unverified - but a
+        # tax the headline left out must not be invisible at trip level either.
+        "legs_apd_unknown": len(apd_unknown),
+        "legs_apd_unknown_ids": apd_unknown,
+        "legs_apd_unverified": len(apd_unverified),
+        "legs_apd_unverified_ids": apd_unverified,
+        "legs_apd_added": len(apd_added),
+        "legs_apd_added_ids": apd_added,
+        "apd_added_usd": sum(r.apd_added_usd for r in results),
+        "legs_mandatory_fee_unpriceable": len(fee_unpriceable),
+        "legs_mandatory_fee_unpriceable_ids": fee_unpriceable,
         "legs_surcharge_unknown": len(unknown_surcharge),
         "legs_surcharge_unknown_ids": unknown_surcharge,
         "legs_verdict_sensitive": len(sensitive),
         "legs_verdict_sensitive_ids": sensitive,
         "legs_where_points_win": sum(1 for r in results if r.verdict == "points"),
+        "legs_award_unattributed": sum(
+            1 for r in results if r.verdict == VERDICT_AWARD_UNATTRIBUTED
+        ),
+        "legs_award_unattributed_ids": [
+            r.leg.id for r in results if r.verdict == VERDICT_AWARD_UNATTRIBUTED
+        ],
         "rests_on_placeholder_fx": any(r.rests_on_placeholder_fx for r in results),
     }
+    # WAY (10). The declarations in `models.TRIP_LEVEL_ANSWERS` are checked
+    # against THIS run before the dict leaves this function: every promised
+    # counter is really here, and no leg carrying an unknown declared to widen
+    # the range kept a finite points score it could win the total with.
+    check_trip_level_answers(results, totals)
+    return totals

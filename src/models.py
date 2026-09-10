@@ -1756,6 +1756,12 @@ class LegResult:
     # UNKNOWN and when it is merely FLAGGED on a live/replayed leg, so it can
     # never be added twice or reported as added when it was not.
     apd_added_usd: float = 0.0
+    # WAY (10). The duty is OWED and its amount is UNKNOWN, so the points side
+    # was withheld (+inf) exactly as an unknown carrier surcharge withholds it.
+    # `apd_added_usd == 0.0` is true in that case AND in the merely-flagged
+    # case, and the two must not be counted as one thing at trip level: this
+    # flag is the one that means "an unknown dollar is in this leg".
+    apd_unknown_withheld: bool = False
     alternatives: List[Alternative] = field(default_factory=list)
     reasons: List[Reason] = field(default_factory=list)
     rests_on_placeholder_fx: bool = False
@@ -1847,3 +1853,365 @@ class LegResult:
         if self.has_points_path and self.points_score_high_usd != float("inf"):
             return min(self.points_score_high_usd, self.cash_total_score_usd)
         return self.cash_total_score_usd
+
+
+# ===========================================================================
+# WAY (10): EVERY LEG-LEVEL UNKNOWN NEEDS A TRIP-LEVEL ANSWER
+# ===========================================================================
+#
+# Way (9) was: A FACT KNOWN AT CONSTRUCTION IS LOST BY A STORAGE LAYER, and it
+# is closed above by an import-time classification that refuses to let an
+# invariant read a field nobody said how to persist.
+#
+# Way (10) is the same sentence with one word changed: A FACT KNOWN AT THE LEG
+# IS LOST BY AGGREGATION. Its first instance was UK APD: `apply_apd` wrote a
+# scrupulously honest per-leg line saying the duty was OWED and its size UNKNOWN,
+# and then touched none of the four score fields - so the unknown entered NEITHER
+# end of the trip range, and a leg the tool knew LESS about scored BETTER. The
+# eleventh appearance of this project's founding bug, one level up from where the
+# tenth was fixed.
+#
+# The lesson from way (9) is that a rule enforced by remembering is not enforced.
+# So the same shape of machinery is built here, against aggregation instead of
+# storage:
+#
+#   1. DISCOVERY, from the code rather than from a list. Every leg-level UNKNOWN
+#      announces itself in exactly two ways in this codebase - an `add_reason`
+#      code, or a LegResult field - and both are found by parsing the source,
+#      not by maintaining an inventory.
+#   2. CLASSIFICATION. Each discovered unknown is declared with what the TRIP
+#      level does with it: it widens the range, it is counted, or it deliberately
+#      stops at the leg (and then it must say why, in writing).
+#   3. REFUSAL AT IMPORT. An unclassified unknown makes this module fail to
+#      import, exactly as an unclassified invariant field does.
+#   4. ENFORCEMENT AT AGGREGATION. `trip_totals` calls `check_trip_level_answers`,
+#      which proves the declarations were HONOURED on the actual results: every
+#      declared counter key is really in the totals dict, and no leg carrying a
+#      WIDENS unknown was left with a finite, winnable points score. Run against
+#      the pre-fix `apply_apd`, that second check fails on an unknown-APD leg -
+#      which is the definition of a guard that would have caught way (10).
+
+WIDENS_THE_TRIP_RANGE = "widens_the_trip_range"
+COUNTED_AT_TRIP_LEVEL = "counted_at_trip_level"
+DELIBERATELY_LEG_ONLY = "deliberately_leg_only"
+
+_TRIP_TREATMENTS = (
+    WIDENS_THE_TRIP_RANGE,
+    COUNTED_AT_TRIP_LEVEL,
+    DELIBERATELY_LEG_ONLY,
+)
+
+
+@dataclass(frozen=True)
+class TripTreatment:
+    """What the TRIP level does with one leg-level unknown. All three fields load-bearing."""
+
+    treatment: str
+    # The key `trip_totals` must emit for it. Required for the first two
+    # treatments and checked against the real dict at aggregation time, so a
+    # renamed key is a crash and not a silently missing row.
+    totals_key: str = ""
+    # Required for DELIBERATELY_LEG_ONLY. Prose, because "this one stops at the
+    # leg" is a judgement and a judgement with no argument is how way (10)
+    # happened in the first place.
+    because: str = ""
+
+
+# The vocabulary that makes a name an UNKNOWN. Matched against `add_reason`
+# codes and against LegResult field names. Widening this set can only ever
+# DISCOVER more, never less - a new marker cannot silence an existing entry.
+_UNKNOWN_MARKERS = (
+    "UNKNOWN",
+    "UNVERIFIED",
+    "UNPRICED",
+    "UNPRICEABLE",
+    "UNATTRIBUTED",
+    "UNCONVERTIBLE",
+    "PLACEHOLDER",
+    "ABSENCE",
+    "WITHHELD",
+    "MISSING",
+)
+
+
+def _names_an_unknown(name: str) -> bool:
+    upper = (name or "").upper()
+    return any(marker in upper for marker in _UNKNOWN_MARKERS)
+
+
+def _reason_codes_in_source() -> frozenset:
+    """
+    Every literal `add_reason("CODE", ...)` in `src/`, parsed out of the files.
+
+    Deliberately AST over the whole package rather than a maintained list, for
+    the reason `_fields_read_by_invariants` is: the question "what unknowns does
+    the leg level write down?" has exactly one truthful answer and it is the
+    code. A code built by string formatting is invisible here BY DESIGN - a
+    reason code is a fixed vocabulary, and one assembled at runtime cannot be
+    classified at import either.
+    """
+    import ast
+
+    codes = set()
+    for path in sorted(Path(__file__).resolve().parent.glob("*.py")):
+        try:
+            tree = ast.parse(path.read_text())
+        except (OSError, SyntaxError):  # pragma: no cover - unreadable source
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Attribute) and func.attr == "add_reason"):
+                continue
+            if node.args and isinstance(node.args[0], ast.Constant):
+                value = node.args[0].value
+                if isinstance(value, str):
+                    codes.add(value)
+    return frozenset(codes)
+
+
+def _leg_unknown_fields() -> frozenset:
+    """LegResult's own fields whose NAME says they carry an unknown."""
+    return frozenset(
+        f.name for f in dataclasses.fields(LegResult) if _names_an_unknown(f.name)
+    )
+
+
+def leg_level_unknowns() -> frozenset:
+    """Every leg-level unknown this codebase can produce, discovered from source."""
+    return frozenset(
+        {c for c in _reason_codes_in_source() if _names_an_unknown(c)}
+    ) | _leg_unknown_fields()
+
+
+# THE ANSWER, ONE ROW PER UNKNOWN. Adding a leg-level unknown without adding a
+# row here makes this module refuse to import.
+TRIP_LEVEL_ANSWERS = {
+    # -- reason codes ---------------------------------------------------
+    "SURCHARGE_UNKNOWN": TripTreatment(
+        WIDENS_THE_TRIP_RANGE, totals_key="legs_surcharge_unknown"
+    ),
+    "APD_UNKNOWN": TripTreatment(
+        WIDENS_THE_TRIP_RANGE, totals_key="legs_apd_unknown"
+    ),
+    "APD_INCLUSION_UNVERIFIED": TripTreatment(
+        COUNTED_AT_TRIP_LEVEL, totals_key="legs_apd_unverified"
+    ),
+    "FX_PLACEHOLDER": TripTreatment(
+        COUNTED_AT_TRIP_LEVEL, totals_key="rests_on_placeholder_fx"
+    ),
+    "PROGRAM_UNATTRIBUTED": TripTreatment(
+        COUNTED_AT_TRIP_LEVEL, totals_key="legs_award_unattributed"
+    ),
+    "CARRIER_UNKNOWN": TripTreatment(
+        DELIBERATELY_LEG_ONLY,
+        because=(
+            "Unknown metal is not itself an unknown DOLLAR. Its trip-level "
+            "consequence is that the surcharge cannot be resolved, and that is "
+            "SURCHARGE_UNKNOWN, which widens the range and is counted. Counting "
+            "the cause as well as the effect would double-report one leg."
+        ),
+    ),
+    "ALTERNATIVE_UNPRICED": TripTreatment(
+        DELIBERATELY_LEG_ONLY,
+        because=(
+            "An alternative is never scored, never totalled and never presented "
+            "as a price - it is a break-even for a route the reader may go and "
+            "price themselves. It contributes no dollar to either side, so there "
+            "is no trip-level number for it to be lost from."
+        ),
+    ),
+    # -- LegResult fields -----------------------------------------------
+    "apd_unknown_withheld": TripTreatment(
+        COUNTED_AT_TRIP_LEVEL, totals_key="legs_apd_unknown"
+    ),
+    "mandatory_fees_unpriceable": TripTreatment(
+        COUNTED_AT_TRIP_LEVEL, totals_key="legs_mandatory_fee_unpriceable"
+    ),
+    "rests_on_placeholder_fx": TripTreatment(
+        COUNTED_AT_TRIP_LEVEL, totals_key="rests_on_placeholder_fx"
+    ),
+    "points_absence": TripTreatment(
+        COUNTED_AT_TRIP_LEVEL, totals_key="legs_never_priced"
+    ),
+}
+
+
+def _check_way_ten_classification() -> None:
+    """
+    Every leg-level unknown has a declared trip-level answer. Import-time.
+
+    A ValueError and not an assert, for the same reason as way (9): `python -O`
+    deletes asserts, and a rule that a flag can switch off is not a rule.
+    """
+    discovered = leg_level_unknowns()
+    unclassified = discovered - set(TRIP_LEVEL_ANSWERS)
+    if unclassified:
+        raise ValueError(
+            f"way (10): {sorted(unclassified)} is a leg-level UNKNOWN with no "
+            f"declared trip-level answer. Every fact the leg level writes down as "
+            f"UNKNOWN must say what the TRIP level does with it: widen the range "
+            f"({WIDENS_THE_TRIP_RANGE}), count it in the totals "
+            f"({COUNTED_AT_TRIP_LEVEL}), or stop at the leg on purpose and say why "
+            f"({DELIBERATELY_LEG_ONLY}). An unclassified one is an unknown that "
+            f"reaches the headline as ZERO - that is way (10), and it is not "
+            f"allowed to be added silently."
+        )
+    invented = set(TRIP_LEVEL_ANSWERS) - discovered
+    if invented:
+        raise ValueError(
+            f"way (10): {sorted(invented)} is classified but is neither an "
+            f"`add_reason` code in src/ nor a LegResult field. A classification "
+            f"that names nothing protects nothing."
+        )
+    for name, answer in sorted(TRIP_LEVEL_ANSWERS.items()):
+        if answer.treatment not in _TRIP_TREATMENTS:
+            raise ValueError(
+                f"way (10): {name} declares treatment {answer.treatment!r}, which "
+                f"is not one of {list(_TRIP_TREATMENTS)}."
+            )
+        if answer.treatment == DELIBERATELY_LEG_ONLY:
+            if len(answer.because.strip()) < 40:
+                raise ValueError(
+                    f"way (10): {name} stops at the leg and gives no argument for "
+                    f"it. {DELIBERATELY_LEG_ONLY} is the answer that needs the "
+                    f"MOST justification, not the least - it is the one that "
+                    f"reproduces way (10) if it is wrong."
+                )
+        elif not answer.totals_key:
+            raise ValueError(
+                f"way (10): {name} is declared {answer.treatment} but names no "
+                f"`totals_key`. A treatment the totals do not emit is a promise "
+                f"nothing keeps."
+            )
+
+
+_check_way_ten_classification()
+
+
+def check_trip_level_answers(results, totals) -> None:
+    """
+    The declarations above, checked against the run that just happened.
+
+    Two properties, both cheap and both about REAL results rather than about the
+    table:
+
+      1. Every declared `totals_key` is actually in the totals dict. A row that
+         was renamed or dropped is a crash here, not a silently missing counter.
+      2. Every leg carrying a WIDENS_THE_TRIP_RANGE unknown really does reach
+         the trip range either as a RANGE or as a resolved answer the unknown
+         cannot disturb.
+
+    ON PROPERTY 2, AND WHY IT IS PHRASED IN `winner_cost_*` AND NOT IN SCORES.
+    Way (10) is a defect of AGGREGATION, so the only honest place to assert
+    about it is the two numbers a leg actually contributes to the trip's two
+    ends - `winner_cost_low_usd` and `winner_cost_high_usd`. An earlier draft of
+    this guard asserted about an internal field instead ("the points side must
+    be +inf") and was WRONG, in a way worth recording because it is the same
+    error class it exists to catch: it mistook ONE mechanism for THE mechanism.
+    v1 brackets an unknown in two different and equally correct ways -
+
+      * the unknown sits on the CHOSEN option, which is therefore unscoreable
+        (+inf) with `points_floor_usd` carrying the optimistic end (Trip B's B3,
+        and every unknown-APD leg after `_withhold_points_side_for_unknown_apd`);
+      * the unknown sits on a REJECTED alternative, so the chosen option keeps
+        its finite modeled score at the pessimistic end while the alternative's
+        floor pulls the optimistic end down (Trip B's B1: 500.00 scored, floor
+        230.00, cash 395.00, contributing 230.00-395.00).
+
+    Demanding +inf declared the second one a defect and reddened 36 tests that
+    were describing correct behaviour. Both bracket; what matters is that the
+    leg reaches the trip as a spread, not which field carries it.
+
+    WHICH SIDE THE UNKNOWN SITS ON IS THE WHOLE QUESTION, and the check is
+    per-UNKNOWN and not per-LEG because of it. A first draft asked only "does
+    this leg widen?" and a leg can carry TWO unknowns, of which one widens the
+    range and the other is missing from both ends - the first then MASKS the
+    second and the guard reports success. That is not hypothetical: it is Trip B
+    with B4's cabin unpriceable. B4 carries a rejected British Airways
+    alternative whose surcharge is unknown (floor 200.00) AND an unknown duty on
+    the chosen United option, and the alternative's floor widens the leg to
+    200.00-280.00 all by itself. A per-leg guard passes that run, and that run
+    is way (10) - the $202.00 / 6.46%-15.45% headline the Manager reported.
+
+    So each unknown is asked about the figure it actually belongs to:
+
+      * AN UNKNOWN ON A REJECTED ALTERNATIVE (the reason names a `label`, i.e. a
+        candidate that is NOT the one chosen) can only ever make THAT
+        alternative cheaper. It can never make the chosen option cost more, so
+        its job is to pull the OPTIMISTIC end down, and it must either widen the
+        leg or be inert. Trip B's B1 and B4.
+      * AN UNKNOWN ON THE CHOSEN OPTION (no `label`) is a dollar MISSING FROM
+        THE FIGURE THIS LEG CONTRIBUTES. A points figure with a hole in it must
+        not carry the PESSIMISTIC end, because the pessimistic end is the number
+        the tool defends. So the leg's high end must be CASH - which is what an
+        unscoreable (+inf) points side produces. Trip B's B2 and B3, and every
+        unknown-APD leg after `_withhold_points_side_for_unknown_apd`.
+
+    Cash is never the side with the hole in it: a published cash fare already
+    contains the surcharge and the duty, and every unknown in this vocabulary
+    can only ever ADD to the POINTS side.
+
+    THE INERT EXEMPTION, for the alternative case. A leg may contribute ONE
+    number to both ends while carrying an unknown, when the unknown is provably
+    unable to change that number: the leg pays CASH at both ends, and no value
+    the unknown takes can reach a cash figure. That is what
+    `surcharge_cannot_change_verdict` already reports at the leg - Trip B's B2,
+    floor 80.00 against cash 44.00, contributing 44.00 at both ends. Withholding
+    a verdict there would hide an answer we genuinely have.
+    """
+    missing = sorted(
+        {
+            answer.totals_key
+            for answer in TRIP_LEVEL_ANSWERS.values()
+            if answer.totals_key and answer.totals_key not in totals
+        }
+    )
+    if missing:
+        raise ValueError(
+            f"way (10): the totals do not carry {missing}, which "
+            f"TRIP_LEVEL_ANSWERS promises for a leg-level unknown. Every unknown "
+            f"the legs report must be visible in the trip block."
+        )
+    widening = {
+        name
+        for name, answer in TRIP_LEVEL_ANSWERS.items()
+        if answer.treatment == WIDENS_THE_TRIP_RANGE
+    }
+    for result in results:
+        carried = [r for r in result.reasons if r.code in widening]
+        if not carried:
+            continue
+        low = result.winner_cost_low_usd
+        high = result.winner_cost_high_usd
+        cash = result.cash_total_score_usd
+
+        # An unknown with no `label` describes the CHOSEN option's own figure.
+        on_chosen = sorted({r.code for r in carried if "label" not in r.data})
+        if on_chosen and high != cash:
+            raise ValueError(
+                f"way (10): {result.leg.id} reports {on_chosen} on the option it "
+                f"CHOSE - an unknown declared to WIDEN the trip range - and yet "
+                f"the pessimistic end of this leg is ${high:,.2f} on the POINTS "
+                f"side, not the ${cash:,.2f} cash figure. A points figure with a "
+                f"dollar of unknown size missing from it must NOT carry the end "
+                f"of the range the tool defends. Make the points side "
+                f"unscoreable (+inf) and let `points_floor_usd` carry the "
+                f"optimistic end, exactly as an unknown carrier surcharge on a "
+                f"chosen option already does."
+            )
+
+        # An unknown that names a `label` describes a REJECTED alternative. It
+        # can only pull the optimistic end down, so it must widen - or be inert.
+        on_alternative = sorted({r.code for r in carried if "label" in r.data})
+        if on_alternative and low >= high and high != cash:
+            raise ValueError(
+                f"way (10): {result.leg.id} reports {on_alternative} on a "
+                f"REJECTED alternative and contributes the same ${low:,.2f} to "
+                f"both ends of the trip range on the POINTS side (cash here is "
+                f"${cash:,.2f}). An alternative whose price is unknown must "
+                f"either widen the optimistic end - record its floor in "
+                f"`points_floor_usd` - or be INERT, the leg paying cash at both "
+                f"ends whatever the unknown turns out to be."
+            )
