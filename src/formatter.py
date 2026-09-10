@@ -813,8 +813,18 @@ def print_trip_totals(
             "[dim]  low end = what is actually defensible[/dim]",
             f"[dim]{totals['beat_cash_pct_low']:.2f}%{hash_suffix}[/dim]",
         )
+        # MR5-1, WAY (10), the same sentence one row up from the caveat. This
+        # label names what the optimistic end ASSUMES AWAY, so on a run where
+        # part of that is an unknown departure tax it has to say so - naming
+        # only the surcharge is the identical falsehood the caveat had.
         table.add_row(
-            "[dim]  high end = only if every unknown surcharge is $0[/dim]",
+            "[dim]  high end = only if every unknown surcharge is $0"
+            + (
+                " AND the departure tax is $0"
+                if totals.get("legs_apd_unknown")
+                else ""
+            )
+            + "[/dim]",
             f"[dim]{totals['beat_cash_pct_high']:.2f}%{hash_suffix}[/dim]",
         )
     else:
