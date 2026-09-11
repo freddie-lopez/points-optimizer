@@ -52,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Score a trip fixture LIVE (the default as of v5)
+  # Score a trip fixture LIVE (the default)
   python -m src.main --trip-fixture trip_b_europe.json --balance UR=160000
 
   # Score it with no network at all, from the fixture's own prices
@@ -73,8 +73,8 @@ EXIT CODES (the single authoritative list; README.md quotes this one):
   2  WALLET ERROR. No balances or cards were supplied, or the wallet file is
      malformed. The tool refuses to assume which cards and points you hold,
      because a default wallet changes real answers. NOTHING was scored.
-  3  WITHHELD. At least one leg did not come back live (this is the DEFAULT as
-     of v5; --allow-badge-fallback opts out), so no margin is quoted. This is a
+  3  WITHHELD. At least one leg did not come back live (this is the DEFAULT;
+     --allow-badge-fallback opts out), so no margin is quoted. This is a
      REFUSAL TO ANSWER, not a finding of zero value.
   4  NOT EXECUTABLE. A margin was produced, but the recommendation cannot be
      funded from the balance you supplied. The number is real; the plan is not
@@ -84,7 +84,7 @@ EXIT CODES (the single authoritative list; README.md quotes this one):
   plan cannot be executed" are different failures and a wrapping script must be
   able to tell them apart.
 
-DEFAULTS AS OF v5:
+DEFAULTS:
   --trip-fixture implies live scoring unless --offline is passed. A run with no
   network and no --offline exits 3 rather than quietly scoring Google badges.
   --live and --require-all-live are still accepted and are no-ops.
@@ -104,7 +104,7 @@ DEFAULTS AS OF v5:
     )
 
     build = parser.add_argument_group(
-        "building a trip (v5) - writes a fixture that can ONLY be scored live"
+        "building a trip - writes a fixture that can ONLY be scored live"
     )
     build.add_argument(
         "--new-trip",
@@ -202,7 +202,7 @@ DEFAULTS AS OF v5:
         "--balance-ur",
         type=int,
         default=None,
-        help="DEPRECATED shorthand for --balance UR=N. Kept for v0 compatibility.",
+        help="DEPRECATED shorthand for --balance UR=N. Kept so older scripts keep working.",
     )
 
     tune = parser.add_argument_group("tuning")
@@ -261,13 +261,13 @@ DEFAULTS AS OF v5:
         ),
     )
     live = parser.add_argument_group(
-        "live trip mode (v3) - points from Seats.aero, cash still from captures"
+        "live trip mode - points from Seats.aero, cash still from captures"
     )
     live.add_argument(
         "--live",
         action="store_true",
         help=(
-            "ACCEPTED AND NOW A NO-OP: as of v5 --trip-fixture is live by "
+            "ACCEPTED AND NOW A NO-OP: --trip-fixture is now live by "
             "default and --offline is the opt-out. Kept so existing scripts and "
             "docs keep working and keep meaning what they said. CASH IS NEVER "
             "TOUCHED: screenshots remain the source of truth for cash and there "
@@ -309,7 +309,7 @@ DEFAULTS AS OF v5:
         "--require-all-live",
         action="store_true",
         help=(
-            "ACCEPTED AND NOW A NO-OP: as of v5 this is the DEFAULT and "
+            "ACCEPTED AND NOW A NO-OP: this is now the DEFAULT and "
             "--allow-badge-fallback is the opt-out. It WITHHOLDS the trip margin "
             "entirely unless every flight leg with a points candidate came back "
             "live (or replayed from a snapshot that was live at capture). Exits "

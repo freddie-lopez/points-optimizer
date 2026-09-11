@@ -563,10 +563,11 @@ def verify(rows: List[ManifestRow], snapshot_dir: Path) -> List[Problem]:
                 Problem(
                     "content_hash_unknown",
                     row,
-                    "this row predates v5 and carries no content_hash column, "
-                    "so there is nothing to check the file against. It reads as "
-                    "UNKNOWN, never as 'matches'. Re-fetch the leg to write a "
-                    "v5 row, or replay a manifest that has one.",
+                    "this row was written by an older version of the tool and "
+                    "carries no content_hash column, so there is nothing to check "
+                    "the file against. It reads as UNKNOWN, never as 'matches'. "
+                    "Re-fetch the leg to write a row that has one, or replay a "
+                    "manifest whose rows do.",
                 )
             )
         elif not _CONTENT_HASH_COLUMN.fullmatch(row.content_hash.strip().lower()):
@@ -607,7 +608,7 @@ def verify(rows: List[ManifestRow], snapshot_dir: Path) -> List[Problem]:
                     row,
                     "the row records BUDGET_EXHAUSTED against an archived "
                     "snapshot. A budget failure is never cached and never "
-                    "archived (finding H-1), so a row claiming one describes a "
+                    "archived, so a row claiming one describes a "
                     "response that cannot exist. The manifest is corrupt.",
                 )
             )

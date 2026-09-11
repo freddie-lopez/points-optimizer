@@ -63,3 +63,53 @@ def test_no_release_reference_with_a_verdict_in_force(capsys, monkeypatch, which
     monkeypatch.setattr(yq_inclusion, "load", lambda *a, **k: table)
     code, out = _live(capsys)
     assert _scan(out) == [], _scan(out)
+
+
+# ---------------------------------------------------------------------------
+# Re-test 4 observations: --help and two replay refusals cited releases too
+# ---------------------------------------------------------------------------
+
+
+def _help(module):
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent
+    r = subprocess.run([sys.executable, "-m", module, "--help"], cwd=root,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr[-500:]
+    return r.stdout
+
+
+@pytest.mark.parametrize("module", ["src.main", "src.trips_tools"])
+def test_no_release_reference_in_help(module):
+    text = _help(module)
+    assert "EXIT CODES" in text or "exit" in text.lower()
+    assert _scan(text) == [], _scan(text)
+
+
+def test_no_release_reference_in_the_old_row_and_budget_refusals(tmp_path):
+    from src import snapshot_replay
+    from tests.test_snapshot_manifest import PRE_V5_MANIFEST, _three_row_manifest
+
+    old = tmp_path / "old"
+    old.mkdir()
+    (old / "MANIFEST.md").write_text(PRE_V5_MANIFEST)
+    (old / "old.json").write_text('{"_meta": {}, "pages": [{"data": []}]}')
+    problems = snapshot_replay.verify(snapshot_replay.parse_manifest(old / "MANIFEST.md"), old)
+    unknown = [p for p in problems if p.kind == "content_hash_unknown"]
+    assert unknown, [p.kind for p in problems]
+
+    manifest, snap = _three_row_manifest(tmp_path)
+    manifest.write_text(
+        manifest.read_text().replace("| ok | b2_synth.json", "| budget_exhausted | b2_synth.json")
+    )
+    budget = [
+        p for p in snapshot_replay.verify(snapshot_replay.parse_manifest(manifest), snap)
+        if p.kind == "impossible_state_archived"
+    ]
+    assert budget
+    text = "\n".join(p.render() for p in unknown + budget)
+    assert "written by an older version of the tool" in text
+    assert _scan(text) == [], _scan(text)
