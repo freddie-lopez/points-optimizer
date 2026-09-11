@@ -21,13 +21,15 @@ from rich.console import Console
 
 from src import trips_tools, yq_inclusion
 from src.seats_client import SeatsClient
-from src.yq_inclusion import NO_VERDICT_MARKER, YqInclusionError
+from src.yq_inclusion import YqInclusionError
 from tests import _trips_payloads as tp
 from tests.test_metal_end_to_end import vs_row
 from tests.test_trips_tools import Stub, yq_args
 from tests.test_yq_airline_scope import HEADER, body
 
 TODAY = date(2026, 9, 11)
+# The literal the record carries; pinned here so a rename is a test failure.
+NO_VERDICT_MARKER = "yq-check: NO VERDICT POSSIBLE"
 BAND = "- modelled carrier surcharge band: $200-$350 (pt $275) one way (VS metal, cabin J)"
 
 
@@ -158,6 +160,10 @@ def _load(tmp_path, text):
 def test_the_loader_refuses_a_record_without_a_nonzero_band_or_with_the_marker(tmp_path, mutate, needle):
     with pytest.raises(YqInclusionError, match=needle):
         _load(tmp_path, mutate(body()))
+
+
+def test_the_marker_the_tool_writes_is_the_one_the_loader_refuses():
+    assert yq_inclusion.NO_VERDICT_MARKER == NO_VERDICT_MARKER
 
 
 def test_a_record_with_a_nonzero_band_and_no_marker_loads(tmp_path):
