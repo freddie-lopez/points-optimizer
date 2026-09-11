@@ -2457,6 +2457,7 @@ METAL_REASONS: Dict["MetalStatus", frozenset] = {
             "RATE_LIMITED_EARLIER",
             "NOT_NEEDED_POLICY",
             "NOT_DIRECT_PARTNER",
+            "NOT_NEEDED_PARTY",
             "NO_AVAILABILITY_ID",
             "AVAILABILITY_ID_INVALID",
             "TRANSPORT_HAS_NO_TRIPS",
@@ -2486,7 +2487,9 @@ METAL_PARSE_DERIVED_REASONS = frozenset(
 
 # NOT_LOOKED_UP reasons that say the metal CANNOT change this award's answer.
 # They are not a gap in the run, so they are never counted as a missing lookup.
-METAL_NOT_NEEDED_REASONS = frozenset({"NOT_NEEDED_POLICY", "NOT_DIRECT_PARTNER"})
+METAL_NOT_NEEDED_REASONS = frozenset(
+    {"NOT_NEEDED_POLICY", "NOT_DIRECT_PARTNER", "NOT_NEEDED_PARTY"}
+)
 
 # The provenance string a KNOWN or AMBIGUOUS lookup carries.
 METAL_PROVENANCE_TRIPS = "seats_aero_trips"
@@ -2581,6 +2584,12 @@ _METAL_REASON_PROSE = {
     "NOT_DIRECT_PARTNER": (
         "NOT LOOKED UP - {detail} is not a direct Chase UR transfer partner, so "
         "the metal cannot change this answer (--trips all looks it up anyway)"
+    ),
+    "NOT_NEEDED_PARTY": (
+        "NOT LOOKED UP - this flight leg is for {detail} travellers, and a leg for "
+        "more than one traveller is not scored whatever the metal (party pricing "
+        "is not modelled), so the metal cannot change this answer (--trips all "
+        "looks it up anyway)"
     ),
     "NO_AVAILABILITY_ID": (
         "NOT LOOKED UP - the availability row carried no ID to look up ({detail})"
@@ -2880,6 +2889,15 @@ class MetalLookup:
                 "are not bounded by anything this tool has."
             )
         listed = ", ".join(self.possible_carriers)
+        if self.status is not MetalStatus.AMBIGUOUS and len(self.possible_carriers) == 1:
+            # One carrier on the row's own list. "Nothing is known" would
+            # contradict a scorer that already treats a single-carrier row as
+            # known metal; what is true is that THIS lookup added nothing.
+            return (
+                f" This lookup established nothing further; the award's own "
+                f"carrier list names one carrier, so the possible carriers are "
+                f"{listed}."
+            )
         if self.status is MetalStatus.AMBIGUOUS:
             return (
                 f" Which of these itineraries you would be booked on is not "

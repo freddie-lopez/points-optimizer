@@ -326,8 +326,9 @@ then the committed table is empty and every source is unverified.
 | `--origin/--destination/--date` | never - the output ends with "operating airline: NOT LOOKED UP - single-route search does not call the trips endpoint" |
 
 `--trips auto` (the default) looks up an on-date or promoted live award only when
-its program is a **direct** Chase UR partner **and** its carrier surcharge is
-not a program-wide $0 - today that is Virgin Atlantic, Flying Blue, JetBlue and
+its program is a **direct** Chase UR partner, its carrier surcharge is not a
+program-wide $0, **and** its leg is for one traveller (a 2+ traveller leg is
+never scored on points) - today that is Virgin Atlantic, Flying Blue, JetBlue and
 KrisFlyer. United and Aeroplan read `NOT_NEEDED_POLICY`: they levy no carrier
 surcharge whatever the metal, so the metal cannot change the answer.
 Off-date (flexible-date) findings are never looked up.
@@ -380,7 +381,15 @@ a finding about whether the award has flights.
 | `NOT_LOOKED_UP` | `TRANSPORT_HAS_NO_TRIPS` | the transport in use has no itinerary lookup | `METAL_LOOKUP_MISSING` |
 | `NOT_LOOKED_UP` | `NOT_NEEDED_POLICY` | the program levies no carrier surcharge whatever the metal | not counted - cannot change the answer |
 | `NOT_LOOKED_UP` | `NOT_DIRECT_PARTNER` | not a direct Chase UR partner (`--trips all` looks it up anyway) | not counted - cannot change the answer |
+| `NOT_LOOKED_UP` | `NOT_NEEDED_PARTY` | the flight leg is for 2+ travellers and is never scored on points (`--trips all` looks it up anyway) | not counted - cannot change the answer |
 | `NOT_RECORDED` | `NO_TRIPS_SNAPSHOT` | a replay, and the live run recorded no lookup for this award | `METAL_LOOKUP_MISSING` |
+
+A lookup made (or read from a recording) for an award that is NOT the chosen
+one is printed under its leg as "other live award ...", so every call the run
+spent shows up somewhere. When the row's own list names ONE carrier, a non-KNOWN
+line says "This lookup established nothing further; the award's own carrier
+list names one carrier" instead of "Nothing is known", and the per-leg
+`metal:` line the scorer uses is kept.
 
 `METAL_LOOKUP_MISSING` and `METAL_UNKNOWN` are counted in the trip block for the
 chosen award on each leg, and the block names the legs ("operating airline NOT

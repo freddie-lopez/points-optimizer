@@ -512,15 +512,17 @@ def print_leg_detail(results: List[LegResult], console: Console = None) -> None:
                     f"        stranded: {r.points_path.stranded_points:,} "
                     f"(within the unavoidable transfer increment)"
                 )
-            if getattr(r.best_points, "metal", None) is not None:
-                for line in metal_lines(r.best_points):
-                    console.print(f"        {escape(line)}")
-            elif r.best_points.operating_carrier:
+            # The legacy line stays whenever it printed before: the lookup's
+            # lines are ADDED under it, never swapped in for what the scorer
+            # itself uses as the metal.
+            if r.best_points.operating_carrier:
                 console.print(
                     f"        metal: {r.best_points.operating_carrier} "
                     f"(source: {r.best_points.carrier_source}), "
                     f"cabin {r.best_points.cabin}"
                 )
+            for line in metal_lines(r.best_points):
+                console.print(f"        {escape(line)}")
         if r.surcharge is not None:
             if r.surcharge.is_known:
                 console.print(
@@ -738,6 +740,7 @@ def print_live_leg_detail(results: List[LegResult], console: Console = None) -> 
             )
 
         _print_live_scoring_block(r, console)
+        _print_other_lookups(r, console)
         _print_flexible_findings(r, console)
 
 
@@ -865,6 +868,31 @@ def _print_live_scoring_block(r: LegResult, console: Console) -> None:
     # THE HONESTY INVARIANT: a live price never renders without its timestamp.
     if cand.source == LIVE_SOURCE:
         console.print(f"     [dim]provenance: {cand.source} - {cand.source_note}[/dim]")
+
+
+def _print_other_lookups(r: LegResult, console: Console) -> None:
+    """
+    Every lookup this run made or read for an award that is NOT the chosen one.
+
+    Counters and the trip block follow the chosen award only, but a lookup that
+    was paid for (or read from a recording) must show up somewhere: a banner
+    count nobody can trace to a leg is not an answer.
+    """
+    from src.models import MetalStatus
+
+    others = [
+        c for c in r.leg.points_candidates
+        if c is not r.best_points
+        and getattr(c, "metal", None) is not None
+        and c.metal.status is not MetalStatus.NOT_LOOKED_UP
+    ]
+    for cand in others:
+        console.print(
+            f"  other live award {escape(str(cand.program))} {cand.cabin} "
+            f"{cand.points:,} points (not the chosen option):"
+        )
+        for line in metal_lines(cand):
+            console.print(f"     {escape(line)}")
 
 
 def _print_flexible_findings(r: LegResult, console: Console) -> None:

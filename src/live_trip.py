@@ -1049,7 +1049,7 @@ def _not_looked_up(award: Award, code: str, detail: str) -> MetalLookup:
 
 
 def _why_not_looked_up(
-    award: Award, surcharges: SurchargeTable, mode: str
+    award: Award, surcharges: SurchargeTable, mode: str, leg: Optional[Leg] = None
 ) -> Optional[Tuple[str, str]]:
     """
     (reason code, detail) when this award is not looked up in this mode, else
@@ -1074,6 +1074,11 @@ def _why_not_looked_up(
     )
     if est.is_known and est.amount_high == 0.0:
         return ("NOT_NEEDED_POLICY", award.program)
+    travelers = int(getattr(leg, "travelers", 1) or 1) if leg is not None else 1
+    if travelers > 1:
+        # A leg for 2+ travellers is never scored on points (party pricing is
+        # not modelled), so a lookup there buys a line nothing can use.
+        return ("NOT_NEEDED_PARTY", str(travelers))
     if mode == "off":
         return ("TRIPS_OFF", "--trips off")
     return None
@@ -1231,7 +1236,7 @@ def metal_pass(
 
     def one(leg: Leg, award: Award) -> MetalLookup:
         aid = str((award.raw_diagnostics or {}).get("availability_id") or "")
-        why = _why_not_looked_up(award, surcharges, mode)
+        why = _why_not_looked_up(award, surcharges, mode, leg)
         if replay:
             # A recorded lookup is used WHATEVER the qualification: it is
             # evidence the live run had.
