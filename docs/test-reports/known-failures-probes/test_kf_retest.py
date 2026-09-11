@@ -186,10 +186,15 @@ def test_the_below_duty_rule_is_per_passenger_on_a_two_traveller_leg(per_pax_cen
                             currency="USD", airlines="UA"))),
         tmp_path, fixture_mutator=_mut(travelers=2),
     )
+    # RE-TEST 2 (fcb70f8): a 2-traveller flight leg is no longer scored at all
+    # (Must-fix 1), so there is no `best_points`. The rule under test here is
+    # the CANDIDATE-level below-duty check, which is still per passenger; it is
+    # read off the leg's live candidate instead, and the leg must not score.
     b4 = res["B4"]
-    assert b4.best_points.taxes_unknown is unknown
-    if unknown:
-        assert b4.apd_added_usd == pytest.approx(2 * APD_Y, abs=0.01)
+    (cand,) = b4.leg.points_candidates
+    assert cand.taxes_unknown is unknown
+    assert b4.verdict == "cash (multi-traveller points not priced)"
+    assert b4.best_points is None and b4.points_floor_usd is None
 
 
 @pytest.mark.parametrize("cents,unknown", [(22463, True), (40000, False)])

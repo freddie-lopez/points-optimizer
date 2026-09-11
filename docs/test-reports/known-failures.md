@@ -555,3 +555,160 @@ is as found) and stopped the canary proxy. I removed the 124 `/tmp/tmp*` cache
 directories my scripts left and all `points-optimizer-test-home-*` directories.
 The real repo has no `.env` or `data/cache/`. The simulated-Mac checkouts are in
 the scratchpad only.
+
+---
+
+## Re-test 2: `e64c32a` + `fcb70f8`
+
+Adversarial pass on the two untested commits: `e64c32a` (the fixes for my re-test
+findings) and `fcb70f8` (the Manager's Must-fix 1 and Should-fix 1, 2, 3, 4, 5, 7,
+and part of 8). Same rules: no `src/` edits, no network.
+
+**Result: nothing Critical or High. Three Medium, five Low.** The multi-traveller
+guard does what Must-fix 1 asked on the live, offline and replay paths, but it has
+a side door (R2-1). On a couple's trip it also turns "not priced" into a quoted
+live 0.00% (R2-5). Every re-test finding from `278332e` (R-1 to R-8) is fixed.
+Probes: `known-failures-probes` now **8 red / 112 green** (all 8 red are in
+`test_kf_retest2.py`).
+
+### Regressions
+
+| Run | Result |
+|---|---|
+| sandbox `pytest -q` | **925 passed, 13 skipped**, same under `-O` |
+| simulated Mac (`git archive fcb70f8` into `points-optimizer-v5`, master-captured corpus, warm cache, key exported / in `.env` / in `~/.config`, canary proxy) | **934 passed, 4 skipped**, same under `-O` and with the key only in files. Canary hits 0. Checkout unchanged |
+| `v5-probes` | **19 / 79, the same red set as master by id**: the corpus repair (Should-fix 5) restored it |
+| `adversarial-probes` | 40 / 38, the same red set as master |
+| `--offline` on all 5 trip fixtures | **byte-identical to master**. No committed fixture has a multi-traveller flight, and the Trip B hotels for 2 are untouched |
+| session HOME | removed at exit; **0** `points-optimizer-test-home-*` left after any run (R-8 fixed) |
+
+### Probe changes
+
+`test_kf_retest.py::test_the_below_duty_rule_is_per_passenger_on_a_two_traveller_leg`
+now errors, because a 2-traveller leg has no `best_points`. What it tests (the
+below-duty check compares per passenger) is a candidate-level rule, so I rewrote
+it to read the leg's live candidate. It now also asserts that the leg is the new
+verdict with no floor. Green.
+
+### Findings (severity-ranked)
+
+**R2-1. Medium: the party guard has a side door. A reachable unpriced partner still gets a one-seat break-even.**
+Repro: `test_kf_retest2.py::test_R2_1_...`. On B1 with `travelers: 2` and
+`unpriced_partner_programs: ["United MileagePlus"]` (Trip A's fixture has this
+shape), the verdict is `cash (points unpriced)`: *"Points would win below 39,500
+points"*. The leg carries no `PARTY_PRICING_UNVERIFIED` reason and is not counted.
+That break-even compares ONE seat's award price against the party's cash. With
+the couple's $790 entered, it reads "below 79,000", so a 50,000-per-seat award
+(100,000 for two) looks like a win: the Must-fix-1 false win, one branch over.
+Cause: `elif result.break_even_programs:` (`optimizer.py:1358`) comes before
+`elif party_candidates:` (`:1377`), and the unpriced-partner block does not look
+at `travelers`. Reachable only through a hand-written fixture field.
+
+**R2-5. Medium: a couple's trip quotes "0.00% (live)" when no flight was priced.**
+Repro: `::test_R2_5_...`. Build `--new-trip` with 2 travellers and 2 flights, and
+run it live with United awards on both legs. Both legs are (correctly) not scored,
+but the headline reads **"Optimizer beats paying cash by 0.00% (live)"**, margin
+provenance `live`, exit **0**. That is one quotable live number saying points save
+nothing, on a trip where points were never evaluated: "could not price" becomes a
+finding of zero. The per-leg verdicts do say "Pay cash BY DEFAULT, not by
+finding", and a row counts the legs. But `PARTY_PRICING_UNVERIFIED` is classified
+COUNTED, not WIDENS, and nothing touches `margin_withheld`, so the headline carries
+no qualifier. For comparison, an API failure withholds the margin (exit 3), and an
+unknown surcharge widens it to a range. This is Tsuki's main case (flying as a
+couple). Location: `models.py` `TRIP_LEVEL_ANSWERS["PARTY_PRICING_UNVERIFIED"]`,
+`main.py:~785` (`withheld` looks only at provenance).
+
+**R2-3. Medium: search dedup now hides the cheaper award (e64c32a overshot the R-1 fix).**
+Repro: `::test_R2_3_...`. SFO-MAD returns United 50,000 + $56 and United 30,000
+with no tax figure. Dedup (`optimizer.py:~380`) now uses the ranking rule, so the
+known award always beats the unknown one for the same program, date and cabin.
+The unknown one is **deleted**, not ranked after. A 30,000-point award, 20,000
+fewer points than the one shown, never appears. The ranking already sorts unknowns
+after knowns, so deduping across known and unknown only removes real availability.
+
+**R2-2. Low: a flight leg for 0 or -1 travellers is scored as one seat.**
+`::test_R2_2_...[0|-1]`. The guard reads `int(travelers or 1) > 1`, and the loader
+accepts any int (`trip_loader.py`: `int(raw.get("travelers", 1))`). So `0` and `-1`
+give a POINTS verdict ($256 vs $395). `--new-trip` refuses 0; a hand-written
+fixture is not refused.
+
+**R2-4. Low: the party guard erases the other classifications.**
+`::test_R2_4_...`. The guard `continue`s before the attribution, partner and
+indirect checks. On a 2-traveller leg, a Qatar award and an unnamed-program award
+reach the trip block only as "party not priced", and `legs_indirect_path_unverified`
+and `legs_award_unattributed` both come back empty. A leg whose only award is
+American (no UR path at all) is told to "Price it by hand: 2 x the points, 2 x the
+taxes". The wording is conservative, but it undoes Finding 10 on party legs.
+
+**R2-6. Low: the relocation banner is missing from search mode (Should-fix 4 is only partly done).**
+`::test_R2_6_...`. `print_relocation_banner` is called only from `build_live`
+(trip runs). A single-route search with `POINTS_OPTIMIZER_ENV_FILE` set resolves
+its key through it and says nothing about it. The key-not-found error on a trip run
+also skips the banner: it lists `3. repo .env (/tmp/x.env)`, which shows the path
+but not that a variable moved it. The README says "live runs print it in the
+banner", and search is a live run.
+
+**R2-7. Low: `--passengers 2 --html` silently drops the export.**
+`::test_R2_7_...`. The PRICED-FOR-ONE-SEAT branch returns before `export_html` and
+prints nothing about the request it ignored.
+
+**R2-8. Low (docs): the README overstates when the duty is added.**
+The new section says "When a UK departure's taxes are unknown, the duty is added
+to the floor". The code does not do that for a figure in a currency with no FX rate,
+a case the same section lists as unknown: the figure may contain the duty, so the
+live rule holds (the Coder's own test `test_an_unconvertible_figure_still_does_not_add_apd`).
+
+**Observation.** If a client object refuses attributes, `optimize()` swallows the
+failed `last_search_awards` assignment, and `run_search` falls back to *"Seats.aero
+returned no award availability"*, the claim R-7 removed. The CLI always builds a
+`SeatsClient`, which accepts the attribute, so no user can reach this. Manager
+Should-fix 8 (return the awards instead) would close it.
+
+### What held up
+
+- **e64c32a**, all green:
+  - R-1: dedup keeps the known award.
+  - R-2: search applies the below-duty rule.
+  - R-3: the wording now names "THIS WALLET - its transfer partners and its
+    balances", with a per-award reason for partners that can't be funded.
+  - R-4: `last_search_awards` means one HTTP call and a truthful coverage line.
+  - R-5: v5 conftest import order.
+  - R-6: off-date findings say `+ taxes UNKNOWN`.
+  - R-7: `PARSER VERSION DISAGREEMENT` prints.
+  - R-8: atexit removes the session HOME.
+- **Party guard:**
+  - Live, `--offline` badge (a 3-traveller B2) and `--from-snapshot` (B3): the leg
+    is not scored, has no floor and no alternatives, makes no balance-ceiling
+    demand, spends 0 points, and is counted in the footer row.
+  - `--new-trip --travelers 2`, end to end: both flights get the new verdict.
+  - Hotel legs for 2: unaffected.
+  - Search `--passengers 2`: prints the one-seat banner, names no "Top strategy",
+    and writes no `results.html`.
+  - Exit code: 0 (see R2-5).
+- **Should-fix 1:** replaying a master-style corpus now prints "at least **$638.11**
+  ... the award's other taxes are UNKNOWN". "$500.00" and "carrier-imposed
+  surcharge" are gone from B4.
+- **Should-fix 2:** search floors carry the owed APD: J `>= $930.38`, F
+  `>= $1,230.38`, MAN Y `>= $438.11`. The non-UK SFO-MAD floor stays `>= $300.00`.
+- **Relocation banner:** printed on live trip runs, never on `--offline`, so the
+  no-changelog scanner never sees it.
+- **`PYTHONUSERBASE`:** a preset value is kept and inherited by children (checked
+  with a nested pytest).
+
+### Cleanup and a disclosure
+
+During this pass, one of my scratch scripts (`couple.py`, not a probe) ran the CLI
+in-process after importing the probe helpers. That import loads `src.config`
+before my script set `POINTS_OPTIMIZER_CACHE_DIR` / `_SNAPSHOT_DIR`, so the run
+used the defaults. It wrote `data/cache/seats_aero/` (2 files) and two snapshots
+plus a `MANIFEST.md` into the **committed corpus directory**
+`tests/fixtures/seats_aero/live_trip_b/` of the real repo. All five files were
+created at 05:09:22 by that run; I deleted them and re-ran the suite (925 / 13,
+unchanged). Nothing was committed. This is my error, not a product defect: config
+reads those variables at import, as documented. It does show that anything
+importing `src` outside pytest archives into the corpus by default.
+
+I also removed my canary `~/.config/points-optimizer/.env` (the empty directory is
+as found), stopped the canary proxy, and deleted 55 `/tmp/tmp*` directories my
+scripts left. The real repo has no `.env`, no `data/cache/` and no
+`results.html`, and `git status` shows only the probe and report changes.
