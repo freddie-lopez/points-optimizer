@@ -620,7 +620,17 @@ def build_replay(args, console: Console, fixture):
         + snapshot_replay.verify(selection.selected, snapshot_dir)
         + snapshot_replay.verify_covers_legs(selection.selected, queryable)
     )
+    # The recorded itinerary lookups, held to the same no-partial-replay rule.
+    trips = snapshot_replay.load_trips_replay_set(snapshot_dir, fixture.id)
+    problems += trips.problems
     if problems:
+        trips_hint = (
+            "A trips snapshot that is missing, tampered with or empty refuses the "
+            "whole replay too. Re-fetch that lookup live, or delete its row from "
+            "trips_endpoint/MANIFEST.md - the lookup then replays as NOT RECORDED. "
+            if trips.problems
+            else ""
+        )
         raise ReplayRefused(
             f"THIS MANIFEST CANNOT BE REPLAYED and NOTHING has been scored.\n"
             + "\n".join(f"  - {p.render()}" for p in problems)
@@ -629,16 +639,27 @@ def build_replay(args, console: Console, fixture):
             "hash that covers only part of the run would look more trustworthy "
             "than one printed next to nothing. Re-fetch the missing legs live, "
             "or replay a manifest whose snapshots are all present and intact. "
-            "The manifest is NOT being updated to match the files."
+            + trips_hint
+            + "The manifest is NOT being updated to match the files."
         )
 
     # H-1: the certificate covers the ITINERARY as well as the bytes, so two
-    # different trips can never print the same hash.
+    # different trips can never print the same hash. Trips rows are hashed only
+    # when there are any, so a trips-less manifest keeps its hash exactly.
     manifest_hash = snapshot_replay.manifest_hash(
-        selection.selected, snapshot_dir, itinerary=queryable, trip_id=fixture.id
+        selection.selected,
+        snapshot_dir,
+        itinerary=queryable,
+        trip_id=fixture.id,
+        trips_rows=trips.selected,
+        trips_dir=trips.directory,
     )
     transport = snapshot_replay.SnapshotTransport(
-        selection.selected, snapshot_dir, manifest_hash
+        selection.selected,
+        snapshot_dir,
+        manifest_hash,
+        trips_rows=trips.selected if trips.manifest_path else None,
+        trips_dir=trips.directory,
     )
     opts = LiveOptions(
         live=True,
@@ -652,6 +673,10 @@ def build_replay(args, console: Console, fixture):
         cache=None,
         surcharges=default_table(),
         allow_badge_fallback=bool(getattr(args, "allow_badge_fallback", False)),
+        # A replay reads the RECORDED lookups and never asks the network. "auto"
+        # decides which awards would have been looked up; a recorded row is
+        # used whatever that says, because it is evidence the live run had.
+        trips_mode="auto",
     )
     return transport, opts, selection, manifest_hash
 
@@ -711,6 +736,33 @@ def print_replay_banner(console: Console, selection, manifest_hash, transport) -
             f"[dim]  {len(selection.superseded)} superseded row(s) not replayed: "
             + ", ".join(r.describe() for r in selection.superseded)
             + "[/dim]"
+        )
+    from src import seats_trips
+
+    trips_rows = list(getattr(transport, "trips_rows", []) or [])
+    if not getattr(transport, "has_trips_manifest", False):
+        console.print(
+            "[cyan]  itinerary lookups: none recorded (no trips_endpoint/MANIFEST.md); "
+            "every lookup this run would make reads NOT RECORDED[/cyan]"
+        )
+    else:
+        console.print(
+            f"[cyan]  itinerary lookups: {len(trips_rows)} recorded row(s) in "
+            f"trips_endpoint/MANIFEST.md[/cyan]"
+        )
+    stale = sorted(
+        {
+            r.parser_version_display
+            for r in trips_rows
+            if r.parser_version_display != seats_trips.TRIPS_PARSER_VERSION
+        }
+    )
+    if stale:
+        console.print(
+            f"[bold red]  TRIPS LOOKUPS REPARSED: {len(trips_rows)} recorded trips "
+            f"row(s) include ones captured under {', '.join(stale)} and are read by "
+            f"{seats_trips.TRIPS_PARSER_VERSION} now. Their operating-airline "
+            f"lines may differ from the run that recorded them.[/bold red]"
         )
 
 
