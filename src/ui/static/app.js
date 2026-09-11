@@ -1,6 +1,6 @@
 /* Points Optimizer - local UI. Vanilla JS, no build step, no framework.
 
-   THE RULES THIS FILE KEEPS (docs/plans/ui.md 4.4, 4.7):
+   THE RULES THIS FILE KEEPS (the UI plan's security and design sections):
    * The DOM is built with createElement + textContent ONLY. No HTML strings.
    * Every word about a trip comes from the API, which gets it from the CLI's own
      builders or verbatim terminal lines. This file never re-words a verdict.
@@ -419,8 +419,8 @@
     add(field, el("span", "label", "Mode of the next run"));
     var seg = el("div", "seg"); seg.setAttribute("role", "group"); seg.setAttribute("aria-label", "Mode");
     var manifests = (st && st.modes.replay_manifests) || [];
-    function modeBtn(mode, title, sub, disabled) {
-      var b = btn(null, null, function () { S.mode = mode; renderTopbar(); renderTrips(); }, "mode-" + mode);
+    function modeBtn(mode, testid, title, sub, disabled) {
+      var b = btn(null, null, function () { S.mode = mode; renderTopbar(); renderTrips(); }, testid);
       b.setAttribute("aria-pressed", String(S.mode === mode));
       b.disabled = !!disabled;
       add(b, el("span", "t", title), el("span", "s", sub));
@@ -430,12 +430,12 @@
     var man = manifests[S.manifestId] || manifests[0];
     var noPts = listing && listing.fixture_has_points_prices === false;
     add(seg,
-      modeBtn("live", "LIVE", liveOk ? "points from Seats.aero, cash from captures" :
+      modeBtn("live", "mode-live", "LIVE", liveOk ? "points from Seats.aero, cash from captures" :
         "LIVE needs a Seats.aero key.", !liveOk),
-      modeBtn("replay", "REPLAY", man ? "manifest " + man.label + " · " +
+      modeBtn("replay", "mode-replay", "REPLAY", man ? "manifest " + man.label + " · " +
         (man.rows === null ? "UNREADABLE" : man.rows + " rows") + " · nothing is asked of Seats.aero" :
         (st ? st.modes.replay_reason : ""), !man),
-      modeBtn("offline", "OFFLINE", noPts ? "this trip has no points prices, so nothing will be scored on points" :
+      modeBtn("offline", "mode-offline", "OFFLINE", noPts ? "this trip has no points prices, so nothing will be scored on points" :
         "no transport: scores the fixture's own points prices", false));
     add(field, seg);
     add(strip, field);

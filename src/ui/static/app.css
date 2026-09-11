@@ -1,6 +1,6 @@
 /* Points Optimizer - local UI.
    Deliberately single-theme dark: a departure-board instrument in black and oxblood.
-   Every colour is painted explicitly (docs/plans/ui.md 4.7, docs/design/ui-mockup.html). */
+   Every colour is painted explicitly (the UI plan's design system and the design mockup). */
 :root {
   --ink: #0A0809;      /* page ground */
   --coal: #121011;     /* panels, table body */
@@ -90,7 +90,7 @@ a { color: var(--ember); }
 .note { font-size: var(--s13); color: var(--smoke); max-width: 78ch; margin: 0; overflow-wrap: anywhere; }
 .warnline { color: var(--warn); }
 
-/* rich styles -> classes (4.7 "Segments") */
+/* rich styles -> classes (the design system's "Segments" table) */
 .seg-alert { color: var(--warn); font-weight: 600; }
 .seg-caution { color: var(--warn); }
 .seg-ok { color: var(--bone); }
