@@ -332,9 +332,23 @@ def test_the_record_it_writes_is_refused_until_the_blanks_are_filled(tmp_path):
     table.write_text(f"source,verdict,verified_on,evidence,notes\nvirginatlantic,includes_yq,2026-09-11,{rel},\n")
     with pytest.raises(YqInclusionError, match="blanks"):
         load(table, today=TODAY, root=tmp_path)
-    text = (tmp_path / rel).read_text().replace(
-        "inconclusive): ____", "inconclusive): includes_yq"
-    ).replace("____", "GBP 450.00")
+    # Fill the five FIELD lines exactly as the record asks, and nothing else: a
+    # blanket replace of every marker would also rewrite any prose that quoted
+    # it and hide a record that can never load (Re-test 2, R2-1).
+    fills = {
+        "- date checked: ____": "- date checked: 2026-09-12",
+        "- flight(s) shown: ____": "- flight(s) shown: VS19 LHR-SFO",
+        "- taxes, fees and carrier-imposed charges for ONE adult: ____":
+            "- taxes, fees and carrier-imposed charges for ONE adult: GBP 450.00",
+        "- separate carrier-imposed charge line (if any): ____":
+            "- separate carrier-imposed charge line (if any): none shown",
+        "- verdict (includes_yq / excludes_yq / inconclusive): ____":
+            "- verdict (includes_yq / excludes_yq / inconclusive): includes_yq",
+    }
+    text = (tmp_path / rel).read_text()
+    for blank, filled in fills.items():
+        assert text.count(blank) == 1, blank
+        text = text.replace(blank, filled)
     (tmp_path / rel).write_text(text)
     assert load(table, today=TODAY, root=tmp_path)["virginatlantic"].includes
 

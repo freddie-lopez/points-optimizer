@@ -624,9 +624,13 @@ def _write_record(cap: "Capture", args, fields: Dict[str, str], today: date, war
     lines = [
         f"# yq-check record: {source}, {today.isoformat()}",
         "",
+        # The blank marker appears ONLY on the field lines below: the loader
+        # refuses any record that still contains it, so prose that quoted it
+        # would make every filled record unloadable.
         "Written by `python -m src.trips_tools yq-check`. The Seats.aero half is "
-        "filled in; fill every ____ from the program's own site before adding a row "
-        "to data/yq_inclusion.csv. A record with blanks is refused by the loader.",
+        "filled in; fill every blank field under the program-site heading from the "
+        "program's own site before adding a row to data/yq_inclusion.csv. A record "
+        "with an unfilled field is refused by the loader.",
         "",
         "## Seats.aero",
         "",
