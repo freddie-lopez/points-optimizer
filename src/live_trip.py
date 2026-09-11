@@ -475,6 +475,83 @@ def _taxes_are_the_whole_carrier_cash_figure(
     )
 
 
+_APD_TABLES = None
+
+
+def _apd_tables():
+    """Load the APD rate and band tables once per process (they are static CSVs)."""
+    global _APD_TABLES
+    if _APD_TABLES is None:
+        from src import apd as apd_module
+
+        _APD_TABLES = (apd_module.load_apd_table(), apd_module.load_apd_bands())
+    return _APD_TABLES
+
+
+def taxes_below_owed_uk_duty(leg: Leg, award: Award) -> str:
+    """
+    Why a KNOWN live tax figure must not be believed on a UK departure, or "".
+
+    UK Air Passenger Duty is owed on an award ticket departing the UK and sits
+    INSIDE the taxes figure (that is why the live path does not add it on top).
+    A figure SMALLER than the duty for this award's own cabin therefore cannot
+    be the whole of the taxes: it is incomplete, and scoring it scores the
+    duty at $0. The parser's zero rule catches exactly 0; one cent walked past
+    it and a B4 award with $5.00 of "taxes" beat $482 of cash by 4.22% while
+    GBP 102 was owed on it.
+
+    Only applies when the figure is known, the leg departs GB, and the duty for
+    the award's cabin is itself known. Compared per passenger - Seats.aero's
+    figure is per passenger, and so is the rate.
+    """
+    if not award.cash_component_known:
+        return ""
+    charge = _uk_duty_charge(leg, award)
+    if charge is None:
+        return ""
+    duty = float(charge.total_usd)
+    figure = float(award.cash_component)
+    if figure + 0.005 >= duty:
+        return ""
+    return (
+        f"Seats.aero reported taxes of ${figure:,.2f} on this award, which departs "
+        f"the UK. UK Air Passenger Duty of ${duty:,.2f} per passenger "
+        f"(GBP {charge.rate_gbp:,.2f}) is owed on this ticket for an adult who is "
+        f"not continuing on a connection, and belongs INSIDE that figure - so a "
+        f"figure smaller than the duty is taken as INCOMPLETE. (The duty's "
+        f"exemptions - under-16s in economy, under-2s, onward connections on one "
+        f"ticket - are not modelled.) The taxes on this award are UNKNOWN - not "
+        f"${figure:,.2f}."
+    )
+
+
+def _uk_duty_charge(leg, award):
+    """The known per-passenger APD charge for this award's cabin, or None."""
+    try:
+        from src import apd as apd_module
+
+        rates, bands = _apd_tables()
+        charge = apd_module.apd_for_leg(
+            leg,
+            cabin=award.award_type,
+            travelers=1,
+            on=award.date or getattr(leg, "date", None),
+            rates=rates,
+            bands=bands,
+        )
+    except Exception:  # noqa: BLE001 - a table problem is reported by apply_apd
+        return None
+    if charge is None or not charge.is_known:
+        return None
+    return charge
+
+
+def uk_duty_per_passenger_usd(leg, award):
+    """Per-passenger UK APD in USD for this award, or None if not owed / unknown."""
+    charge = _uk_duty_charge(leg, award)
+    return float(charge.total_usd) if charge is not None else None
+
+
 def award_to_candidate(
     leg: Leg,
     award: Award,
@@ -493,6 +570,19 @@ def award_to_candidate(
     carriers = list(award.candidate_carriers)
     scoreable, why = _taxes_are_the_whole_carrier_cash_figure(leg, award, surcharges)
 
+    # What this function believes about the taxes. Starts as the parser's view
+    # and can only get LESS certain here (see the UK duty check below).
+    taxes_known = bool(award.cash_component_known)
+    taxes_note = award.cash_component_note
+    taxes_reported_amount = award.cash_component_source_amount
+    below_duty = taxes_below_owed_uk_duty(leg, award)
+    if below_duty:
+        taxes_known = False
+        taxes_note = below_duty
+        # Nothing USABLE: the figure is known to be incomplete, which is not the
+        # same as "exists in a currency we cannot price".
+        taxes_reported_amount = None
+
     # FINDING C-2. THE PROGRAM-POLICY $0 IS A STATEMENT ABOUT THE CARRIER
     # SURCHARGE. IT SAYS NOTHING ABOUT TAXES.
     #
@@ -503,9 +593,26 @@ def award_to_candidate(
     # instead set the amount to 0.0, dropped the captured flag, fell through to
     # the modeled table, and collected the tier-5 $0 as if it were an answer.
     taxes_unconvertible = bool(
-        award.cash_component_source_amount is not None
-        and not award.cash_component_known
+        taxes_reported_amount is not None and not taxes_known
     )
+    # THE SAME RULE FOR EVERY WAY TAXES CAN BE UNKNOWN. C-2 above covers a figure
+    # that exists and cannot be converted. It left the other ways out: no
+    # figure at all, a source Seats.aero does not report taxes for, or a 0 that
+    # means "nothing reported". Those have no amount, so `taxes_unconvertible` was
+    # False, the program-policy $0 made the award scoreable, and the missing
+    # taxes were scored as $0 - a United award with NO tax figure beat cash on
+    # Trip B's B4 by 5.82%. Unknown taxes are unknown cash, whatever the reason.
+    taxes_unknown = not taxes_known
+    if taxes_unknown and not taxes_unconvertible:
+        scoreable = False
+        why = (
+            f"NOT SCORED: the taxes on this award are UNKNOWN. "
+            f"{taxes_note} That is real cash of unknown size, so "
+            f"the carrier-side cash cost of this award is UNKNOWN - not $0. A "
+            f"program's no-carrier-surcharge policy is a statement about YQ/YR and "
+            f"does NOT price taxes. Reported as a floor plus a break-even instead "
+            f"of as a number the tool cannot defend."
+        )
     if taxes_unconvertible:
         scoreable = False
         why = (
@@ -530,7 +637,10 @@ def award_to_candidate(
         operating, carrier_source = "", "seats_aero_ambiguous"
 
     ur_note = ""
-    if award.ur_transferable is False:
+    if award.indirect_ur_path:
+        # NOT "no UR path": there is one, it is two hops, and it is not scored.
+        ur_note = ""
+    elif award.ur_transferable is False:
         ur_note = (
             f" NO UR PATH: {award.program} is not a Chase UR transfer partner. "
             f"The award is real and bookable, just not from a UR balance."
@@ -548,7 +658,7 @@ def award_to_candidate(
     )
     snapshot = f", snapshot {snapshot_name}" if snapshot_name else ""
 
-    taxes_are_the_surcharge = bool(scoreable and award.cash_component_known)
+    taxes_are_the_surcharge = bool(scoreable and taxes_known)
     program_missing = not (award.program or "").strip()
     label_program = award.program or "(program NOT NAMED by the response)"
 
@@ -567,16 +677,18 @@ def award_to_candidate(
         cash_surcharge=award.cash_component if taxes_are_the_surcharge else 0.0,
         surcharge_currency="USD",
         surcharge_captured=taxes_are_the_surcharge,
-        observed_taxes_usd=award.cash_component if award.cash_component_known else 0.0,
-        observed_taxes_known=bool(award.cash_component_known),
-        observed_taxes_reported=award.cash_component_source_amount is not None,
-        observed_taxes_amount=award.cash_component_source_amount,
+        observed_taxes_usd=award.cash_component if taxes_known else 0.0,
+        observed_taxes_known=taxes_known,
+        observed_taxes_reported=taxes_reported_amount is not None,
+        observed_taxes_amount=taxes_reported_amount,
         observed_taxes_currency=award.cash_component_currency,
-        observed_taxes_note=award.cash_component_note,
+        observed_taxes_note=taxes_note,
         observed_taxes_are_the_surcharge=taxes_are_the_surcharge,
         taxes_unconvertible=taxes_unconvertible,
+        taxes_unknown=taxes_unknown,
         award_date=award.date,
         program_attribution_missing=program_missing,
+        indirect_ur_path=award.indirect_ur_path,
         source=LIVE_SOURCE,
         source_note=(
             f"{award.source_note} {why}{ur_note}{fetched}{snapshot}."
@@ -591,6 +703,10 @@ def award_to_candidate(
 
 
 def _finding(leg: Leg, award: Award) -> FlexibleFinding:
+    # The same below-duty rule as a candidate: an off-date award with "$5.00 of
+    # taxes" on a UK departure is not listed as a known $5.00.
+    below_duty = taxes_below_owed_uk_duty(leg, award)
+    taxes_known = bool(award.cash_component_known) and not below_duty
     return FlexibleFinding(
         leg_id=leg.id,
         award_date=award.date,
@@ -598,10 +714,10 @@ def _finding(leg: Leg, award: Award) -> FlexibleFinding:
         program=award.program,
         cabin=award.award_type,
         points=award.cost,
-        taxes_amount=award.cash_component_source_amount,
+        taxes_amount=None if below_duty else award.cash_component_source_amount,
         taxes_currency=award.cash_component_currency,
-        taxes_usd=award.cash_component if award.cash_component_known else None,
-        taxes_known=award.cash_component_known,
+        taxes_usd=award.cash_component if taxes_known else None,
+        taxes_known=taxes_known,
         seats=award.seats_available,
         carriers=list(award.candidate_carriers),
         source_note=award.source_note,

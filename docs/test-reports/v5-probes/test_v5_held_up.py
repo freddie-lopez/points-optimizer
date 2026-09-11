@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 import requests
 
-from conftest import BASE, TRIP_B, build_corpus, flat, run_cli
+from conftest import one_award_page, BASE, TRIP_B, build_corpus, flat, run_cli
 
 
 # ---------------------------------------------------------------------------
@@ -443,7 +443,24 @@ def test_apd_is_per_passenger_and_shows_the_multiplication():
 
 
 def test_a_live_leg_states_apd_without_adding_it(tmp_path, capsys):
-    manifest, _ = build_corpus(tmp_path)
+    # CORPUS REPAIRED 2026-09-10 (known-failures branch). The default corpus puts
+    # the SFO-MAD capture's CAD 44.60 ($32.36) of taxes on B4's LHR departure -
+    # below the GBP 102 duty that figure would have to contain, which the tool
+    # now (correctly) refuses to believe, and so it ADDS the duty. What this
+    # probe guards is the rule for a BELIEVABLE figure, so B4 carries United's
+    # real $224.63 - the figure the live Trip B run actually returned.
+    def pages_for(leg_id, o, d, iso):
+        p = one_award_page(o, d, iso)
+        if leg_id == "B4":
+            r = p["data"][0]
+            r["Route"]["Source"] = "united"
+            r["YMileageCost"] = "27600"
+            r["YTotalTaxes"] = 22463
+            r["TaxesCurrency"] = "USD"
+            r["YAirlines"] = "UA"
+        return [p]
+
+    manifest, _ = build_corpus(tmp_path, pages_for=pages_for)
     code, out = run_cli(BASE + ["--from-snapshot", str(manifest)], capsys)
     assert code == 0
     body = flat(out)

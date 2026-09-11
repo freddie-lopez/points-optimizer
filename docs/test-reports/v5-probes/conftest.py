@@ -15,6 +15,11 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
+# FIRST, before anything imports `src`: the main suite's conftest clears the key
+# and moves the key files away at import. Importing `src.config` before it lets
+# `load_env()` read the developer's real repo `.env` during collection.
+from tests.conftest import REAL_HOME as _REAL_HOME  # noqa: E402,F401
+
 from src.response_cache import content_hash  # noqa: E402
 from src.seats_client import PARSER_VERSION  # noqa: E402
 
@@ -132,3 +137,13 @@ def _isolate_client_state():
     SeatsClient.CACHE.clear()
     SeatsClient.CACHE_META.clear()
     SeatsClient._CALLS = {}
+
+
+# The main suite's environment isolation, applied here too. Without it these
+# probes read the developer's real key and real runtime cache exactly as the
+# main suite's CLI tests did: under the Mac's conditions (exported key, warm
+# data/cache/ from a live run) this directory read 21 red / 77 green instead of
+# 19 / 79 on master AND on the fix branch, because two probes got cache hits.
+# "Deviation from the recorded counts means a regression" is only true if the
+# counts do not depend on the machine.
+from tests.conftest import isolated_environment, no_network_egress  # noqa: E402,F401

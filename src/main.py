@@ -573,6 +573,7 @@ def build_live(args, console: Console):
     )
     client = SeatsClient(getattr(args, "api_key", None))
     print_key_banner(console, client.key_resolution)
+    print_relocation_banner(console)
     return client, opts, cache
 
 
@@ -653,6 +654,30 @@ def build_replay(args, console: Console, fixture):
         allow_badge_fallback=bool(getattr(args, "allow_badge_fallback", False)),
     )
     return transport, opts, selection, manifest_hash
+
+
+RELOCATION_VARS = (
+    "POINTS_OPTIMIZER_ENV_FILE",
+    "POINTS_OPTIMIZER_CACHE_DIR",
+    "POINTS_OPTIMIZER_SNAPSHOT_DIR",
+)
+
+
+def print_relocation_banner(console: Console) -> None:
+    """
+    Name every POINTS_OPTIMIZER_* relocation that is in effect. They exist so the
+    test suite can keep children away from real state; set in a user's shell,
+    they silently change which key file a run reads and where it caches and
+    archives - so a run that is affected by one says so.
+    """
+    import os
+
+    for var in RELOCATION_VARS:
+        if os.environ.get(var):
+            console.print(
+                f"[bold yellow]  {var} is set: {os.environ[var]} (overrides the "
+                f"default location for this run)[/bold yellow]"
+            )
 
 
 def print_replay_banner(console: Console, selection, manifest_hash, transport) -> None:
@@ -736,6 +761,13 @@ def run_fixture(args, console: Console) -> int:
             print_replay_banner(console, replay_selection, manifest_hash, client)
         fixture, outcomes = apply_live(fixture, client, live_opts)
         print_live_banner(outcomes, live_opts, cache, console)
+        for leg_id, row_ver, meta_ver in getattr(client, "parser_version_disagreements", []):
+            console.print(
+                f"[bold red]  PARSER VERSION DISAGREEMENT on {leg_id}: the manifest "
+                f"row says {row_ver} but the snapshot itself says it was captured "
+                f"under {meta_ver}; it is being read by "
+                f"{client.current_parser_version}. Treat this leg as REPARSED.[/bold red]"
+            )
 
     results = evaluate_trip(
         legs=fixture.legs,
@@ -780,6 +812,25 @@ def run_fixture(args, console: Console) -> int:
         "live",
         "snapshot",
     )
+    # A trip with a flight leg for 2+ travellers has a flight that was NOT
+    # priced. "Beats cash by 0.00%" would then be "could not price" reported as a
+    # finding of zero value - withheld instead, exit 3, and the reason says why.
+    party = totals.get("legs_party_pricing_unverified_ids") or []
+    if party:
+        reasons = []
+        if withheld:
+            # Both reasons are named: the provenance one does not go away because
+            # a second reason arrived.
+            reasons.append(
+                f"--require-all-live and the margin's provenance is "
+                f"'{totals.get('margin_provenance')}', not live"
+            )
+        reasons.append(
+            f"flight leg(s) {', '.join(party)} are for 2+ travellers and were not "
+            f"priced (award prices are per seat)"
+        )
+        withheld = True
+        totals["margin_withheld_reason"] = "; AND ".join(reasons)
     totals["margin_withheld"] = withheld
 
     # THE HASH RIDES WITH THE PERCENTAGE. `print_trip_totals` puts it in the
@@ -834,6 +885,13 @@ def run_fixture(args, console: Console) -> int:
             f"[bold yellow]Legs where a points path exists but its carrier-imposed "
             f"surcharge is UNKNOWN (NOT $0):[/bold yellow] {', '.join(unknown)}"
         )
+    taxes_unknown = totals.get("legs_taxes_unknown_ids") or []
+    if taxes_unknown:
+        console.print(
+            f"[bold yellow]Legs where an award's TAXES are UNKNOWN (NOT $0) - "
+            f"Seats.aero sent no usable figure:[/bold yellow] "
+            f"{', '.join(taxes_unknown)}"
+        )
 
     if not totals.get("trip_funding_executable", True):
         # Non-zero, and a DIFFERENT code from the --require-all-live withholding
@@ -882,6 +940,7 @@ def run_search(args, console: Console) -> int:
         console.print(f"[red]Error: {e}[/red]")
         return 1
     print_key_banner(console, seats_client.key_resolution)
+    print_relocation_banner(console)
 
     ratios = load_ratio_manager()
 
@@ -917,10 +976,46 @@ def run_search(args, console: Console) -> int:
                 "from this run.[/red]"
             )
         else:
-            console.print(
-                "\n[yellow]Seats.aero returned no award availability for this "
-                "route and date range.[/yellow]"
-            )
+            # optimize() returns STRATEGIES - awards it could fund. An empty list
+            # is a statement about THIS WALLET unless the API also returned no
+            # awards. Reading it as "no award availability" turned a Qatar award
+            # (reachable only indirectly) and an American award (not a UR
+            # partner) into a claim that there was nothing on the route.
+            # What optimize() actually saw, recorded by it - NOT a second search:
+            # re-asking would reset the client's coverage line ("no API call
+            # made") on a run that made one.
+            awards = list(getattr(seats_client, "last_search_awards", None) or [])
+            if not awards:
+                console.print(
+                    "\n[yellow]Seats.aero returned no award availability for this "
+                    "route and date range.[/yellow]"
+                )
+            else:
+                console.print(
+                    f"\n[yellow]Seats.aero returned {len(awards)} award(s) for this "
+                    f"route and date range, and NONE of them can be funded from the "
+                    f"wallet above. That is a finding about THIS WALLET - its "
+                    f"transfer partners and its balances - NOT about award "
+                    f"space:[/yellow]"
+                )
+                for a in awards[:20]:
+                    if getattr(a, "indirect_ur_path", ""):
+                        why = f"reachable only INDIRECTLY - {a.indirect_ur_path}"
+                    elif not (a.program or "").strip():
+                        why = "the response named no program it could be attributed to"
+                    elif a.ur_transferable is False:
+                        why = "not a transfer partner of any currency you hold"
+                    elif a.ur_transferable is True:
+                        why = (
+                            "a transfer partner, but no fundable path: the balance "
+                            "(or the stranded-points limit) cannot cover it"
+                        )
+                    else:
+                        why = "no fundable transfer path from the wallet above"
+                    console.print(
+                        f"  [dim]{a.program or '(program not named)'} {a.award_type} "
+                        f"{a.cost:,} on {a.date}: {why}[/dim]"
+                    )
 
     # Which pagination path the client took, printed on EVERY run, empty result
     # or not. Seats.aero's cached search is known to paginate and the one
@@ -933,6 +1028,24 @@ def run_search(args, console: Console) -> int:
         style = "red" if "INCOMPLETE" in note else "dim"
         console.print(f"[{style}]Seats.aero result coverage: {note}[/{style}]")
 
+    if int(args.passengers or 1) > 1 and results:
+        if args.html:
+            console.print(
+                "[bold yellow]--html was NOT written: the export is a "
+                "recommendation, and a per-seat list is not one for "
+                f"{args.passengers} passengers.[/bold yellow]"
+            )
+        # Every price below is for ONE seat. Ranking and summarising them as the
+        # answer for a party would repeat the multi-traveller false win.
+        console.print(
+            f"\n[bold yellow]PRICED FOR ONE SEAT. You asked for {args.passengers} "
+            f"passengers; multi-traveller award pricing is not modelled (points, "
+            f"taxes and seat availability are all per seat here). The list below "
+            f"is per-seat information, NOT a recommendation for the party, and no "
+            f"top strategy is named.[/bold yellow]"
+        )
+        print_strategies(results, args.valuation_cpp, console)
+        return 0
     print_strategies(results, args.valuation_cpp, console)
     print_summary(results, human_cost=args.human_cost, console=console)
 

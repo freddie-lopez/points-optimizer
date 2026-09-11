@@ -63,7 +63,14 @@ class SeatsAeroError(RuntimeError):
 # It is NOT part of the manifest hash. The hash is over BYTES, so a reparse
 # under a new parser reproduces the same hash and a different award count -
 # which is the honest pair.
-PARSER_VERSION = "2026-09-09.v5"
+# 2026-09-10: BUMPED. The parse of a given page changed: a 0 tax figure on an
+# available cabin, and any figure from qatar/turkish/singapore, now yield
+# UNKNOWN taxes; six more sources are named; qatar/finnair carry an indirect UR
+# path. A replay of a snapshot captured under the previous version must say it
+# was REPARSED - the same bytes now produce a different answer, and Tsuki's
+# first real corpus (captured 2026-09-10 under the previous version, with a
+# qatar row at tax 0) is exactly such a snapshot.
+PARSER_VERSION = "2026-09-10.taxes-trust"
 
 
 def _rows_of(payload: Dict[str, Any]) -> List[Any]:
@@ -264,14 +271,49 @@ def coverage_of_pages(pages: List[Dict[str, Any]]) -> Tuple[bool, str]:
 class SeatsSource:
     code: str
     program: str
+    # DIRECT Chase UR transfer. See `indirect_ur_path` for the other kind.
     ur_transferable: bool
     note: str = ""
+    indirect_ur_path: str = ""
 
 
 _OBSERVED = "Observed in the SFO-MAD capture of 2026-09-08."
+_OBSERVED_TRIP_B = (
+    "Reported observed in Tsuki's live Trip B run of 2026-09-10 (recorded in the "
+    "known-failures triage); no capture of that run is in this repo."
+)
 _DOCS = (
-    "From Seats.aero's published source list. NOT observed in any captured "
-    "response - the code string itself is unverified."
+    "From Seats.aero's published source table "
+    "(developers.seats.aero/reference/concepts-copy, read 2026-09-10). NOT yet "
+    "observed in a captured response."
+)
+
+# THE AVIOS FAMILY. Chase UR transfers 1:1 to British Airways Club, and BA Club
+# Avios can be combined into Qatar Privilege Club and Finnair Plus - British
+# Airways lists both on its own combine page
+# (britishairways.com/content/the-british-airways-club/avios/combine-avios).
+# That is a real path from a UR balance into these programs, so saying "no UR
+# path" about them is FALSE. It is also not a plain 1:1 partner: it is two hops,
+# and each hop has conditions this tool cannot check against anyone's accounts.
+# So these awards are NAMED, the path and its conditions are PRINTED, and they are
+# NOT SCORED. Whether to score two-hop paths is Tsuki's decision, not this map's.
+_AVIOS_VIA_BA = (
+    "No DIRECT Chase UR transfer. An INDIRECT path exists: Chase UR -> British "
+    "Airways Club Avios (1:1) -> combine into {program} Avios (1:1)."
+)
+_QATAR_CONDITIONS = (
+    " Conditions (Thrifty Traveler, updated 2026-06-30): both accounts at least 30 "
+    "days old; an ID upload for Qatar to approve linking the accounts; matching "
+    "names and two-factor authentication on both. To book a COMPANION with Qatar "
+    "Avios, the companion needs their OWN Privilege Club account, at least 30 days "
+    "old, that has earned Avios by flying or card spend. Combining can be paused "
+    "without notice. Not scored by this tool."
+)
+_FINNAIR_CONDITIONS = (
+    " Conditions (finnair.com, transfer Avios between Finnair and British "
+    "Airways): Finnair Plus account at least 30 days old; age 18+; two-factor "
+    "authentication on both accounts; names and email addresses must match. Not "
+    "scored by this tool."
 )
 
 SEATS_AERO_SOURCES: Dict[str, SeatsSource] = {
@@ -314,7 +356,44 @@ SEATS_AERO_SOURCES: Dict[str, SeatsSource] = {
     "connectmiles": SeatsSource("connectmiles", "Copa ConnectMiles", False, _DOCS),
     "velocity": SeatsSource("velocity", "Virgin Australia Velocity", False, _DOCS),
     "saudia": SeatsSource("saudia", "Saudia AlFursan", False, _DOCS),
+    # --- Added 2026-09-10 from the published table ------------------------
+    "lufthansa": SeatsSource("lufthansa", "Lufthansa Miles & More", False, _DOCS),
+    "ethiopian": SeatsSource("ethiopian", "Ethiopian ShebaMiles", False, _DOCS),
+    "frontier": SeatsSource("frontier", "Frontier Airlines", False, _DOCS),
+    "spirit": SeatsSource("spirit", "Spirit Airlines", False, _DOCS),
+    # --- No direct UR transfer, but an indirect one via BA Avios ----------
+    "qatar": SeatsSource(
+        "qatar", "Qatar Privilege Club", False,
+        _OBSERVED_TRIP_B + " Taxes are NOT reported for this source.",
+        indirect_ur_path=(
+            _AVIOS_VIA_BA.format(program="Qatar Privilege Club")
+            + _QATAR_CONDITIONS
+        ),
+    ),
+    "finnair": SeatsSource(
+        "finnair", "Finnair Plus", False, _DOCS,
+        indirect_ur_path=(
+            _AVIOS_VIA_BA.format(program="Finnair Plus") + _FINNAIR_CONDITIONS
+        ),
+    ),
 }
+
+# Sources observed in the live Trip B run (2026-09-10): the note says so rather
+# than "unverified". Recorded from Tsuki's run output, not re-derived.
+for _code in ("flyingblue", "jetblue", "american", "alaska", "qantas"):
+    _src = SEATS_AERO_SOURCES[_code]
+    SEATS_AERO_SOURCES[_code] = SeatsSource(
+        _src.code, _src.program, _src.ur_transferable,
+        _OBSERVED_TRIP_B + (" Not a Chase UR partner." if not _src.ur_transferable else ""),
+        _src.indirect_ur_path,
+    )
+del _code, _src
+
+
+def resolve_indirect_path(code: Optional[str]) -> str:
+    """The indirect UR path into this source's program, or "" if none is known."""
+    src = SEATS_AERO_SOURCES.get(str(code or "").strip().lower())
+    return src.indirect_ur_path if src is not None else ""
 
 
 def resolve_source(code: Optional[str]) -> Tuple[str, Optional[bool], str]:
@@ -503,6 +582,54 @@ def convert_taxes(
     return True, amount, cur, usd, note
 
 
+# ---------------------------------------------------------------------------
+# (3b) A TAX FIGURE THE TOOL MAY NOT BELIEVE.
+#
+#     Seats.aero's developer docs mark three sources with the footnote "Taxes and
+#     surcharges are not available for this mileage program":
+#     https://developers.seats.aero/reference/concepts-copy (read 2026-09-10).
+#     Whatever number those rows carry in {X}TotalTaxes is therefore not a tax
+#     figure. In practice it is 0, and a KrisFlyer row - a DIRECT Chase UR
+#     partner - arriving with "$0 taxes" and a UR path is a false points win
+#     waiting to happen.
+#
+#     And for every source: an AVAILABLE cabin priced at exactly zero taxes is
+#     not a free ticket. No commercial award ticket carries zero government
+#     charges (a US domestic award still pays the security fee; an international
+#     departure pays departure taxes). The same payload writes 0 into every
+#     unavailable cabin's TotalTaxes, which is what 0 means here: nothing
+#     reported. Both cases are UNKNOWN - never $0.
+# ---------------------------------------------------------------------------
+TAXES_UNREPORTED_SOURCES = frozenset({"qatar", "turkish", "singapore"})
+
+
+def untrusted_tax_reason(source_code: Any, cents: Optional[int]) -> str:
+    """
+    Why this row's tax figure must not be believed, or "" if it may be.
+
+    Only answers the two questions above. A missing, negative or unconvertible
+    figure is `convert_taxes`'s business and is already UNKNOWN there.
+    """
+    code = str(source_code or "").strip().lower()
+    if code in TAXES_UNREPORTED_SOURCES:
+        shown = "nothing" if cents is None else f"{cents / 100.0:,.2f}"
+        return (
+            f"Seats.aero does not report taxes for the {code!r} source (its "
+            f"documentation: 'Taxes and surcharges are not available for this "
+            f"mileage program'), so the figure it sent ({shown}) is not a tax "
+            f"figure. The taxes on this award are UNKNOWN - not $0."
+        )
+    if cents == 0:
+        return (
+            "Seats.aero reported taxes of exactly 0 on a cabin it marks "
+            "available. No award ticket carries zero government taxes and "
+            "charges, and the same payload writes 0 into every cabin it has no "
+            "data for - so 0 here means NOT REPORTED. The taxes on this award "
+            "are UNKNOWN - not $0."
+        )
+    return ""
+
+
 def _route_regions(route: Dict[str, Any], origin: str, destination: str):
     """
     Route.OriginRegion / Route.DestinationRegion feed the surcharge model's
@@ -644,9 +771,28 @@ def parse_availability_row(row: Dict[str, Any]) -> List[Award]:
             # log records it as UNREADABLE - not as an absence of award space.
             continue
 
-        known, src_amount, src_cur, usd, tax_note = convert_taxes(
-            _as_int(row.get(f"{cabin}TotalTaxes")), taxes_currency
-        )
+        tax_cents = _as_int(row.get(f"{cabin}TotalTaxes"))
+        untrusted = untrusted_tax_reason(route.get("Source"), tax_cents)
+        if untrusted:
+            # Nothing USABLE was reported, so nothing is carried as a reported
+            # amount - a reported amount is what makes the scorer treat taxes as
+            # a figure that merely needs converting. The number the API sent is
+            # kept in raw_diagnostics below, labelled.
+            known, src_amount, src_cur, usd, tax_note = (
+                False, None, "", 0.0, untrusted
+            )
+        else:
+            known, src_amount, src_cur, usd, tax_note = convert_taxes(
+                tax_cents, taxes_currency
+            )
+            if not known and src_amount is not None and src_amount < 0:
+                # A NEGATIVE figure is corrupt, not a figure in a currency we
+                # cannot price. Leaving the amount set routed it down the
+                # "unconvertible" path, which (a) told the reader USD has no FX
+                # rate, and (b) kept the live rule "the figure may already contain
+                # UK APD" - about a figure that contains nothing. Nothing usable
+                # was reported; the note says what was.
+                src_amount = None
         carriers = parse_carriers(row.get(f"{cabin}Airlines"))
         seats = _as_int(row.get(f"{cabin}RemainingSeats"))
 
@@ -659,13 +805,21 @@ def parse_availability_row(row: Dict[str, Any]) -> List[Award]:
             f"{cabin}MileageCostRaw": row.get(f"{cabin}MileageCostRaw"),
             f"{cabin}TotalTaxesRaw": row.get(f"{cabin}TotalTaxesRaw"),
             f"{cabin}AirlinesRaw": row.get(f"{cabin}AirlinesRaw"),
+            # The clean figure is diagnostic too when it was not believed.
+            f"{cabin}TotalTaxes (NOT BELIEVED)" if untrusted else f"{cabin}TotalTaxes": (
+                row.get(f"{cabin}TotalTaxes")
+            ),
+            "TaxesCurrency": taxes_currency,
             "availability_id": row.get("ID"),
         }
 
         note_bits = [tax_note]
         if source_note:
             note_bits.append(source_note)
-        if ur is False:
+        indirect = resolve_indirect_path(route.get("Source"))
+        if indirect:
+            note_bits.append(f"INDIRECT UR PATH ONLY: {indirect}")
+        elif ur is False:
             note_bits.append(
                 f"NO CHASE UR PATH: {program} is not a Chase UR transfer partner. "
                 f"This award is real and bookable, but not from a UR balance."
@@ -699,6 +853,7 @@ def parse_availability_row(row: Dict[str, Any]) -> List[Award]:
                 source_note=" ".join(b for b in note_bits if b),
                 program_source_code=str(route.get("Source") or "").strip().lower(),
                 ur_transferable=ur,
+                indirect_ur_path=indirect,
                 candidate_carriers=carriers,
                 carrier_source=(
                     "seats_aero_single"

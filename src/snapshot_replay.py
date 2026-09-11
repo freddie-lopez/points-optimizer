@@ -712,6 +712,11 @@ class SnapshotTransport(SeatsClient):
         self.snapshot_dir = Path(snapshot_dir)
         self.manifest_hash = manifest_hash_value
         self.current_parser_version = PARSER_VERSION
+        # (leg_id, manifest row's parser version, snapshot _meta's parser
+        # version) wherever the two disagree. The REPARSED banner reads only the
+        # manifest rows, so a disagreement would otherwise let a snapshot parsed
+        # under an OLD parser replay with no banner at all.
+        self.parser_version_disagreements: List[Tuple[str, str, str]] = []
         self._by_leg: Dict[str, ManifestRow] = {r.leg_id: r for r in rows}
         # Isolated from SeatsClient.CACHE / CACHE_META, which are CLASS
         # attributes shared by every client in the process. Without this a
@@ -778,6 +783,14 @@ class SnapshotTransport(SeatsClient):
         self.last_snapshot_content_hash = recomputed
         self.last_snapshot_captured_at = _parse_dt(str(meta.get("fetched_at") or ""))
         self.last_snapshot_parser_version = str(meta.get("parser_version") or UNKNOWN)
+        if (
+            row.parser_version
+            and meta.get("parser_version")
+            and str(meta.get("parser_version")) != str(row.parser_version)
+        ):
+            self.parser_version_disagreements.append(
+                (row.leg_id, str(row.parser_version), str(meta.get("parser_version")))
+            )
 
         # WAY (9). THE ARCHIVE IS A STORAGE LAYER AND IT USED TO ANSWER
         # `incomplete=False` LITERALLY, with a comment claiming the parser

@@ -17,7 +17,14 @@ from typing import Dict, Optional
 # here with no new dependency. Values already in the environment win, and the
 # key is never logged or printed.
 
-_ENV_PATH = Path(__file__).parent.parent / ".env"
+# `POINTS_OPTIMIZER_ENV_FILE` relocates the repo-level key file. It exists so a
+# CHILD process - the test suite runs the CLI as a subprocess - can be told not to
+# read the developer's real `.env`; monkeypatching this module cannot reach a
+# child. Unset, it is the repo's `.env`, exactly as before.
+_ENV_PATH = Path(
+    os.environ.get("POINTS_OPTIMIZER_ENV_FILE")
+    or (Path(__file__).parent.parent / ".env")
+)
 
 # v5 STEP 1. A SECOND PLACE A KEY MAY LIVE, outside the repo.
 #
@@ -220,7 +227,13 @@ def resolve_key(flag: Optional[str] = None) -> KeyResolution:
         "No Seats.aero API key found. Four places were checked, in this order:\n"
         f"  1. {KEY_SOURCE_FLAG}  (pass --api-key <key>)\n"
         f"  2. {KEY_SOURCE_ENV}  (export {KEY_ENV_VAR}=<key>)\n"
-        f"  3. {KEY_SOURCE_REPO_ENV}  ({_ENV_PATH})\n"
+        f"  3. {KEY_SOURCE_REPO_ENV}  ({_ENV_PATH})"
+        + (
+            "  [RELOCATED by POINTS_OPTIMIZER_ENV_FILE]"
+            if os.environ.get("POINTS_OPTIMIZER_ENV_FILE")
+            else ""
+        )
+        + "\n"
         f"  4. {KEY_SOURCE_USER_CONFIG}  ({USER_CONFIG_ENV_PATH})\n"
         f"Write '{KEY_ENV_VAR}=<key>' into one of the two files, or pass the "
         f"flag. Nothing is assumed and no request is attempted without one."
@@ -423,9 +436,21 @@ FX_WARNING: str = (
 # Where raw response envelopes live. The CACHE is runtime state and gitignored;
 # the SNAPSHOT directory is committed and is the regression corpus. See
 # src/response_cache.py for why raw pages are stored rather than parsed Awards.
-CACHE_DIR = Path(__file__).parent.parent / "data" / "cache" / "seats_aero"
-SNAPSHOT_DIR = (
-    Path(__file__).parent.parent / "tests" / "fixtures" / "seats_aero" / "live_trip_b"
+#
+# Both can be relocated by environment variable. The reason is the same as for
+# POINTS_OPTIMIZER_ENV_FILE: the test suite runs the CLI as a CHILD process, and
+# a child that used these defaults read the developer's real runtime cache and
+# archived into the COMMITTED corpus. On Tsuki's Mac a test got a cache hit for
+# Trip B's own B1 from his live run and "failed" by succeeding.
+CACHE_DIR = Path(
+    os.environ.get("POINTS_OPTIMIZER_CACHE_DIR")
+    or (Path(__file__).parent.parent / "data" / "cache" / "seats_aero")
+)
+SNAPSHOT_DIR = Path(
+    os.environ.get("POINTS_OPTIMIZER_SNAPSHOT_DIR")
+    or (
+        Path(__file__).parent.parent / "tests" / "fixtures" / "seats_aero" / "live_trip_b"
+    )
 )
 
 # Award space moves. A day-old cache quietly re-answering a fresh question is its

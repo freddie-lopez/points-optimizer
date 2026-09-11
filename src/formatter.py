@@ -7,7 +7,57 @@ from rich.table import Table
 from src import config
 from src.live_trip import LIVE_SOURCE, VERDICT_NO_LIVE_DATA, supersession_lines
 from src.models import LegResult, LiveQueryState, PointsProvenance, Strategy
-from src.optimizer import VERDICT_APD_UNKNOWN, VERDICT_AWARD_UNATTRIBUTED
+from src.optimizer import (
+    VERDICT_APD_UNKNOWN,
+    VERDICT_AWARD_UNATTRIBUTED,
+    VERDICT_INDIRECT_PATH,
+    VERDICT_PARTY_NOT_PRICED,
+)
+
+
+def _taxes_are_what_is_unknown(r) -> bool:
+    """True when the unknown on this leg's points side is the award's TAXES."""
+    cand = getattr(r, "best_points", None)
+    return bool(
+        cand is not None
+        and (
+            getattr(cand, "taxes_unknown", False)
+            or getattr(cand, "taxes_unconvertible", False)
+        )
+    )
+
+
+def _be_subject(r) -> str:
+    """What a break-even figure is a break-even ON. Never 'the surcharge' alone
+    when the taxes are unknown too - that reads as though they were known."""
+    return (
+        "the total of its unknown taxes and any carrier surcharge"
+        if _taxes_are_what_is_unknown(r)
+        else "the surcharge"
+    )
+
+
+def _names_surcharge(totals: Dict) -> bool:
+    """
+    Whether the trip range contains an unknown CARRIER SURCHARGE. Always True on
+    a run with no unknown award taxes (the wording there is unchanged); on a run
+    that has them, only when some leg really carries an unknown surcharge - a
+    caveat naming an ingredient the run does not contain is its own falsehood.
+    """
+    return bool(totals.get("legs_any_surcharge_unknown")) or not totals.get(
+        "legs_taxes_unknown"
+    )
+
+
+def _high_end_assumptions(totals: Dict) -> List[str]:
+    parts = []
+    if _names_surcharge(totals):
+        parts.append("every unknown surcharge is $0")
+    if totals.get("legs_taxes_unknown"):
+        parts.append("unknown award taxes add nothing beyond any UK APD shown")
+    if totals.get("legs_apd_unknown"):
+        parts.append("the departure tax is $0")
+    return parts
 
 
 def _money(x: float) -> str:
@@ -213,6 +263,24 @@ def print_leg_results(
         elif r.break_even_programs:
             path_desc = f"{r.break_even_programs[0]} (no price)"
             pts = f"<{r.break_even_points:,}?"
+        elif r.verdict == VERDICT_INDIRECT_PATH:
+            # "none - not a partner" here would be false: UR reaches it in two
+            # hops. The cell names the program and says it was not scored.
+            _ind = min(
+                (c for c in r.leg.points_candidates
+                 if getattr(c, "indirect_ur_path", "")),
+                key=lambda c: c.points,
+            )
+            path_desc = f"{_ind.program} (indirect, not scored)"
+            pts = f"{_ind.points:,}"
+        elif r.verdict == VERDICT_PARTY_NOT_PRICED:
+            path_desc = f"priced for ONE seat - {r.leg.travelers} travelling"
+            pts = "-"
+        elif r.verdict == VERDICT_AWARD_UNATTRIBUTED:
+            # The same falsehood on the unattributed path: the program is not
+            # NAMED, which says nothing about whether it is a partner.
+            path_desc = "program NOT NAMED - no claim"
+            pts = "-"
         else:
             path_desc = "none - not a partner"
             pts = "-"
@@ -242,7 +310,20 @@ def print_leg_results(
             # $0 surcharge, which is the exact confusion v1 exists to remove.
             pts_score = f">= {_money(r.points_floor_usd)}"
         elif r.break_even_surcharge_usd is not None:
-            pts_score = f"[red]? (win if surch < {_money(r.break_even_surcharge_usd)})[/red]"
+            # When the award's TAXES are what is unknown, the break-even is on
+            # taxes plus surcharge. "win if surch < $182" on a leg whose taxes
+            # were never reported reads as though the taxes were known to be $0.
+            _cand = r.best_points
+            _what = (
+                "taxes+surch"
+                if _cand is not None
+                and (
+                    getattr(_cand, "taxes_unknown", False)
+                    or getattr(_cand, "taxes_unconvertible", False)
+                )
+                else "surch"
+            )
+            pts_score = f"[red]? (win if {_what} < {_money(r.break_even_surcharge_usd)})[/red]"
         else:
             pts_score = "-"
 
@@ -252,7 +333,11 @@ def print_leg_results(
             "cash (no points path)": "[bold green]PAY CASH (no path)[/bold green]",
             "cash (points unpriced)": "[bold yellow]PAY CASH (pts unpriced)[/bold yellow]",
             "cash (points blocked)": "[bold yellow]PAY CASH (pts blocked)[/bold yellow]",
-            "cash (surcharge unknown)": "[bold red]WITHHELD (surch unknown)[/bold red]",
+            "cash (surcharge unknown)": (
+                "[bold red]WITHHELD (taxes unknown)[/bold red]"
+                if _taxes_are_what_is_unknown(r)
+                else "[bold red]WITHHELD (surch unknown)[/bold red]"
+            ),
             # v3. Says NOTHING about award space - that is why it is separate
             # from "no path", whose reason text is a claim about partnerships.
             VERDICT_NO_LIVE_DATA: "[bold yellow]PAY CASH (no live pts data)[/bold yellow]",
@@ -260,6 +345,12 @@ def print_leg_results(
             # no program for them. Also says nothing about partnerships.
             VERDICT_AWARD_UNATTRIBUTED:
                 "[bold yellow]PAY CASH (award unattributed)[/bold yellow]",
+            # A path exists in two hops (UR -> BA Avios -> combine). Not scored,
+            # and not "no path".
+            VERDICT_INDIRECT_PATH:
+                "[bold yellow]PAY CASH (indirect, not scored)[/bold yellow]",
+            VERDICT_PARTY_NOT_PRICED:
+                "[bold yellow]PAY CASH (party of N not priced)[/bold yellow]",
             # WAY (10). A GOVERNMENT departure tax is owed and its size is not
             # known, so the points side cannot be scored. Deliberately worded
             # like the surcharge-unknown cell above and deliberately NOT the
@@ -319,6 +410,10 @@ def _points_provenance_cell(r: LegResult) -> str:
 
     if prov is PointsProvenance.LIVE:
         return "[bold green]live[/bold green]"
+    # A replayed leg's points came from committed bytes. It rendered as "none",
+    # which is the word for a leg with NO points data - the opposite of the truth.
+    if prov is PointsProvenance.SNAPSHOT:
+        return "[bold cyan]snapshot[/bold cyan]"
     if prov is PointsProvenance.BADGE_FALLBACK:
         return "[yellow]badge[/yellow]"
 
@@ -411,9 +506,9 @@ def print_leg_detail(results: List[LegResult], console: Console = None) -> None:
                 )
                 if r.break_even_surcharge_usd is not None:
                     console.print(
-                        f"        [red]Break-even: points beat cash only if the "
-                        f"surcharge is below {_money(r.break_even_surcharge_usd)}."
-                        f"[/red]"
+                        f"        [red]Break-even: points beat cash only if "
+                        f"{_be_subject(r)} is below "
+                        f"{_money(r.break_even_surcharge_usd)}.[/red]"
                     )
                 if r.surcharge.notes:
                     console.print(f"        [dim]{r.surcharge.notes}[/dim]")
@@ -574,15 +669,22 @@ def print_live_leg_detail(results: List[LegResult], console: Console = None) -> 
 
 
 def _print_live_scoring_block(r: LegResult, console: Console) -> None:
-    """The floor / break-even block. Rendered for EVERY live leg, always."""
-    if r.leg.points_provenance is not PointsProvenance.LIVE:
+    """The floor / break-even block. Rendered for EVERY live or replayed leg."""
+    # A REPLAY scores the same Awards through the same path; its unknown-tax
+    # line ("NONE USABLE ... IT IS NOT $0") and its floor must print too.
+    if r.leg.points_provenance not in (PointsProvenance.LIVE, PointsProvenance.SNAPSHOT):
         return
     if not r.best_points:
         return
 
     cand = r.best_points
+    kind = (
+        "replayed award"
+        if r.leg.points_provenance is PointsProvenance.SNAPSHOT
+        else "live award"
+    )
     console.print(
-        f"  live award: {cand.program}  {cand.cabin}  {cand.points:,} points"
+        f"  {kind}: {cand.program}  {cand.cabin}  {cand.points:,} points"
     )
     if cand.surcharge_captured:
         console.print(
@@ -613,6 +715,15 @@ def _print_live_scoring_block(r: LegResult, console: Console) -> None:
             f"about YQ/YR and does NOT price these taxes. Supply the rate with "
             f"--fx to score this leg.[/dim]"
         )
+    elif getattr(cand, "taxes_unknown", False):
+        # Every other way a live award's taxes are unknown - none sent, a source
+        # that does not report them, or a 0 that means "not reported". Same
+        # loudness as C-2: this used to print nothing, and score as $0.
+        console.print(
+            "     [bold red]taxes from the API: NONE USABLE, so the cash side of "
+            "this award is UNKNOWN. IT IS NOT $0.[/bold red]"
+        )
+        console.print(f"     [red]{cand.observed_taxes_note}[/red]")
     elif cand.observed_taxes_known and cand.observed_taxes_reported:
         console.print(
             f"     taxes from the API: {_money(cand.observed_taxes_usd)} "
@@ -632,17 +743,30 @@ def _print_live_scoring_block(r: LegResult, console: Console) -> None:
         taxes_clause = (
             f"+ the API's taxes of {_money(r.observed_taxes_usd)} "
             if r.observed_taxes_usd
-            else "with NO tax figure available to add "
+            else "with NO usable tax figure to add "
+        )
+        # A floor that silently contains UK APD reads as "points + nothing"; the
+        # duty is named whenever it was added to this leg's points side.
+        apd_clause = (
+            f"+ UK Air Passenger Duty of {_money(r.apd_added_usd)} "
+            if getattr(r, "apd_added_usd", 0.0)
+            else ""
         )
         console.print(
             f"     [bold]floor {_money(floor) if floor is not None else 'n/a'}[/bold]"
-            f"  (points at the run's valuation {taxes_clause}, with the "
+            f"  (points at the run's valuation {taxes_clause}{apd_clause}, with the "
             f"carrier surcharge at its $0 floor - the least this can possibly cost)"
         )
         if r.break_even_surcharge_usd is not None:
             console.print(
-                f"     points win ONLY if the carrier surcharge above those taxes "
-                f"is below [bold]{_money(r.break_even_surcharge_usd)}[/bold]"
+                (
+                    f"     points win ONLY if its unknown taxes plus any carrier "
+                    f"surcharge are below "
+                    if _taxes_are_what_is_unknown(r)
+                    else "     points win ONLY if the carrier surcharge above those "
+                    "taxes is below "
+                )
+                + f"[bold]{_money(r.break_even_surcharge_usd)}[/bold]"
             )
         console.print(
             f"     [bold red]surcharge UNKNOWN - this is NOT $0.[/bold red] "
@@ -727,8 +851,15 @@ def print_trip_totals(
     table.add_column("Value", justify="right")
 
     table.add_row("Pay cash for everything", _money(totals["all_cash_usd"]))
-    table.add_row("Optimizer's recommendation", _money(totals["optimized_usd"]))
-    table.add_row("Saving", _money(totals["savings_usd"]))
+    if totals.get("margin_withheld_reason"):
+        # A trip withheld because legs were NOT PRICED has no recommendation
+        # total and no saving: printing them would report "could not price" as a
+        # dollar figure one row above the WITHHELD percentage.
+        table.add_row("Optimizer's recommendation", "[bold red]WITHHELD[/bold red]")
+        table.add_row("Saving", "[bold red]WITHHELD[/bold red]")
+    else:
+        table.add_row("Optimizer's recommendation", _money(totals["optimized_usd"]))
+        table.add_row("Saving", _money(totals["savings_usd"]))
 
     # THE HEADLINE. When any surcharge on the trip is a range or an unknown, the
     # honest headline is an INTERVAL. Printing the point estimate alone is what
@@ -801,7 +932,7 @@ def print_trip_totals(
         )
         table.add_row(
             "[red]  withheld because[/red]",
-            f"[red]--require-all-live and provenance is '{provenance}'[/red]",
+            f"[red]{totals.get('margin_withheld_reason') or ('--require-all-live and provenance is ' + repr(provenance))}[/red]",
         )
     elif totals.get("headline_is_a_range"):
         table.add_row(
@@ -818,12 +949,8 @@ def print_trip_totals(
         # part of that is an unknown departure tax it has to say so - naming
         # only the surcharge is the identical falsehood the caveat had.
         table.add_row(
-            "[dim]  high end = only if every unknown surcharge is $0"
-            + (
-                " AND the departure tax is $0"
-                if totals.get("legs_apd_unknown")
-                else ""
-            )
+            "[dim]  high end = only if "
+            + " AND ".join(_high_end_assumptions(totals))
             + "[/dim]",
             f"[dim]{totals['beat_cash_pct_high']:.2f}%{hash_suffix}[/dim]",
         )
@@ -932,6 +1059,39 @@ def print_trip_totals(
             "surcharge is UNKNOWN (NOT $0)[/red]",
             f"[red]{int(totals['legs_surcharge_unknown'])}[/red]",
         )
+    if totals.get("legs_party_pricing_unverified"):
+        table.add_row(
+            "[bold yellow]Flight legs for 2+ travellers - points NOT\n"
+            "scored (award prices are per seat)[/bold yellow]",
+            f"[bold yellow]{int(totals['legs_party_pricing_unverified'])} "
+            f"({', '.join(totals.get('legs_party_pricing_unverified_ids') or [])})"
+            f"[/bold yellow]",
+        )
+    # Counted at trip level since v3 (way ten) and never PRINTED there - a
+    # counter nobody sees is not an answer to "what does the trip do with it".
+    if totals.get("legs_award_unattributed"):
+        table.add_row(
+            "[yellow]Legs carrying an award the response did NOT\n"
+            "attribute to a program - NOT scored, no claim[/yellow]",
+            f"[yellow]{int(totals['legs_award_unattributed'])} "
+            f"({', '.join(totals.get('legs_award_unattributed_ids') or [])})"
+            f"[/yellow]",
+        )
+    if totals.get("legs_indirect_path_unverified"):
+        table.add_row(
+            "[yellow]Legs with an award reachable only INDIRECTLY\n"
+            "(UR -> BA Avios -> combine) - NOT scored[/yellow]",
+            f"[yellow]{int(totals['legs_indirect_path_unverified'])} "
+            f"({', '.join(totals.get('legs_indirect_path_unverified_ids') or [])})"
+            f"[/yellow]",
+        )
+    if totals.get("legs_taxes_unknown"):
+        table.add_row(
+            "[red]Legs where the award's TAXES are UNKNOWN\n"
+            "(NOT $0) - the leg is not scored[/red]",
+            f"[red]{int(totals['legs_taxes_unknown'])} "
+            f"({', '.join(totals.get('legs_taxes_unknown_ids') or [])})[/red]",
+        )
     # MR5-1, WAY (10). The leg line has always said this; the trip block said
     # nothing, and the trip block is where the number Tsuki quotes comes from.
     # An owed duty of unknown size is a real dollar missing from the points
@@ -996,7 +1156,14 @@ def print_trip_totals(
 
     console.print(table)
 
-    if totals.get("margin_withheld"):
+    if totals.get("margin_withheld") and totals.get("margin_withheld_reason"):
+        console.print(
+            f"\n[bold red]THE TRIP MARGIN IS WITHHELD.[/bold red] "
+            f"{totals['margin_withheld_reason']}. A total that leaves those legs "
+            f"out would report 'could not price' as a saving of zero. Per-leg "
+            f"results above are unaffected."
+        )
+    elif totals.get("margin_withheld"):
         console.print(
             f"\n[bold red]THE TRIP MARGIN IS WITHHELD.[/bold red] --require-all-live "
             f"was passed and the margin's provenance is "
@@ -1025,20 +1192,34 @@ def print_trip_totals(
         # lists an ingredient this run does not contain is the same kind of
         # false as the one it replaces. On a run with no unknown duty the
         # wording is unchanged to the byte.
+        # Each ingredient is named only when this run has it. A run with no
+        # unknown award taxes prints the wording it always printed, to the byte.
+        what_parts, assume_parts = [], []
+        if _names_surcharge(totals):
+            what_parts.append("carrier-imposed surcharges that are not known")
+            assume_parts.append("every unknown surcharge turns out to be $0")
         if totals.get("legs_apd_unknown"):
-            what = (
-                "carrier-imposed surcharges that are not known AND UK AIR "
-                "PASSENGER DUTY that is OWED on "
+            what_parts.append(
+                "UK AIR PASSENGER DUTY that is OWED on "
                 f"{', '.join(totals.get('legs_apd_unknown_ids') or [])} in an "
                 "amount this tool does not know"
             )
-            assumption = (
-                "every unknown surcharge turns out to be $0 AND the departure "
-                "tax turns out to be $0, which it will not be"
+            assume_parts.append(
+                "the departure tax turns out to be $0, which it will not be"
             )
-        else:
-            what = "carrier-imposed surcharges that are not known"
-            assumption = "every unknown surcharge turns out to be $0"
+        what = " AND ".join(what_parts)
+        assumption = " AND ".join(assume_parts)
+        # Same rule, for award taxes Seats.aero did not usefully report.
+        if totals.get("legs_taxes_unknown"):
+            ids = ", ".join(totals.get("legs_taxes_unknown_ids") or [])
+            what = (what + ", AND " if what else "") + (
+                f"award TAXES on {ids} that Seats.aero did not report in a "
+                f"usable form"
+            )
+            assumption = (assumption + " AND " if assumption else "") + (
+                "those award taxes turn out to be nothing beyond any UK Air "
+                "Passenger Duty already counted, which they will not be"
+            )
         console.print(
             "\n[bold yellow]The headline above is a RANGE and must not be quoted as "
             f"a single number.[/bold yellow] The spread is {what}"
@@ -1111,11 +1292,27 @@ def print_strategies(
             s.transfer_path.summary(),
             f"{s.points_cost:,}",
             f"{s.transfer_path.stranded_points:,}",
-            _money(s.cash_cost),
-            _money(s.total_value),
+            # The HTML export has refused to print an unknown as $0.00 since
+            # finding H-3; the terminal table printed it. Same rule, both places.
+            _money(s.cash_cost) if s.cash_cost_known else "[bold red]UNKNOWN[/bold red]",
+            (
+                _money(s.total_value)
+                if s.cash_cost_known
+                else f"[red]>= {_money(s.total_value)}[/red]"
+            ),
         )
 
     console.print(table)
+    unknown = [s for s in strategies if not s.cash_cost_known]
+    if unknown:
+        console.print(
+            f"[red]{len(unknown)} strateg{'y' if len(unknown) == 1 else 'ies'} "
+            f"above carr{'ies' if len(unknown) == 1 else 'y'} cash that is UNKNOWN "
+            f"(NOT $0) and cannot be ranked on it: shown after every strategy whose "
+            f"cash is known, with its total as a FLOOR (>=).[/red]"
+        )
+        for s in unknown:
+            console.print(f"  [dim]{s.award.program}: {s.cash_cost_note}[/dim]")
 
 
 def print_summary(
@@ -1131,8 +1328,22 @@ def print_summary(
 
     console.print("\n[bold]Summary[/bold]")
     console.print(f"Top strategy points cost: {strategies[0].points_cost:,}")
-    console.print(f"Top strategy cash cost: {_money(strategies[0].cash_cost)}")
-    console.print(f"Top strategy total value: {_money(strategies[0].total_value)}")
+    top = strategies[0]
+    if top.cash_cost_known:
+        console.print(f"Top strategy cash cost: {_money(top.cash_cost)}")
+        console.print(f"Top strategy total value: {_money(top.total_value)}")
+    else:
+        # Reached only when NO strategy has a known cash cost (known ones rank
+        # first). The top one is then "top" by points alone, and says so.
+        console.print(
+            "Top strategy cash cost: [bold red]UNKNOWN - NOT $0.00[/bold red] "
+            "(no strategy on this search has a known cash cost; ranked by points "
+            "alone)"
+        )
+        console.print(
+            f"Top strategy total value: [red]>= {_money(top.total_value)}[/red] "
+            f"(a floor: the unknown cash is not in it)"
+        )
 
     margin_pct = 0.0
     if human_cost:

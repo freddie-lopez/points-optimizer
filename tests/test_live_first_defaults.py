@@ -12,6 +12,7 @@ Exactly one existing test changed, and it is case (a):
 `test_the_fx_flag_works_through_the_cli` gained `--offline` and kept its exit
 code and its assertion untouched.
 """
+import os
 import re
 import subprocess
 import sys
@@ -46,9 +47,20 @@ BADGE_CASH = "$3,126.11"
 BADGE_POINTS = "28,000"
 
 
+# THE CHILD IS GIVEN A KEY, EXPLICITLY. These tests are about what the tool does
+# when it HAS a key and CANNOT reach Seats.aero. They used to get their key by
+# accident: in the sandbox from another test's leaked "from_repo", on Tsuki's Mac
+# from his real ~/.zshrc - which is why they reached the live API there and
+# exited 0. `tests/conftest.py` now removes every ambient key and blocks the
+# network in every child, so both halves of the premise are stated here and in
+# the harness, not inherited from whichever machine runs them.
+FAKE_KEY = "test_key_not_a_real_one"
+
+
 def run(*extra):
+    env = dict(os.environ, SEATS_AERO_KEY=FAKE_KEY)
     proc = subprocess.run(
-        BASE + list(extra), cwd=ROOT, capture_output=True, text=True
+        BASE + list(extra), cwd=ROOT, capture_output=True, text=True, env=env
     )
     return proc.returncode, proc.stdout + proc.stderr
 

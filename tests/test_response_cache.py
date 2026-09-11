@@ -404,14 +404,49 @@ def test_a_snapshot_is_directly_loadable_as_a_fixture(
 # ---------------------------------------------------------------------------
 
 
+UNMAPPED_NOTE = "is NOT in the source->program map"
+
+
+def assert_award_is_honest(award, where: str) -> None:
+    """
+    ATTRIBUTED, OR EXPLICITLY UNATTRIBUTED - NEVER SILENTLY BLANK.
+
+    This used to assert `award.program`, which demanded a guarantee the parser
+    deliberately does not make: an award from a source code the map does not
+    know is a REAL award with NO program, and `resolve_source` says so rather
+    than printing the code as a program name (finding L-4). The first real
+    snapshot committed from Tsuki's Mac (a `qatar` row on LHR-SFO) failed the
+    old assertion while the code was doing exactly the right thing.
+
+    What must never happen is a blank program with nothing saying why, or a
+    blank program that still claims to know whether UR reaches it.
+    """
+    if award.program:
+        assert award.program_source_code, f"{where}: a program with no source code"
+    else:
+        assert UNMAPPED_NOTE in award.source_note or (
+            "carried no Route.Source" in award.source_note
+        ), f"{where}: an award with no program AND no explanation of why"
+        assert award.ur_transferable is None, (
+            f"{where}: an unattributed award cannot know whether UR reaches it"
+        )
+    assert award.cost > 0, f"{where}: an award priced at {award.cost}"
+    assert award.source_note, f"{where}: an award with no source note"
+    assert award.source == "seats_aero"
+    # And its taxes are either a known figure or explicitly unknown - a note
+    # is what separates "unknown" from "we never looked".
+    if not award.cash_component_known:
+        assert award.cash_component_note, f"{where}: unknown taxes with no note"
+
+
 def test_every_committed_snapshot_parses_into_valid_awards():
     """
     A committed corpus that nobody replays rots. This is the guard, and it runs
     in CI rather than by hand.
 
-    An EMPTY corpus passes - Step 10 has not been run, and pretending otherwise
-    would be the fabrication this whole project exists to avoid. What must never
-    happen is a snapshot that sits there unparseable.
+    An EMPTY corpus passes this test on its own - which is why the one below
+    runs the same check over a synthetic envelope on every machine, so the rule
+    is never only as strong as whatever happens to be committed.
     """
     snapshots = sorted(COMMITTED_SNAPSHOTS.glob("*.json"))
     for path in snapshots:
@@ -419,10 +454,54 @@ def test_every_committed_snapshot_parses_into_valid_awards():
         assert envelope.pages, f"{path.name} carries no pages"
         awards, rows_seen, _ = SeatsClient.parse_pages(envelope.pages)
         for award in awards:
-            assert award.program, f"{path.name}: an award with no program"
-            assert award.cost > 0, f"{path.name}: an award priced at {award.cost}"
-            assert award.source_note, f"{path.name}: an award with no source note"
-            assert award.source == "seats_aero"
+            assert_award_is_honest(award, path.name)
+
+
+def _row_from_real(source, taxes):
+    row = json.loads(json.dumps(REAL_ROW))
+    row["Route"]["Source"] = source
+    row["YTotalTaxes"] = taxes
+    return row
+
+
+REAL_ROW = json.loads(
+    (ROOT / "tests" / "fixtures" / "seats_aero" / "sfo_mad_real.json").read_text()
+)["data"][0]
+
+
+def test_the_honesty_check_runs_on_every_machine_not_only_where_a_corpus_exists():
+    """
+    The rows the Mac's corpus actually contained, rebuilt: a mapped source, the
+    `qatar` row that failed the old assertion (tax 0), a KrisFlyer row (tax 0,
+    taxes not reported), and a code nobody has mapped.
+    """
+    rows = [
+        _row_from_real("aeroplan", 4460),
+        _row_from_real("qatar", 0),
+        _row_from_real("singapore", 0),
+        _row_from_real("hawaiianairlines", 4460),
+    ]
+    awards, _, _ = SeatsClient.parse_pages([{"data": rows}])
+    assert len(awards) == 4
+    for award in awards:
+        assert_award_is_honest(award, f"synthetic {award.program_source_code}")
+    by_code = {a.program_source_code: a for a in awards}
+    assert by_code["qatar"].program == "Qatar Privilege Club"
+    assert by_code["hawaiianairlines"].program == ""
+
+
+def test_the_honesty_check_rejects_a_silently_blank_program():
+    """The check itself must be able to fail, or it is decoration."""
+    (award,) = parse_availability_row(_row_from_real("aeroplan", 4460))
+    award.program = ""
+    award.source_note = "no explanation at all"
+    award.ur_transferable = None
+    with pytest.raises(AssertionError, match="no explanation"):
+        assert_award_is_honest(award, "tampered")
+    award.source_note = f"code 'x' {UNMAPPED_NOTE}"
+    award.ur_transferable = True
+    with pytest.raises(AssertionError, match="cannot know whether UR"):
+        assert_award_is_honest(award, "tampered")
 
 
 def test_the_snapshot_directory_exists_and_explains_itself():

@@ -145,6 +145,12 @@ class Award:
     # False means "this award is real but there is no Chase UR path into the
     # program". That is a REPORTABLE result, not a reason to drop the row.
     ur_transferable: Optional[bool] = None
+    # Set when there is no DIRECT UR transfer but a known INDIRECT one exists
+    # (Chase UR -> British Airways Avios -> combine into this program's Avios).
+    # The text names the hops and the conditions. It is not scored: two-hop
+    # transfers are not modelled, and whether the traveller's accounts meet the
+    # conditions is not something this tool knows.
+    indirect_ur_path: str = ""
 
     # `{X}Airlines` is a comma-separated list of POSSIBLE operating carriers.
     # One entry does not make it confirmed metal; several make the metal
@@ -308,6 +314,17 @@ REASON_CODES = frozenset(
         # same claim as NOT_A_PARTNER, which asserts something about the user's
         # transfer partners; this one asserts something about the response.
         "PROGRAM_UNATTRIBUTED",
+        # An award in a program UR reaches only in two hops (UR -> BA Avios ->
+        # combine). Not scored, and NOT the NOT_A_PARTNER claim either.
+        "INDIRECT_PATH_UNVERIFIED",
+        # A live award's TAXES are unknown (none usable, unreported source, 0,
+        # negative, unconvertible, or below the UK duty they must contain). Kept
+        # apart from SURCHARGE_UNKNOWN so a reader - and the trip counters - can
+        # tell a carrier's YQ from government taxes.
+        "TAXES_UNKNOWN",
+        # A flight leg for more than one traveller: award prices are per seat and
+        # party pricing is not modelled, so its points options are not scored.
+        "PARTY_PRICING_UNVERIFIED",
         # v3 fix. The trip-level balance ceiling demoted this leg to cash
         # because earlier legs had already spent the shared balance.
         "TRIP_BALANCE_EXHAUSTED",
@@ -590,9 +607,12 @@ class PointsCandidate:
     observed_taxes_usd: float = 0.0
     # False means the figure could not be converted to USD. It NEVER means $0.
     observed_taxes_known: bool = False
-    # True when the API reported a tax figure at all - convertible or not. The
-    # difference between "no tax figure" and "a tax figure we cannot price"
-    # matters: only the second one makes a leg unscoreable.
+    # True when the API reported a USABLE-LOOKING tax figure at all - convertible
+    # or not. It decides which MESSAGE a reader gets, never whether the leg is
+    # scoreable: "no tax figure" and "a tax figure we cannot price" are both
+    # unknown cash, and both make a live leg unscoreable (see `taxes_unknown`).
+    # This comment used to say only the second one did, which is how a United
+    # award with NO tax figure scored as a $0-tax points win.
     observed_taxes_reported: bool = False
     observed_taxes_amount: Optional[float] = None
     observed_taxes_currency: str = ""
@@ -606,6 +626,16 @@ class PointsCandidate:
     # says - including a program-policy $0, which is a statement about the
     # CARRIER SURCHARGE and says nothing about taxes the tool cannot convert.
     taxes_unconvertible: bool = False
+    # A LIVE award whose taxes are UNKNOWN for ANY reason: no figure, a source
+    # Seats.aero does not report taxes for, a 0 that means "not reported", a
+    # negative figure, or one that cannot be converted. Same consequence as
+    # `taxes_unconvertible` (which is the narrower case, kept for its message):
+    # the candidate's cash side is UNKNOWN and the leg cannot be scored.
+    # Only `live_trip.award_to_candidate` sets it. A fixture candidate's cash
+    # side is its modeled or captured surcharge, and its taxes are not "unknown"
+    # in this sense - defaulting this from `observed_taxes_known` would make
+    # every offline candidate unscoreable.
+    taxes_unknown: bool = False
     # The travel date this candidate's award is FOR. None means the leg's own
     # date. It exists so a promoted off-date award is scored against the cash
     # fare for ITS date rather than the cheapest fare on any date (finding H-5).
@@ -615,6 +645,9 @@ class PointsCandidate:
     # "no transfer partner covers this leg" about it is a claim we cannot make
     # (finding M-5).
     program_attribution_missing: bool = False
+    # Carried from Award.indirect_ur_path. A candidate with an indirect path is
+    # never scored and is never reported as "not a partner / no points path".
+    indirect_ur_path: str = ""
 
     @property
     def extra_observed_taxes_usd(self) -> float:
@@ -624,8 +657,8 @@ class PointsCandidate:
         Every consumer that builds a points-side total adds this. It is 0.0 both
         when there are no taxes and when they are already riding as the captured
         surcharge, so it can never double count - and it is 0.0 when the taxes
-        are UNKNOWN, which is why an unknown must also set
-        `taxes_unconvertible` and route the leg down the unscoreable path.
+        are UNKNOWN, which is why an unknown must also set `taxes_unknown`
+        and route the leg down the unscoreable path.
         """
         if self.observed_taxes_are_the_surcharge or not self.observed_taxes_known:
             return 0.0
@@ -1809,6 +1842,11 @@ class LegResult:
     # unknown could possibly take. If even that loses to cash, the unknown cannot
     # change the verdict and the answer is certain after all.
     points_floor_usd: Optional[float] = None
+    # WHICH candidate set `points_floor_usd`. The floor can come from the chosen
+    # option (unscoreable leg) or from a REJECTED alternative whose cash is
+    # unknown; what the floor assumes - and whether UK APD belongs in it - is a
+    # property of that candidate, not of the leg's winner.
+    points_floor_candidate: Optional["PointsCandidate"] = None
     surcharge_cannot_change_verdict: bool = False
     mandatory_fees_usd: float = 0.0
     # --- v5 Step 7: UK Air Passenger Duty ---------------------------------
@@ -2059,6 +2097,9 @@ TRIP_LEVEL_ANSWERS = {
     "APD_UNKNOWN": TripTreatment(
         WIDENS_THE_TRIP_RANGE, totals_key="legs_apd_unknown"
     ),
+    "TAXES_UNKNOWN": TripTreatment(
+        WIDENS_THE_TRIP_RANGE, totals_key="legs_taxes_unknown"
+    ),
     "APD_INCLUSION_UNVERIFIED": TripTreatment(
         COUNTED_AT_TRIP_LEVEL, totals_key="legs_apd_unverified"
     ),
@@ -2067,6 +2108,12 @@ TRIP_LEVEL_ANSWERS = {
     ),
     "PROGRAM_UNATTRIBUTED": TripTreatment(
         COUNTED_AT_TRIP_LEVEL, totals_key="legs_award_unattributed"
+    ),
+    "INDIRECT_PATH_UNVERIFIED": TripTreatment(
+        COUNTED_AT_TRIP_LEVEL, totals_key="legs_indirect_path_unverified"
+    ),
+    "PARTY_PRICING_UNVERIFIED": TripTreatment(
+        COUNTED_AT_TRIP_LEVEL, totals_key="legs_party_pricing_unverified"
     ),
     "CARRIER_UNKNOWN": TripTreatment(
         DELIBERATELY_LEG_ONLY,
