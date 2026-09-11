@@ -253,3 +253,5 @@ pre.echo { margin: 0; padding: 10px; background: var(--ink); border: 1px solid v
 }
 .cmdrow .btn { flex: none; white-space: nowrap; }
 .form > .btn { justify-self: start; }
+td .sub2 { min-width: 22ch; }
+.wallet-rows > .btn { justify-self: start; }

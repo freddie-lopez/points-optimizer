@@ -588,3 +588,66 @@ def test_create_without_the_preview_hash_writes_nothing(nt_client):
     r = nt_client.post("/api/trips/create", dict(NT, draft_hash="0" * 64))
     assert r.status == 409
     assert not (nt_client.trips_dir / "sfo_lhr_jan.json").exists()
+
+
+# ------------------------------------------------------------------- wallet
+
+
+def test_with_no_wallet_every_run_is_the_clis_exit_2_refusal_and_spends_nothing(
+    tmp_path, pinned, monkeypatch
+):
+    monkeypatch.setenv(config.KEY_ENV_VAR, g.FAKE_KEY)
+    stub = g.Stub()
+    with patch("src.seats_client.requests.get", side_effect=stub):
+        with running_server() as c:
+            st = c.get("/api/state").json()["wallet"]
+            assert st["missing"] is True and st["source"] is None
+            runs = []
+            for mode in ("offline", "live"):
+                body = {"mode": mode, "options": TRANSFER}
+                pf = c.post("/api/trips/trip_b_europe/preflight", body).json()
+                runs.append(c.post("/api/trips/trip_b_europe/run",
+                                   dict(body, confirm_id=pf["confirm_id"])).json())
+            spf = c.post("/api/search/preflight", SEARCH).json()
+            runs.append(c.post("/api/search/run", dict(SEARCH, confirm_id=spf["confirm_id"])).json())
+    for run in runs:
+        assert run["exit_code"] == 2 and run["refusal"]["kind"] == "wallet", run
+        assert run["refusal"]["message"].startswith("Wallet error: No currencies supplied.")
+    assert stub.calls == []
+
+
+def test_an_edited_wallet_is_session_only_and_never_written(tmp_path, pinned):
+    import os
+
+    wallet = write_wallet(tmp_path / "wallet.json")
+    before = (wallet.read_bytes(), os.stat(wallet).st_mtime_ns)
+    with running_server(wallet_path=wallet) as c:
+        st = c.get("/api/state").json()["wallet"]
+        assert st["source"] == str(wallet) and st["from_file"] is True
+        edited = c.post("/api/wallet", {"balances": {"UR": "120000", "MR": ""},
+                                        "cards": ["Chase Sapphire Preferred"]}).json()
+        assert edited["source"] == "entered in this session (not saved)"
+        assert edited["balances"] == {"UR": 120000, "MR": None}
+        assert "  MR: UNCONSTRAINED (balance not supplied)   valued at 1.00 cents/point" in edited["describe_lines"]
+        run = c.post("/api/trips/trip_b_europe/run", {"mode": "offline", "options": TRANSFER}).json()
+        assert "--balance UR=120000 --balance MR= --card 'Chase Sapphire Preferred'" in run["argv_display"]
+        assert "  UR: 120,000   valued at 1.00 cents/point" in run["transcript"]
+        # Putting the file's values back returns to --wallet PATH.
+        back = c.post("/api/wallet", {"balances": {"UR": "160000"},
+                                      "cards": ["Chase Sapphire Preferred"]}).json()
+        assert back["source"] == str(wallet) and back["argv"] == ["--wallet", str(wallet)]
+    assert (wallet.read_bytes(), os.stat(wallet).st_mtime_ns) == before
+
+
+@pytest.mark.parametrize("body,start", [
+    ({"balances": {"UR": "lots"}, "cards": []}, "--balance 'UR=lots': 'lots' is not a whole number"),
+    ({"balances": {"XX": "1"}, "cards": []}, "Unknown currency 'XX'."),
+    ({"balances": {"UR": "-5"}, "cards": []}, "Invalid balance for 'UR': -5"),
+    ({"balances": {"UR": "1"}, "cards": ["Chase Sapphire Preferrd"]}, "Unknown card 'Chase Sapphire Preferrd'."),
+    ({"balances": {}, "cards": []}, "No currencies supplied."),
+])
+def test_a_bad_wallet_is_refused_in_the_wallet_codes_words(client, body, start):
+    r = client.post("/api/wallet", body).json()
+    assert r["error"] == "wallet" and r["message"].startswith(start), r
+    # ...and the session keeps the wallet it had.
+    assert client.get("/api/state").json()["wallet"]["balances"] == {"UR": 160000}
