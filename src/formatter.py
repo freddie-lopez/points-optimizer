@@ -1,4 +1,14 @@
-"""Format optimizer results for CLI output."""
+"""Format optimizer results for CLI output.
+
+BUILD, THEN PRINT. The table cells, the verdict label, the trip headline, the
+totals rows, the trip notes and the residue rows are produced by builders
+(`leg_table_cells`, `trip_headline`, `trip_totals_rows`, `trip_notes`,
+`residue_rows`, ...) that return plain text plus a rich style, and every
+`print_*` below prints FROM them. The local UI (src/ui/) renders the same
+builders, so the page can never say something cleaner than the terminal: it is
+the terminal's own sentence. tests/test_cli_output_unchanged.py pins the bytes.
+"""
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from rich.console import Console
@@ -14,6 +24,79 @@ from src.optimizer import (
     VERDICT_INDIRECT_PATH,
     VERDICT_PARTY_NOT_PRICED,
 )
+
+
+# ---------------------------------------------------------------------------
+# Builder primitives: text + rich style, never parsed back out of text
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Seg:
+    """A run of text in one rich style ("" = unstyled). `esc` marks text the
+    terminal prints ESCAPED (it may contain square brackets rich would read as
+    markup) - the UI always shows `text` as-is."""
+
+    text: str
+    style: str = ""
+    esc: bool = False
+
+    def markup(self) -> str:
+        body = escape(self.text) if self.esc else self.text
+        return f"[{self.style}]{body}[/{self.style}]" if self.style else body
+
+    def to_json(self) -> Dict[str, str]:
+        return {"text": self.text, "style": self.style}
+
+
+def segs_markup(segs: List[Seg]) -> str:
+    return "".join(s.markup() for s in segs)
+
+
+def segs_text(segs: List[Seg]) -> str:
+    return "".join(s.text for s in segs)
+
+
+@dataclass
+class Cell:
+    """One table cell. `kind` is set from ENGINE FIELDS, never from the text."""
+
+    segments: List[Seg]
+    kind: str = "text"
+
+    @property
+    def text(self) -> str:
+        return segs_text(self.segments)
+
+    def markup(self) -> str:
+        return segs_markup(self.segments)
+
+    def to_json(self) -> Dict[str, object]:
+        return {"segments": [s.to_json() for s in self.segments], "kind": self.kind}
+
+
+@dataclass
+class Row:
+    """One two-column row (totals, residue): label and value, each styled."""
+
+    label: List[Seg]
+    value: List[Seg]
+    group: str = "totals"
+
+    def to_json(self) -> Dict[str, object]:
+        return {
+            "label": segs_text(self.label),
+            "value": segs_text(self.value),
+            "label_style": self.label[0].style if self.label else "",
+            "value_style": self.value[0].style if self.value else "",
+            "label_segments": [s.to_json() for s in self.label],
+            "value_segments": [s.to_json() for s in self.value],
+            "group": self.group,
+        }
+
+
+def _one(text: str, style: str = "") -> List[Seg]:
+    return [Seg(text, style)]
 
 
 def _taxes_are_what_is_unknown(r) -> bool:
@@ -175,6 +258,38 @@ def print_wallet_banner(
         console.print(f"[yellow]! {warning}[/yellow]")
 
 
+def print_alternatives_one(r: LegResult, console: Console) -> bool:
+    """One leg's same-metal block. Prints nothing and returns False when the
+    leg has no alternatives."""
+    if not r.alternatives:
+        return False
+    console.print(f"\n[bold cyan]{r.leg.id}[/bold cyan] - same-metal alternatives")
+    for alt in r.alternatives:
+        console.print(
+            f"  [magenta]{alt.program}[/magenta] on {alt.operating_carrier} metal "
+            f"- surcharge {alt.surcharge.render()}"
+            + (
+                f", saving ~{_money(alt.cash_saved_vs_best_usd)}"
+                if alt.cash_saved_vs_best_usd
+                else ""
+            )
+            + (f" {escape(alt.metal_label)}" if alt.metal_label else "")
+        )
+        if alt.break_even_points is not None:
+            console.print(
+                f"    [yellow]UNPRICED counterfactual:[/yellow] beats the option "
+                f"above if its award price is below "
+                f"{alt.break_even_points:,} points. NOT scored - go look it up."
+            )
+        if alt.partnership_assumed:
+            console.print(
+                "    [dim]Bookability inferred from alliance membership, not "
+                "from a verified partnership. Confirm before relying on it.[/dim]"
+            )
+        console.print(f"    [dim]{escape(alt.note)}[/dim]")
+    return True
+
+
 def print_alternatives(results: List[LegResult], console: Console = None) -> None:
     """
     "Same metal, cheaper program" blocks, indented under each leg.
@@ -186,33 +301,8 @@ def print_alternatives(results: List[LegResult], console: Console = None) -> Non
     console = console or Console()
     any_shown = False
     for r in results:
-        if not r.alternatives:
-            continue
-        any_shown = True
-        console.print(f"\n[bold cyan]{r.leg.id}[/bold cyan] - same-metal alternatives")
-        for alt in r.alternatives:
-            console.print(
-                f"  [magenta]{alt.program}[/magenta] on {alt.operating_carrier} metal "
-                f"- surcharge {alt.surcharge.render()}"
-                + (
-                    f", saving ~{_money(alt.cash_saved_vs_best_usd)}"
-                    if alt.cash_saved_vs_best_usd
-                    else ""
-                )
-                + (f" {escape(alt.metal_label)}" if alt.metal_label else "")
-            )
-            if alt.break_even_points is not None:
-                console.print(
-                    f"    [yellow]UNPRICED counterfactual:[/yellow] beats the option "
-                    f"above if its award price is below "
-                    f"{alt.break_even_points:,} points. NOT scored - go look it up."
-                )
-            if alt.partnership_assumed:
-                console.print(
-                    "    [dim]Bookability inferred from alliance membership, not "
-                    "from a verified partnership. Confirm before relying on it.[/dim]"
-                )
-            console.print(f"    [dim]{escape(alt.note)}[/dim]")
+        if print_alternatives_one(r, console):
+            any_shown = True
     if not any_shown:
         console.print(
             "\n[dim]No same-metal alternatives were found. An alternative requires a "
@@ -220,6 +310,32 @@ def print_alternatives(results: List[LegResult], console: Console = None) -> Non
             "that same metal; data/surcharges.csv currently covers each program on "
             "its OWN metal only.[/dim]"
         )
+
+
+def residue_rows(report: Dict[str, Dict]) -> List[List[Seg]]:
+    """Rows of the residue table: currency, starting, spent, remaining, note."""
+    rows: List[List[Seg]] = []
+    for currency, row in sorted(report.items()):
+        if row["unconstrained"]:
+            rows.append([
+                Seg(currency), Seg("unconstrained"), Seg(f"{row['spent']:,}"),
+                Seg("unconstrained"),
+                Seg("no balance supplied, so nothing can be reconciled"),
+            ])
+            continue
+        note = Seg("")
+        if row["overdrawn"]:
+            note = Seg("OVERDRAWN - this plan spends more than the balance", "red")
+        elif row["too_small_to_use"]:
+            note = Seg("left over but probably too small to fund anything", "yellow")
+        rows.append([
+            Seg(currency),
+            Seg(f"{row['starting']:,}"),
+            Seg(f"{row['spent']:,}"),
+            Seg(f"{row['remaining']:,}"),
+            note,
+        ])
+    return rows
 
 
 def print_residue_report(report: Dict[str, Dict], console: Console = None) -> None:
@@ -234,25 +350,8 @@ def print_residue_report(report: Dict[str, Dict], console: Console = None) -> No
     table.add_column("Remaining", justify="right")
     table.add_column("Note")
 
-    for currency, row in sorted(report.items()):
-        if row["unconstrained"]:
-            table.add_row(
-                currency, "unconstrained", f"{row['spent']:,}", "unconstrained",
-                "no balance supplied, so nothing can be reconciled",
-            )
-            continue
-        note = ""
-        if row["overdrawn"]:
-            note = "[red]OVERDRAWN - this plan spends more than the balance[/red]"
-        elif row["too_small_to_use"]:
-            note = "[yellow]left over but probably too small to fund anything[/yellow]"
-        table.add_row(
-            currency,
-            f"{row['starting']:,}",
-            f"{row['spent']:,}",
-            f"{row['remaining']:,}",
-            note,
-        )
+    for row in residue_rows(report):
+        table.add_row(*[s.markup() for s in row])
     console.print()
     console.print(table)
 
@@ -260,6 +359,214 @@ def print_residue_report(report: Dict[str, Dict], console: Console = None) -> No
 # ---------------------------------------------------------------------------
 # Leg-level reporting (cash vs points, head to head)
 # ---------------------------------------------------------------------------
+
+
+VERDICT_WORDS = {
+    "points": ("POINTS", "bold magenta"),
+    "cash": ("PAY CASH", "bold green"),
+    "cash (no points path)": ("PAY CASH (no path)", "bold green"),
+    "cash (points unpriced)": ("PAY CASH (pts unpriced)", "bold yellow"),
+    "cash (points blocked)": ("PAY CASH (pts blocked)", "bold yellow"),
+    # v3. Says NOTHING about award space - that is why it is separate
+    # from "no path", whose reason text is a claim about partnerships.
+    VERDICT_NO_LIVE_DATA: ("PAY CASH (no live pts data)", "bold yellow"),
+    # v3 fix, finding M-5. The response returned real awards and named
+    # no program for them. Also says nothing about partnerships.
+    VERDICT_AWARD_UNATTRIBUTED: ("PAY CASH (award unattributed)", "bold yellow"),
+    # A path exists in two hops (UR -> BA Avios -> combine). Not scored,
+    # and not "no path".
+    VERDICT_INDIRECT_PATH: ("PAY CASH (indirect, not scored)", "bold yellow"),
+    VERDICT_PARTY_NOT_PRICED: ("PAY CASH (party of N not priced)", "bold yellow"),
+    # WAY (10). A GOVERNMENT departure tax is owed and its size is not
+    # known, so the points side cannot be scored. Deliberately worded
+    # like the surcharge-unknown cell above and deliberately NOT the
+    # same cell: one is a carrier's YQ and this is HMRC's duty, and the
+    # whole point of keeping APD out of the surcharge table is that the
+    # reader can tell which of the two is missing.
+    VERDICT_APD_UNKNOWN: ("WITHHELD (APD unknown)", "bold red"),
+}
+
+
+def verdict_label(r: LegResult) -> List[Seg]:
+    """The verdict cell: the label, then any !SENSITIVE / !DATE tags."""
+    if r.verdict == "cash (surcharge unknown)":
+        word = (
+            ("WITHHELD (taxes unknown)", "bold red")
+            if _taxes_are_what_is_unknown(r)
+            else ("WITHHELD (surch unknown)", "bold red")
+        )
+    else:
+        word = VERDICT_WORDS[r.verdict]
+    if r.demoted_for_trip_balance:
+        # C-3: this leg WOULD have been points; the trip ran out of balance.
+        word = ("PAY CASH (trip out of points)", "bold yellow")
+    segs = [Seg(*word)]
+    if r.verdict_sensitive:
+        segs += [Seg(" "), Seg("!SENSITIVE", "yellow")]
+    if r.scored_off_date:
+        segs += [Seg(" "), Seg(f"!DATE {r.scoring_date}", "yellow")]
+    return segs
+
+
+def verdict_kind(r: LegResult) -> str:
+    """points | cash | cash_qualified | withheld - from the verdict CODE and the
+    demotion flag, never from the words. Every yellow CLI verdict is qualified."""
+    if r.demoted_for_trip_balance:
+        return "cash_qualified"
+    if r.verdict == "points":
+        return "points"
+    if r.verdict in ("cash (surcharge unknown)", VERDICT_APD_UNKNOWN):
+        return "withheld"
+    if r.verdict in ("cash", "cash (no points path)"):
+        return "cash"
+    return "cash_qualified"
+
+
+@dataclass
+class LegCells:
+    """The twelve cells of one per-leg table row."""
+
+    leg: Cell
+    what: Cell
+    cash: Cell
+    cash_pts: Cell
+    path: Cell
+    points: Cell
+    surcharge: Cell
+    surch_source: Cell
+    score_points: Cell
+    score_cash: Cell
+    provenance: Cell
+    verdict: Cell
+
+    ORDER = ("leg", "what", "cash", "cash_pts", "path", "points", "surcharge",
+             "surch_source", "score_points", "score_cash", "provenance", "verdict")
+
+    def row_markup(self) -> List[str]:
+        return [getattr(self, name).markup() for name in self.ORDER]
+
+    def to_json(self) -> Dict[str, object]:
+        return {name: getattr(self, name).to_json() for name in self.ORDER}
+
+
+def _path_cells(r: LegResult):
+    """(path Cell, points Cell) for the 'Best points path' and 'Points' columns."""
+    if r.best_points is not None and r.points_path:
+        t = r.points_path.transfers[0] if r.points_path.transfers else None
+        path_desc = f"{r.best_points.program} @ {t.ratio}" if t else r.best_points.program
+        return Cell([Seg(path_desc)], "path"), Cell([Seg(f"{r.points_required:,}")], "number")
+    if r.verdict == "cash (points blocked)":
+        return Cell([Seg("partner exists, path blocked")], "blocked"), Cell([Seg("-")], "none")
+    if r.break_even_programs:
+        return (
+            Cell([Seg(f"{r.break_even_programs[0]} (no price)")], "no_price"),
+            Cell([Seg(f"<{r.break_even_points:,}?")], "break_even_points"),
+        )
+    if r.verdict == VERDICT_INDIRECT_PATH:
+        # "none - not a partner" here would be false: UR reaches it in two
+        # hops. The cell names the program and says it was not scored.
+        _ind = min(
+            (c for c in r.leg.points_candidates
+             if getattr(c, "indirect_ur_path", "")),
+            key=lambda c: c.points,
+        )
+        return (
+            Cell([Seg(f"{_ind.program} (indirect, not scored)")], "indirect"),
+            Cell([Seg(f"{_ind.points:,}")], "number_not_scored"),
+        )
+    if r.verdict == VERDICT_PARTY_NOT_PRICED:
+        return (
+            Cell([Seg(f"priced for ONE seat - {r.leg.travelers} travelling")], "party"),
+            Cell([Seg("-")], "none"),
+        )
+    if r.verdict == VERDICT_AWARD_UNATTRIBUTED:
+        # The same falsehood on the unattributed path: the program is not
+        # NAMED, which says nothing about whether it is a partner.
+        return Cell([Seg("program NOT NAMED - no claim")], "unattributed"), Cell([Seg("-")], "none")
+    return Cell([Seg("none - not a partner")], "no_partner"), Cell([Seg("-")], "none")
+
+
+def _score_points_cell(r: LegResult) -> Cell:
+    if r.has_points_path and r.points_total_score_usd != float("inf"):
+        if r.verdict_sensitive:
+            return Cell([Seg(
+                f"{_money(r.points_score_low_usd)}-{_money(r.points_score_high_usd)}",
+                "yellow",
+            )], "range")
+        return Cell([Seg(_money(r.points_total_score_usd))], "number")
+    if r.surcharge_cannot_change_verdict and r.points_floor_usd is not None:
+        # The surcharge is unknown but INERT: points already lose at its $0
+        # floor. Show the floor, not a "$0.00 break-even" - that reads like a
+        # $0 surcharge, which is the exact confusion v1 exists to remove.
+        return Cell([Seg(f">= {_money(r.points_floor_usd)}")], "floor")
+    if r.break_even_surcharge_usd is not None:
+        # When the award's TAXES are what is unknown, the break-even is on
+        # taxes plus surcharge. "win if surch < $182" on a leg whose taxes
+        # were never reported reads as though the taxes were known to be $0.
+        _cand = r.best_points
+        _what = (
+            "taxes+surch"
+            if _cand is not None
+            and (
+                getattr(_cand, "taxes_unknown", False)
+                or getattr(_cand, "taxes_unconvertible", False)
+            )
+            else "surch"
+        )
+        return Cell([Seg(f"? (win if {_what} < {_money(r.break_even_surcharge_usd)})", "red")],
+                    "break_even")
+    return Cell([Seg("-")], "none")
+
+
+def leg_table_cells(r: LegResult) -> LegCells:
+    """One per-leg row. `print_leg_results` prints these; the UI renders them."""
+    path_cell, points_cell = _path_cells(r)
+
+    # SURCHARGE COLUMN. "UNKNOWN" is rendered as a word, never as a blank and
+    # never as $0.00. The whole point of v1 is that those are different.
+    if r.surcharge is None:
+        surch = Cell([Seg("-")], "none")
+        prov = Cell([Seg("-")], "none")
+    elif r.surcharge.is_known:
+        surch = Cell([Seg(r.surcharge.render())], "known")
+        prov = Cell([Seg(r.surcharge.confidence)], "known")
+    else:
+        surch = Cell([Seg("UNKNOWN", "bold red")], "unknown")
+        prov = Cell([Seg("unknown", "red")], "unknown")
+
+    # A LEG WITH NO PRICEABLE CASH HAS NO CASH NUMBER, and `r.cash_usd`'s
+    # default of 0.0 is not one. Before the L-1 fix this state was
+    # unreachable from the CLI (an unconvertible currency aborted the whole
+    # run), and reaching it now must not reintroduce `unknown -> $0` in the
+    # very column the tool exists to keep honest.
+    if r.best_cash is not None:
+        cash = Cell([Seg(_money(r.cash_usd))], "number")
+        cash_pts = Cell([Seg(f"{r.cash_as_points_equivalent:,}")], "number")
+    else:
+        cash = Cell([Seg("UNKNOWN", "bold red")], "unknown")
+        cash_pts = Cell([Seg("-")], "unknown")
+
+    score_cash = Cell(
+        [Seg(_money(r.cash_total_score_usd))],
+        "number" if r.cash_total_score_usd != float("inf") else "unavailable",
+    )
+    return LegCells(
+        leg=Cell([Seg(r.leg.id)]),
+        what=Cell([Seg(_short_label(r.leg))]),
+        cash=cash,
+        cash_pts=cash_pts,
+        path=path_cell,
+        points=points_cell,
+        surcharge=surch,
+        surch_source=prov,
+        score_points=_score_points_cell(r),
+        score_cash=score_cash,
+        provenance=Cell(
+            _points_provenance_segs(r) + [Seg(" | ")] + _cash_provenance_segs(r),
+            points_provenance_kind(r),
+        ),
+        verdict=Cell(verdict_label(r), verdict_kind(r)),
+    )
 
 
 def print_leg_results(
@@ -293,153 +600,33 @@ def print_leg_results(
     table.add_column("Verdict", style="bold", no_wrap=True)
 
     for r in results:
-        if r.best_points is not None and r.points_path:
-            t = r.points_path.transfers[0] if r.points_path.transfers else None
-            path_desc = (
-                f"{r.best_points.program} @ {t.ratio}" if t else r.best_points.program
-            )
-            pts = f"{r.points_required:,}"
-        elif r.verdict == "cash (points blocked)":
-            path_desc = "partner exists, path blocked"
-            pts = "-"
-        elif r.break_even_programs:
-            path_desc = f"{r.break_even_programs[0]} (no price)"
-            pts = f"<{r.break_even_points:,}?"
-        elif r.verdict == VERDICT_INDIRECT_PATH:
-            # "none - not a partner" here would be false: UR reaches it in two
-            # hops. The cell names the program and says it was not scored.
-            _ind = min(
-                (c for c in r.leg.points_candidates
-                 if getattr(c, "indirect_ur_path", "")),
-                key=lambda c: c.points,
-            )
-            path_desc = f"{_ind.program} (indirect, not scored)"
-            pts = f"{_ind.points:,}"
-        elif r.verdict == VERDICT_PARTY_NOT_PRICED:
-            path_desc = f"priced for ONE seat - {r.leg.travelers} travelling"
-            pts = "-"
-        elif r.verdict == VERDICT_AWARD_UNATTRIBUTED:
-            # The same falsehood on the unattributed path: the program is not
-            # NAMED, which says nothing about whether it is a partner.
-            path_desc = "program NOT NAMED - no claim"
-            pts = "-"
-        else:
-            path_desc = "none - not a partner"
-            pts = "-"
-
-        # SURCHARGE COLUMN. "UNKNOWN" is rendered as a word, never as a blank and
-        # never as $0.00. The whole point of v1 is that those are different.
-        if r.surcharge is None:
-            surch = "-"
-            prov = "-"
-        elif r.surcharge.is_known:
-            surch = r.surcharge.render()
-            prov = r.surcharge.confidence
-        else:
-            surch = "[bold red]UNKNOWN[/bold red]"
-            prov = "[red]unknown[/red]"
-
-        if r.has_points_path and r.points_total_score_usd != float("inf"):
-            pts_score = _money(r.points_total_score_usd)
-            if r.verdict_sensitive:
-                pts_score = (
-                    f"[yellow]{_money(r.points_score_low_usd)}-"
-                    f"{_money(r.points_score_high_usd)}[/yellow]"
-                )
-        elif r.surcharge_cannot_change_verdict and r.points_floor_usd is not None:
-            # The surcharge is unknown but INERT: points already lose at its $0
-            # floor. Show the floor, not a "$0.00 break-even" - that reads like a
-            # $0 surcharge, which is the exact confusion v1 exists to remove.
-            pts_score = f">= {_money(r.points_floor_usd)}"
-        elif r.break_even_surcharge_usd is not None:
-            # When the award's TAXES are what is unknown, the break-even is on
-            # taxes plus surcharge. "win if surch < $182" on a leg whose taxes
-            # were never reported reads as though the taxes were known to be $0.
-            _cand = r.best_points
-            _what = (
-                "taxes+surch"
-                if _cand is not None
-                and (
-                    getattr(_cand, "taxes_unknown", False)
-                    or getattr(_cand, "taxes_unconvertible", False)
-                )
-                else "surch"
-            )
-            pts_score = f"[red]? (win if {_what} < {_money(r.break_even_surcharge_usd)})[/red]"
-        else:
-            pts_score = "-"
-
-        verdict_style = {
-            "points": "[bold magenta]POINTS[/bold magenta]",
-            "cash": "[bold green]PAY CASH[/bold green]",
-            "cash (no points path)": "[bold green]PAY CASH (no path)[/bold green]",
-            "cash (points unpriced)": "[bold yellow]PAY CASH (pts unpriced)[/bold yellow]",
-            "cash (points blocked)": "[bold yellow]PAY CASH (pts blocked)[/bold yellow]",
-            "cash (surcharge unknown)": (
-                "[bold red]WITHHELD (taxes unknown)[/bold red]"
-                if _taxes_are_what_is_unknown(r)
-                else "[bold red]WITHHELD (surch unknown)[/bold red]"
-            ),
-            # v3. Says NOTHING about award space - that is why it is separate
-            # from "no path", whose reason text is a claim about partnerships.
-            VERDICT_NO_LIVE_DATA: "[bold yellow]PAY CASH (no live pts data)[/bold yellow]",
-            # v3 fix, finding M-5. The response returned real awards and named
-            # no program for them. Also says nothing about partnerships.
-            VERDICT_AWARD_UNATTRIBUTED:
-                "[bold yellow]PAY CASH (award unattributed)[/bold yellow]",
-            # A path exists in two hops (UR -> BA Avios -> combine). Not scored,
-            # and not "no path".
-            VERDICT_INDIRECT_PATH:
-                "[bold yellow]PAY CASH (indirect, not scored)[/bold yellow]",
-            VERDICT_PARTY_NOT_PRICED:
-                "[bold yellow]PAY CASH (party of N not priced)[/bold yellow]",
-            # WAY (10). A GOVERNMENT departure tax is owed and its size is not
-            # known, so the points side cannot be scored. Deliberately worded
-            # like the surcharge-unknown cell above and deliberately NOT the
-            # same cell: one is a carrier's YQ and this is HMRC's duty, and the
-            # whole point of keeping APD out of the surcharge table is that the
-            # reader can tell which of the two is missing.
-            VERDICT_APD_UNKNOWN: "[bold red]WITHHELD (APD unknown)[/bold red]",
-        }[r.verdict]
-        if r.demoted_for_trip_balance:
-            # C-3: this leg WOULD have been points; the trip ran out of balance.
-            verdict_style = "[bold yellow]PAY CASH (trip out of points)[/bold yellow]"
-        if r.verdict_sensitive:
-            verdict_style += " [yellow]!SENSITIVE[/yellow]"
-        if r.scored_off_date:
-            verdict_style += f" [yellow]!DATE {r.scoring_date}[/yellow]"
-
-        # A LEG WITH NO PRICEABLE CASH HAS NO CASH NUMBER, and `r.cash_usd`'s
-        # default of 0.0 is not one. Before the L-1 fix this state was
-        # unreachable from the CLI (an unconvertible currency aborted the whole
-        # run), and reaching it now must not reintroduce `unknown -> $0` in the
-        # very column the tool exists to keep honest.
-        cash_cell = _money(r.cash_usd) if r.best_cash is not None else (
-            "[bold red]UNKNOWN[/bold red]"
-        )
-        cash_pts_cell = (
-            f"{r.cash_as_points_equivalent:,}" if r.best_cash is not None else "-"
-        )
-
-        table.add_row(
-            r.leg.id,
-            _short_label(r.leg),
-            cash_cell,
-            cash_pts_cell,
-            path_desc,
-            pts,
-            surch,
-            prov,
-            pts_score,
-            _money(r.cash_total_score_usd),
-            f"{_points_provenance_cell(r)} | {_cash_provenance_cell(r)}",
-            verdict_style,
-        )
+        table.add_row(*leg_table_cells(r).row_markup())
 
     console.print(table)
 
 
-def _points_provenance_cell(r: LegResult) -> str:
+def points_provenance_kind(r: LegResult) -> str:
+    """live | snapshot | badge | no_space | api_failed | budget | unreadable | none,
+    from the engine's provenance and outcome state."""
+    prov = r.leg.points_provenance
+    outcome = r.leg.live_outcome
+    if prov is PointsProvenance.LIVE:
+        return "live"
+    if prov is PointsProvenance.SNAPSHOT:
+        return "snapshot"
+    if prov is PointsProvenance.BADGE_FALLBACK:
+        return "badge"
+    if outcome is not None:
+        return {
+            LiveQueryState.NO_AWARD_SPACE: "no_space",
+            LiveQueryState.API_ERROR: "api_failed",
+            LiveQueryState.BUDGET_EXHAUSTED: "budget",
+            LiveQueryState.ANSWERED_UNREADABLE: "unreadable",
+        }.get(outcome.state, "none")
+    return "none"
+
+
+def _points_provenance_segs(r: LegResult) -> List[Seg]:
     """
     The points side's provenance, and for an unavailable leg, WHY.
 
@@ -451,30 +638,34 @@ def _points_provenance_cell(r: LegResult) -> str:
     outcome = r.leg.live_outcome
 
     if prov is PointsProvenance.LIVE:
-        return "[bold green]live[/bold green]"
+        return [Seg("live", "bold green")]
     # A replayed leg's points came from committed bytes. It rendered as "none",
     # which is the word for a leg with NO points data - the opposite of the truth.
     if prov is PointsProvenance.SNAPSHOT:
-        return "[bold cyan]snapshot[/bold cyan]"
+        return [Seg("snapshot", "bold cyan")]
     if prov is PointsProvenance.BADGE_FALLBACK:
-        return "[yellow]badge[/yellow]"
+        return [Seg("badge", "yellow")]
 
     if outcome is not None:
         if outcome.state is LiveQueryState.NO_AWARD_SPACE:
-            return "[yellow]none: no award space[/yellow]"
+            return [Seg("none: no award space", "yellow")]
         if outcome.state is LiveQueryState.API_ERROR:
-            return "[bold red]none: API FAILED[/bold red]"
+            return [Seg("none: API FAILED", "bold red")]
         if outcome.state is LiveQueryState.BUDGET_EXHAUSTED:
-            return "[bold red]none: BUDGET[/bold red]"
+            return [Seg("none: BUDGET", "bold red")]
         if outcome.state is LiveQueryState.ANSWERED_UNREADABLE:
             # The sixth state gets its own words for the same reason the other
             # five do: an unreadable answer and an empty calendar must never
             # look alike, not even in a one-word table cell (finding C-1).
-            return "[bold red]none: UNREADABLE[/bold red]"
-    return "[dim]none[/dim]"
+            return [Seg("none: UNREADABLE", "bold red")]
+    return [Seg("none", "dim")]
 
 
-def _cash_provenance_cell(r: LegResult) -> str:
+def _points_provenance_cell(r: LegResult) -> str:
+    return segs_markup(_points_provenance_segs(r))
+
+
+def _cash_provenance_segs(r: LegResult) -> List[Seg]:
     """
     Where the cash price came from, and when.
 
@@ -485,12 +676,19 @@ def _cash_provenance_cell(r: LegResult) -> str:
     """
     provenance = r.leg.cash_provenance or "unknown"
     when = f" {r.leg.cash_captured_on}" if r.leg.cash_captured_on else ""
-    short = {
-        "captured_screenshot": "screenshot",
-        "captured_booking_page": "booking pg",
-        "unknown": "[yellow]unknown[/yellow]",
-    }.get(provenance, provenance)
-    return f"{short}{when}"
+    if provenance == "unknown":
+        segs = [Seg("unknown", "yellow")]
+    else:
+        short = {
+            "captured_screenshot": "screenshot",
+            "captured_booking_page": "booking pg",
+        }.get(provenance, provenance)
+        segs = [Seg(short)]
+    return segs + ([Seg(when)] if when else [])
+
+
+def _cash_provenance_cell(r: LegResult) -> str:
+    return segs_markup(_cash_provenance_segs(r))
 
 
 def print_leg_detail(results: List[LegResult], console: Console = None) -> None:
@@ -498,102 +696,122 @@ def print_leg_detail(results: List[LegResult], console: Console = None) -> None:
     console = console or Console()
     console.print("\n[bold]Per-leg detail[/bold]")
     for r in results:
-        console.print(f"\n[bold cyan]{r.leg.id}[/bold cyan] - {r.leg.description}")
-        console.print(f"  Verdict: [bold]{r.verdict.upper()}[/bold] - {r.verdict_reason}")
-        if r.best_cash:
-            console.print(f"  Cash: {r.best_cash.label}")
-            if r.best_cash.is_foreign:
-                console.print(
-                    f"        {r.best_cash.amount:,.2f} {r.best_cash.currency} "
-                    f"-> {_money(r.best_cash.amount_usd)} at the FX rate above "
-                    f"[yellow](rate unconfirmed)[/yellow]"
-                )
-            if r.best_cash.unavoidable_cash_note:
-                console.print(f"        [yellow]! {r.best_cash.unavoidable_cash_note}[/yellow]")
-        if r.mandatory_fees_usd:
+        print_leg_detail_one(r, console)
+
+
+def print_leg_detail_one(r: LegResult, console: Console) -> None:
+    """One leg's detail block (the loop body of `print_leg_detail`)."""
+    console.print(f"\n[bold cyan]{r.leg.id}[/bold cyan] - {r.leg.description}")
+    console.print(f"  Verdict: [bold]{r.verdict.upper()}[/bold] - {r.verdict_reason}")
+    if r.best_cash:
+        console.print(f"  Cash: {r.best_cash.label}")
+        if r.best_cash.is_foreign:
             console.print(
-                f"  [yellow]Mandatory fees: {_money(r.mandatory_fees_usd)} - owed "
-                f"whether you pay cash OR points, and included in BOTH totals.[/yellow]"
+                f"        {r.best_cash.amount:,.2f} {r.best_cash.currency} "
+                f"-> {_money(r.best_cash.amount_usd)} at the FX rate above "
+                f"[yellow](rate unconfirmed)[/yellow]"
             )
-        if r.best_points is not None and r.points_path:
-            console.print(f"  Points: {r.best_points.label}")
-            console.print(f"        {r.points_path.summary()}")
-            if r.funding_plan:
-                console.print(f"        spend: {r.funding_plan.spend_summary()}")
-            if r.points_path.stranded_points:
-                console.print(
-                    f"        stranded: {r.points_path.stranded_points:,} "
-                    f"(within the unavoidable transfer increment)"
+        if r.best_cash.unavoidable_cash_note:
+            console.print(f"        [yellow]! {r.best_cash.unavoidable_cash_note}[/yellow]")
+    if r.mandatory_fees_usd:
+        console.print(
+            f"  [yellow]Mandatory fees: {_money(r.mandatory_fees_usd)} - owed "
+            f"whether you pay cash OR points, and included in BOTH totals.[/yellow]"
+        )
+    if r.best_points is not None and r.points_path:
+        console.print(f"  Points: {r.best_points.label}")
+        console.print(f"        {r.points_path.summary()}")
+        if r.funding_plan:
+            console.print(f"        spend: {r.funding_plan.spend_summary()}")
+        if r.points_path.stranded_points:
+            console.print(
+                f"        stranded: {r.points_path.stranded_points:,} "
+                f"(within the unavoidable transfer increment)"
+            )
+        # The legacy line stays whenever it printed before: the lookup's
+        # lines are ADDED under it, never swapped in for what the scorer
+        # itself uses as the metal.
+        if r.best_points.operating_carrier:
+            console.print(
+                f"        metal: {r.best_points.operating_carrier} "
+                f"(source: {r.best_points.carrier_source}), "
+                f"cabin {r.best_points.cabin}"
+                + _trips_metal_label(r.best_points.carrier_source)
+            )
+        for line in metal_lines(r.best_points):
+            console.print(f"        {escape(line)}")
+    if r.surcharge is not None:
+        if r.surcharge.is_known:
+            console.print(
+                f"  Surcharge: {r.surcharge.render()} "
+                f"[{r.surcharge.confidence}]"
+                + (f" via {r.surcharge.matched_rule}" if r.surcharge.matched_rule else "")
+                # The rule is keyed by the looked-up metal when that is where
+                # the metal came from (R2-7).
+                + (
+                    _trips_metal_label(r.best_points.carrier_source)
+                    if r.best_points is not None
+                    else ""
                 )
-            # The legacy line stays whenever it printed before: the lookup's
-            # lines are ADDED under it, never swapped in for what the scorer
-            # itself uses as the metal.
-            if r.best_points.operating_carrier:
+            )
+            if r.surcharge.source:
+                console.print(f"        source: {r.surcharge.source}")
+            if r.surcharge.notes:
+                console.print(f"        [yellow]{escape(r.surcharge.notes)}[/yellow]")
+        else:
+            console.print(
+                "  [bold red]Surcharge: UNKNOWN - this is NOT $0.[/bold red]"
+            )
+            if r.break_even_surcharge_usd is not None:
                 console.print(
-                    f"        metal: {r.best_points.operating_carrier} "
-                    f"(source: {r.best_points.carrier_source}), "
-                    f"cabin {r.best_points.cabin}"
-                    + _trips_metal_label(r.best_points.carrier_source)
+                    f"        [red]Break-even: points beat cash only if "
+                    f"{_be_subject(r)} is below "
+                    f"{_money(r.break_even_surcharge_usd)}.[/red]"
                 )
-            for line in metal_lines(r.best_points):
-                console.print(f"        {escape(line)}")
-        if r.surcharge is not None:
-            if r.surcharge.is_known:
+            if r.surcharge.notes:
+                console.print(f"        [dim]{escape(r.surcharge.notes)}[/dim]")
+    if r.verdict == "points" or r.verdict.startswith("cash"):
+        if r.has_points_path:
+            if r.verdict == "points":
                 console.print(
-                    f"  Surcharge: {r.surcharge.render()} "
-                    f"[{r.surcharge.confidence}]"
-                    + (f" via {r.surcharge.matched_rule}" if r.surcharge.matched_rule else "")
-                    # The rule is keyed by the looked-up metal when that is where
-                    # the metal came from (R2-7).
-                    + (
-                        _trips_metal_label(r.best_points.carrier_source)
-                        if r.best_points is not None
-                        else ""
-                    )
+                    f"  Margin: points save {_money(r.margin_usd)} "
+                    f"({r.margin_pct:.1f}% of the cash price)"
                 )
-                if r.surcharge.source:
-                    console.print(f"        source: {r.surcharge.source}")
-                if r.surcharge.notes:
-                    console.print(f"        [yellow]{escape(r.surcharge.notes)}[/yellow]")
             else:
                 console.print(
-                    "  [bold red]Surcharge: UNKNOWN - this is NOT $0.[/bold red]"
+                    f"  Margin: points cost {_money(r.margin_usd)} MORE than cash "
+                    f"({r.margin_pct:.1f}% worse)"
                 )
-                if r.break_even_surcharge_usd is not None:
-                    console.print(
-                        f"        [red]Break-even: points beat cash only if "
-                        f"{_be_subject(r)} is below "
-                        f"{_money(r.break_even_surcharge_usd)}.[/red]"
-                    )
-                if r.surcharge.notes:
-                    console.print(f"        [dim]{escape(r.surcharge.notes)}[/dim]")
-        if r.verdict == "points" or r.verdict.startswith("cash"):
-            if r.has_points_path:
-                if r.verdict == "points":
-                    console.print(
-                        f"  Margin: points save {_money(r.margin_usd)} "
-                        f"({r.margin_pct:.1f}% of the cash price)"
-                    )
-                else:
-                    console.print(
-                        f"  Margin: points cost {_money(r.margin_usd)} MORE than cash "
-                        f"({r.margin_pct:.1f}% worse)"
-                    )
-        for note in r.leg.notes:
-            console.print(f"  [dim]note: {escape(note)}[/dim]")
-        for flag in r.leg.data_flags:
-            console.print(f"  [yellow]FLAG: {escape(flag)}[/yellow]")
-        # v5 STEP 7. The APD line gets its own prefix, not "UNVERIFIED:".
-        # An ADDED government tax is not an unverified claim - it is a rate read
-        # off gov.uk and applied - and printing it under the same word as an
-        # uncorroborated Google badge would flatten the difference between "we
-        # looked this up" and "somebody typed this".
-        for w in r.warnings:
-            if w.startswith("UK AIR PASSENGER DUTY on "):
-                style = "yellow" if "IT IS NOT ADDED HERE" in w or "UNKNOWN" in w else "cyan"
-                console.print(f"  [{style}]APD: {escape(w)}[/{style}]")
-                continue
-            console.print(f"  [red]UNVERIFIED: {escape(w)}[/red]")
+    for note in r.leg.notes:
+        console.print(f"  [dim]note: {escape(note)}[/dim]")
+    for flag in r.leg.data_flags:
+        console.print(f"  [yellow]FLAG: {escape(flag)}[/yellow]")
+    # v5 STEP 7. The APD line gets its own prefix, not "UNVERIFIED:".
+    # An ADDED government tax is not an unverified claim - it is a rate read
+    # off gov.uk and applied - and printing it under the same word as an
+    # uncorroborated Google badge would flatten the difference between "we
+    # looked this up" and "somebody typed this".
+    for prefix, w, style in leg_warning_lines(r):
+        console.print(f"  [{style}]{prefix}: {escape(w)}[/{style}]")
+
+
+def leg_warning_lines(r: LegResult) -> List[tuple]:
+    """(prefix, warning, style) for each of the leg's warnings, as printed.
+
+    v5 STEP 7. The APD line gets its own prefix, not "UNVERIFIED:". An ADDED
+    government tax is not an unverified claim - it is a rate read off gov.uk
+    and applied - and printing it under the same word as an uncorroborated
+    Google badge would flatten the difference between "we looked this up" and
+    "somebody typed this".
+    """
+    out = []
+    for w in r.warnings:
+        if w.startswith("UK AIR PASSENGER DUTY on "):
+            style = "yellow" if "IT IS NOT ADDED HERE" in w or "UNKNOWN" in w else "cyan"
+            out.append(("APD", w, style))
+            continue
+        out.append(("UNVERIFIED", w, "red"))
+    return out
 
 
 def print_live_banner(
@@ -735,34 +953,41 @@ def print_live_leg_detail(results: List[LegResult], console: Console = None) -> 
 
     console.print("\n[bold]Live award data, per leg[/bold]")
     for r in results:
-        outcome = r.leg.live_outcome
-        if outcome is None or outcome.state is LiveQueryState.NOT_QUERIED:
-            continue
+        print_live_leg_detail_one(r, console)
 
-        console.print(f"\n[bold cyan]{r.leg.id}[/bold cyan] {r.leg.description}")
-        style = "red" if outcome.is_api_failure else "white"
-        console.print(f"  [{style}]{outcome.render()}[/{style}]")
-        if outcome.pagination_note:
-            note_style = "red" if "INCOMPLETE" in outcome.pagination_note else "dim"
-            console.print(
-                f"  [{note_style}]coverage: {outcome.pagination_note}[/{note_style}]"
-            )
 
-        for line in supersession_lines(r.leg):
-            console.print(f"  [yellow]{line}[/yellow]")
+def print_live_leg_detail_one(r: LegResult, console: Console) -> bool:
+    """One leg's live block. Prints nothing (returns False) for a leg that was
+    not queried."""
+    outcome = r.leg.live_outcome
+    if outcome is None or outcome.state is LiveQueryState.NOT_QUERIED:
+        return False
 
-        if r.leg.date_shifted:
-            console.print(
-                f"  [bold yellow]DATE SHIFTED to {r.leg.date_shifted_to}: an "
-                f"off-date award was promoted because the fixture carries a "
-                f"CAPTURED cash price for that date. The comparison is therefore "
-                f"real, and the fact that the date moved is recorded here rather "
-                f"than lost.[/bold yellow]"
-            )
+    console.print(f"\n[bold cyan]{r.leg.id}[/bold cyan] {r.leg.description}")
+    style = "red" if outcome.is_api_failure else "white"
+    console.print(f"  [{style}]{outcome.render()}[/{style}]")
+    if outcome.pagination_note:
+        note_style = "red" if "INCOMPLETE" in outcome.pagination_note else "dim"
+        console.print(
+            f"  [{note_style}]coverage: {outcome.pagination_note}[/{note_style}]"
+        )
 
-        _print_live_scoring_block(r, console)
-        _print_other_lookups(r, console)
-        _print_flexible_findings(r, console)
+    for line in supersession_lines(r.leg):
+        console.print(f"  [yellow]{line}[/yellow]")
+
+    if r.leg.date_shifted:
+        console.print(
+            f"  [bold yellow]DATE SHIFTED to {r.leg.date_shifted_to}: an "
+            f"off-date award was promoted because the fixture carries a "
+            f"CAPTURED cash price for that date. The comparison is therefore "
+            f"real, and the fact that the date moved is recorded here rather "
+            f"than lost.[/bold yellow]"
+        )
+
+    _print_live_scoring_block(r, console)
+    _print_other_lookups(r, console)
+    _print_flexible_findings(r, console)
+    return True
 
 
 def _print_live_scoring_block(r: LegResult, console: Console) -> None:
@@ -945,64 +1170,81 @@ def _print_flexible_findings(r: LegResult, console: Console) -> None:
     )
 
 
-def print_trip_totals(
-    totals: Dict[str, float],
-    label: str = "Trip",
-    console: Console = None,
-    today=None,
-) -> None:
-    """Print the both-ways totals and the headline beat-cash percentage."""
-    console = console or Console()
+@dataclass
+class Headline:
+    """
+    The trip headline, as the terminal prints it, in pieces the UI can draw.
 
-    # THE BALANCE CEILING IS PRINTED FIRST, BEFORE ANY NUMBER (finding C-3).
-    #
-    # The overdraft used to appear in exactly one place: the residue table, in a
-    # column called "Note", which main.py prints AFTER this whole block. So a
-    # plan that spent 210,000 UR out of a 160,000 balance led with a clean
-    # 22.22% and mentioned the impossibility three tables later. A recommendation
-    # you cannot execute is not a recommendation, and the reader has to know that
-    # before they read the number, not after.
+    `text` + `suffix` is EXACTLY the CLI value cell ("2.04% - 11.03%" +
+    "  (badge)"); `qualifier` is the suffix without its two leading spaces. A
+    range or withheld headline carries NO single `pct`: the page cannot render
+    a number it never receives.
+    """
+
+    state: str  # single | range | withheld | not_fundable
+    text: str
+    suffix: str
+    label_segments: List[Seg]
+    value_segments: List[Seg]
+    pct: Optional[float] = None
+    pct_low: Optional[float] = None
+    pct_high: Optional[float] = None
+    low_row: Optional[Row] = None
+    high_row: Optional[Row] = None
+    reason_row: Optional[Row] = None
+    withheld_reason: Optional[str] = None
+    funding_note: Optional[str] = None
+    range_parts: List[Dict[str, object]] = field(default_factory=list)
+    provenance: str = "badge"
+    provenance_note: str = ""
+    provenance_style: str = "yellow"
+    legs_counted_text: str = ""
+    manifest_rows: List[Row] = field(default_factory=list)
+    hash_covers_margin: bool = False
+    manifest_hash: str = ""
+
+    @property
+    def qualifier(self) -> str:
+        return self.suffix.strip()
+
+    def to_json(self) -> Dict[str, object]:
+        def _row(r: Optional[Row]):
+            return None if r is None else {
+                "label": segs_text(r.label).strip(), "value": segs_text(r.value)}
+
+        return {
+            "state": self.state,
+            "pct": self.pct if self.state == "single" else None,
+            "pct_low": self.pct_low if self.state == "range" else None,
+            "pct_high": self.pct_high if self.state == "range" else None,
+            "text": self.text,
+            "qualifier": self.qualifier,
+            "cli_value": segs_text(self.value_segments),
+            "low_row": _row(self.low_row),
+            "high_row": _row(self.high_row),
+            "range_parts": list(self.range_parts),
+            "withheld_reason": self.withheld_reason,
+            "funding_note": self.funding_note,
+            "provenance": self.provenance,
+            "provenance_note": self.provenance_note,
+            "provenance_style": self.provenance_style,
+            "legs_counted_text": self.legs_counted_text,
+            "manifest_hash": self.manifest_hash or None,
+            "hash_covers_margin": self.hash_covers_margin,
+            "manifest_rows": [r.to_json() for r in self.manifest_rows],
+        }
+
+
+def trip_headline(totals: Dict) -> Headline:
+    """The headline rows of the totals table, and what the UI needs around them."""
     executable = totals.get("trip_funding_executable", True)
     funding_note = totals.get("trip_funding_note", "")
-    if not executable:
-        console.print(
-            f"\n[bold red]{'=' * 78}[/bold red]\n"
-            f"[bold red]THIS TRIP CANNOT BE FUNDED FROM YOUR BALANCE.[/bold red]\n"
-            f"[red]{funding_note}[/red]\n"
-            f"[red]The margin below is WITHHELD. Nothing is quoted for a plan the "
-            f"points do not exist for.[/red]\n"
-            f"[bold red]{'=' * 78}[/bold red]"
-        )
-    elif totals.get("trip_balance_bound"):
-        console.print(
-            f"\n[bold yellow]YOUR BALANCE IS THE BINDING CONSTRAINT ON THIS TRIP."
-            f"[/bold yellow]\n[yellow]{funding_note}[/yellow]"
-        )
 
-    table = Table(title=f"{label}: totals both ways")
-    table.add_column("Measure", style="cyan")
-    table.add_column("Value", justify="right")
-
-    table.add_row("Pay cash for everything", _money(totals["all_cash_usd"]))
-    if totals.get("margin_withheld_reason"):
-        # A trip withheld because legs were NOT PRICED has no recommendation
-        # total and no saving: printing them would report "could not price" as a
-        # dollar figure one row above the WITHHELD percentage.
-        table.add_row("Optimizer's recommendation", "[bold red]WITHHELD[/bold red]")
-        table.add_row("Saving", "[bold red]WITHHELD[/bold red]")
-    else:
-        table.add_row("Optimizer's recommendation", _money(totals["optimized_usd"]))
-        table.add_row("Saving", _money(totals["savings_usd"]))
-
-    # THE HEADLINE. When any surcharge on the trip is a range or an unknown, the
-    # honest headline is an INTERVAL. Printing the point estimate alone is what
-    # produced v0's 16%.
-    #
     # v3 RULE (plan section 4.7, rule 2): THE PERCENTAGE MAY NEVER BE PRINTED
-    # WITHOUT ITS PROVENANCE LINE. They are emitted by this one call so they
-    # cannot be separated by accident. A single number that hides its own
-    # provenance is worse than no number - and `--require-all-live` withholds
-    # the percentage entirely rather than let a mixed one be quoted.
+    # WITHOUT ITS PROVENANCE LINE. They are emitted by one call so they cannot
+    # be separated by accident. A single number that hides its own provenance
+    # is worse than no number - and `--require-all-live` withholds the
+    # percentage entirely rather than let a mixed one be quoted.
     provenance = totals.get("margin_provenance", "badge")
     provenance_note = totals.get("margin_provenance_note", "")
     withheld = bool(totals.get("margin_withheld"))
@@ -1047,72 +1289,104 @@ def print_trip_totals(
     # reads the same as before wherever the hash IS earned.
     hash_suffix = qualifier
 
+    h: Headline
     if not executable:
         # C-3: an unfundable plan gets no percentage at all. There is nothing to
         # qualify - the plan does not exist.
-        table.add_row(
-            "[bold red]Optimizer beats paying cash by[/bold red]",
-            "[bold red]WITHHELD - PLAN NOT FUNDABLE[/bold red]",
-        )
-        table.add_row(
-            "[red]  withheld because[/red]",
-            f"[red]{funding_note}[/red]",
+        h = Headline(
+            state="not_fundable",
+            text="WITHHELD - PLAN NOT FUNDABLE",
+            suffix="",
+            label_segments=_one("Optimizer beats paying cash by", "bold red"),
+            value_segments=_one("WITHHELD - PLAN NOT FUNDABLE", "bold red"),
+            reason_row=Row(_one("  withheld because", "red"), _one(f"{funding_note}", "red"),
+                           group="headline"),
+            funding_note=funding_note,
         )
     elif withheld:
-        table.add_row(
-            "[bold red]Optimizer beats paying cash by[/bold red]",
-            "[bold red]WITHHELD[/bold red]",
+        reason = totals.get("margin_withheld_reason") or (
+            "--require-all-live and provenance is " + repr(provenance)
         )
-        table.add_row(
-            "[red]  withheld because[/red]",
-            f"[red]{totals.get('margin_withheld_reason') or ('--require-all-live and provenance is ' + repr(provenance))}[/red]",
+        h = Headline(
+            state="withheld",
+            text="WITHHELD",
+            suffix="",
+            label_segments=_one("Optimizer beats paying cash by", "bold red"),
+            value_segments=_one("WITHHELD", "bold red"),
+            reason_row=Row(_one("  withheld because", "red"), _one(f"{reason}", "red"),
+                           group="headline"),
+            withheld_reason=reason,
         )
     elif totals.get("headline_is_a_range"):
-        table.add_row(
-            "[bold]Optimizer beats paying cash by[/bold]",
-            f"[bold]{totals['beat_cash_pct_low']:.2f}% - "
-            f"{totals['beat_cash_pct_high']:.2f}%{hash_suffix}[/bold]",
-        )
-        table.add_row(
-            "[dim]  low end = what is actually defensible[/dim]",
-            f"[dim]{totals['beat_cash_pct_low']:.2f}%{hash_suffix}[/dim]",
-        )
-        # MR5-1, WAY (10), the same sentence one row up from the caveat. This
-        # label names what the optimistic end ASSUMES AWAY, so on a run where
-        # part of that is an unknown departure tax it has to say so - naming
-        # only the surcharge is the identical falsehood the caveat had.
-        table.add_row(
-            "[dim]  high end = only if "
-            + " AND ".join(_high_end_assumptions(totals))
-            + "[/dim]",
-            f"[dim]{totals['beat_cash_pct_high']:.2f}%{hash_suffix}[/dim]",
+        low, high = totals["beat_cash_pct_low"], totals["beat_cash_pct_high"]
+        text = f"{low:.2f}% - {high:.2f}%"
+        h = Headline(
+            state="range",
+            text=text,
+            suffix=hash_suffix,
+            label_segments=_one("Optimizer beats paying cash by", "bold"),
+            value_segments=_one(f"{text}{hash_suffix}", "bold"),
+            pct_low=low,
+            pct_high=high,
+            low_row=Row(
+                _one("  low end = what is actually defensible", "dim"),
+                _one(f"{low:.2f}%{hash_suffix}", "dim"),
+                group="headline",
+            ),
+            # MR5-1, WAY (10), the same sentence one row up from the caveat. This
+            # label names what the optimistic end ASSUMES AWAY, so on a run where
+            # part of that is an unknown departure tax it has to say so - naming
+            # only the surcharge is the identical falsehood the caveat had.
+            high_row=Row(
+                _one("  high end = only if " + " AND ".join(_high_end_assumptions(totals)), "dim"),
+                _one(f"{high:.2f}%{hash_suffix}", "dim"),
+                group="headline",
+            ),
+            range_parts=_range_parts(totals),
         )
     else:
-        table.add_row(
-            "[bold]Optimizer beats paying cash by[/bold]",
-            f"[bold]{totals['beat_cash_pct']:.2f}%{hash_suffix}[/bold]",
+        pct = totals["beat_cash_pct"]
+        text = f"{pct:.2f}%"
+        h = Headline(
+            state="single",
+            text=text,
+            suffix=hash_suffix,
+            label_segments=_one("Optimizer beats paying cash by", "bold"),
+            value_segments=_one(f"{text}{hash_suffix}", "bold"),
+            pct=pct,
         )
 
+    h.provenance = provenance
+    h.provenance_note = provenance_note
+    h.manifest_hash = manifest_hash
+    h.hash_covers_margin = hash_covers_margin
     if manifest_hash:
         # Rows that carry NO percentage, so their length cannot wrap a number
         # away from its hash. C-2: when the margin did NOT come from these
         # bytes, this row says so in its own label - a reader who sees a hash
         # anywhere on the page must not have to work out what it covers.
-        table.add_row(
-            "[cyan]  replayed from manifest[/cyan]"
-            if hash_covers_margin
-            else "[bold yellow]  replayed from manifest (these bytes produced\n"
-            "NO part of the margin above)[/bold yellow]",
-            f"[cyan]{manifest_hash}[/cyan]"
-            if hash_covers_margin
-            else f"[bold yellow]{manifest_hash}[/bold yellow]",
-        )
-        table.add_row(
-            "[cyan]  snapshots / parser at capture / parser now[/cyan]",
-            f"[cyan]{int(totals.get('manifest_snapshots', 0))} / "
-            f"{totals.get('manifest_parser_at_capture', 'unknown')} / "
-            f"{totals.get('manifest_parser_now', 'unknown')}[/cyan]",
-        )
+        h.manifest_rows = [
+            Row(
+                _one("  replayed from manifest", "cyan")
+                if hash_covers_margin
+                else _one("  replayed from manifest (these bytes produced\n"
+                          "NO part of the margin above)", "bold yellow"),
+                _one(f"{manifest_hash}", "cyan")
+                if hash_covers_margin
+                else _one(f"{manifest_hash}", "bold yellow"),
+                group="manifest",
+            ),
+            Row(
+                _one("  snapshots / parser at capture / parser now", "cyan"),
+                _one(
+                    f"{int(totals.get('manifest_snapshots', 0))} / "
+                    f"{totals.get('manifest_parser_at_capture', 'unknown')} / "
+                    f"{totals.get('manifest_parser_now', 'unknown')}",
+                    "cyan",
+                ),
+                group="manifest",
+            ),
+        ]
 
     style = {
         "live": "green",
@@ -1122,36 +1396,114 @@ def print_trip_totals(
         "badge_fallback": "bold yellow",
         "none": "dim",
     }.get(provenance, "yellow")
-    table.add_row(
-        f"[{style}]  margin provenance[/{style}]",
-        f"[{style}]{provenance}[/{style}]",
-    )
+    h.provenance_style = style
     counted = int(totals.get("legs_points_live", 0))
     label = "live"
     if int(totals.get("legs_points_snapshot", 0)):
         counted = int(totals.get("legs_points_snapshot", 0)) + counted
         label = "live or replayed"
-    table.add_row(
-        f"[{style}]  {provenance_note}[/{style}]",
-        f"[{style}]{counted} of "
-        f"{int(totals.get('legs_flight_total', 0))} legs {label}[/{style}]",
+    h.legs_counted_text = (
+        f"{counted} of {int(totals.get('legs_flight_total', 0))} legs {label}"
     )
-    table.add_row("Points spent", f"{int(totals['points_spent']):,}")
+    return h
+
+
+def _range_parts(totals: Dict) -> List[Dict[str, object]]:
+    """What the range is made of, named from the SAME predicates the caveat
+    and the high-end label use - never from the text."""
+    parts: List[Dict[str, object]] = []
+    if _names_surcharge(totals):
+        parts.append({
+            "part": "surcharge",
+            "legs": list(totals.get("legs_surcharge_unknown_ids") or []),
+        })
+    if totals.get("legs_taxes_unknown"):
+        parts.append({"part": "award_taxes",
+                      "legs": list(totals.get("legs_taxes_unknown_ids") or [])})
+    if totals.get("legs_apd_unknown"):
+        parts.append({"part": "apd", "legs": list(totals.get("legs_apd_unknown_ids") or [])})
+    return parts
+
+
+def trip_funding_banner(totals: Dict) -> List[Seg]:
+    """
+    THE BALANCE CEILING IS PRINTED FIRST, BEFORE ANY NUMBER (finding C-3).
+
+    The overdraft used to appear in exactly one place: the residue table, in a
+    column called "Note", which main.py prints AFTER this whole block. So a
+    plan that spent 210,000 UR out of a 160,000 balance led with a clean
+    22.22% and mentioned the impossibility three tables later. A recommendation
+    you cannot execute is not a recommendation, and the reader has to know that
+    before they read the number, not after.
+
+    Returns the banner's lines (each one Seg), or [] when there is none.
+    """
+    executable = totals.get("trip_funding_executable", True)
+    funding_note = totals.get("trip_funding_note", "")
+    if not executable:
+        return [
+            Seg("=" * 78, "bold red"),
+            Seg("THIS TRIP CANNOT BE FUNDED FROM YOUR BALANCE.", "bold red"),
+            Seg(f"{funding_note}", "red"),
+            Seg("The margin below is WITHHELD. Nothing is quoted for a plan the "
+                "points do not exist for.", "red"),
+            Seg("=" * 78, "bold red"),
+        ]
+    if totals.get("trip_balance_bound"):
+        return [
+            Seg("YOUR BALANCE IS THE BINDING CONSTRAINT ON THIS TRIP.", "bold yellow"),
+            Seg(f"{funding_note}", "yellow"),
+        ]
+    return []
+
+
+def trip_totals_rows(totals: Dict) -> List[Row]:
+    """Every row of the totals table, in order, conditionals included. Each row
+    carries its `group`: totals | headline | manifest | provenance."""
+    rows: List[Row] = []
+    rows.append(Row(_one("Pay cash for everything"), _one(_money(totals["all_cash_usd"]))))
+    if totals.get("margin_withheld_reason"):
+        # A trip withheld because legs were NOT PRICED has no recommendation
+        # total and no saving: printing them would report "could not price" as a
+        # dollar figure one row above the WITHHELD percentage.
+        rows.append(Row(_one("Optimizer's recommendation"), _one("WITHHELD", "bold red")))
+        rows.append(Row(_one("Saving"), _one("WITHHELD", "bold red")))
+    else:
+        rows.append(Row(_one("Optimizer's recommendation"),
+                        _one(_money(totals["optimized_usd"]))))
+        rows.append(Row(_one("Saving"), _one(_money(totals["savings_usd"]))))
+
+    # THE HEADLINE. When any surcharge on the trip is a range or an unknown, the
+    # honest headline is an INTERVAL. Printing the point estimate alone is what
+    # produced v0's 16%.
+    h = trip_headline(totals)
+    rows.append(Row(h.label_segments, h.value_segments, group="headline"))
+    for extra in (h.reason_row, h.low_row, h.high_row):
+        if extra is not None:
+            rows.append(extra)
+    rows.extend(h.manifest_rows)
+
+    style = h.provenance_style
+    rows.append(Row(_one("  margin provenance", style), _one(f"{h.provenance}", style),
+                    group="provenance"))
+    rows.append(Row(_one(f"  {h.provenance_note}", style), _one(h.legs_counted_text, style),
+                    group="provenance"))
+    rows.append(Row(_one("Points spent"), _one(f"{int(totals['points_spent']):,}")))
     spend = totals.get("trip_points_spend") or {}
     if spend:
-        table.add_row(
-            "  drawn from",
-            ", ".join(f"{n:,} {c}" for c, n in sorted(spend.items())),
-        )
+        rows.append(Row(
+            _one("  drawn from"),
+            _one(", ".join(f"{n:,} {c}" for c, n in sorted(spend.items()))),
+        ))
     if totals.get("trip_legs_demoted_for_balance"):
-        table.add_row(
-            "[bold yellow]Legs that would win on points but the\n"
-            "balance cannot fund (scored as cash)[/bold yellow]",
-            f"[bold yellow]"
-            f"{', '.join(totals['trip_legs_demoted_for_balance'])}[/bold yellow]",
-        )
-    table.add_row("Cash still owed", _money(totals["cash_still_owed_usd"]))
-    table.add_row("Legs where points win", str(int(totals["legs_where_points_win"])))
+        rows.append(Row(
+            _one("Legs that would win on points but the\n"
+                 "balance cannot fund (scored as cash)", "bold yellow"),
+            _one(f"{', '.join(totals['trip_legs_demoted_for_balance'])}", "bold yellow"),
+        ))
+    rows.append(Row(_one("Cash still owed"), _one(_money(totals["cash_still_owed_usd"]))))
+    rows.append(Row(_one("Legs where points win"),
+                    _one(str(int(totals["legs_where_points_win"])))))
     # H-4: the never-priced legs are reported on their own row, so "NO UR path
     # at all" keeps meaning what it says.
     #
@@ -1166,79 +1518,76 @@ def print_trip_totals(
     # the footer both ask it. A derived count that can go negative is a count
     # nobody checked, so the derivation is gone rather than repaired.
     never_priced = int(totals.get("legs_never_priced", 0))
-    table.add_row(
-        "Legs with NO UR path at all",
-        str(int(totals["legs_no_partner"])),
-    )
+    rows.append(Row(_one("Legs with NO UR path at all"),
+                    _one(str(int(totals["legs_no_partner"])))))
     if never_priced:
-        table.add_row(
-            "[yellow]Legs whose points side was NEVER PRICED\n"
-            "(no award data - NOT a claim about partners)[/yellow]",
-            f"[yellow]{never_priced} "
-            f"({', '.join(totals.get('legs_never_priced_ids') or [])})[/yellow]",
-        )
-    table.add_row(
-        "Legs where a UR partner exists but no\naward price was captured",
-        str(int(totals.get("legs_points_unpriced", 0))),
-    )
+        rows.append(Row(
+            _one("Legs whose points side was NEVER PRICED\n"
+                 "(no award data - NOT a claim about partners)", "yellow"),
+            _one(f"{never_priced} "
+                 f"({', '.join(totals.get('legs_never_priced_ids') or [])})", "yellow"),
+        ))
+    rows.append(Row(
+        _one("Legs where a UR partner exists but no\naward price was captured"),
+        _one(str(int(totals.get("legs_points_unpriced", 0)))),
+    ))
     if totals.get("legs_points_blocked"):
-        table.add_row(
-            "Legs where a path exists but was\nblocked by balance/stranding",
-            str(int(totals["legs_points_blocked"])),
-        )
+        rows.append(Row(
+            _one("Legs where a path exists but was\nblocked by balance/stranding"),
+            _one(str(int(totals["legs_points_blocked"]))),
+        ))
     if totals.get("legs_surcharge_unknown"):
-        table.add_row(
-            "[red]Legs where a points path exists but its\n"
-            "surcharge is UNKNOWN (NOT $0)[/red]",
-            f"[red]{int(totals['legs_surcharge_unknown'])}[/red]",
-        )
+        rows.append(Row(
+            _one("Legs where a points path exists but its\n"
+                 "surcharge is UNKNOWN (NOT $0)", "red"),
+            _one(f"{int(totals['legs_surcharge_unknown'])}", "red"),
+        ))
     if totals.get("legs_party_pricing_unverified"):
-        table.add_row(
-            "[bold yellow]Flight legs for 2+ travellers - points NOT\n"
-            "scored (award prices are per seat)[/bold yellow]",
-            f"[bold yellow]{int(totals['legs_party_pricing_unverified'])} "
-            f"({', '.join(totals.get('legs_party_pricing_unverified_ids') or [])})"
-            f"[/bold yellow]",
-        )
+        rows.append(Row(
+            _one("Flight legs for 2+ travellers - points NOT\n"
+                 "scored (award prices are per seat)", "bold yellow"),
+            _one(f"{int(totals['legs_party_pricing_unverified'])} "
+                 f"({', '.join(totals.get('legs_party_pricing_unverified_ids') or [])})",
+                 "bold yellow"),
+        ))
     # Counted at trip level since v3 (way ten) and never PRINTED there - a
     # counter nobody sees is not an answer to "what does the trip do with it".
     if totals.get("legs_award_unattributed"):
-        table.add_row(
-            "[yellow]Legs carrying an award the response did NOT\n"
-            "attribute to a program - NOT scored, no claim[/yellow]",
-            f"[yellow]{int(totals['legs_award_unattributed'])} "
-            f"({', '.join(totals.get('legs_award_unattributed_ids') or [])})"
-            f"[/yellow]",
-        )
+        rows.append(Row(
+            _one("Legs carrying an award the response did NOT\n"
+                 "attribute to a program - NOT scored, no claim", "yellow"),
+            _one(f"{int(totals['legs_award_unattributed'])} "
+                 f"({', '.join(totals.get('legs_award_unattributed_ids') or [])})", "yellow"),
+        ))
     if totals.get("legs_indirect_path_unverified"):
-        table.add_row(
-            "[yellow]Legs with an award reachable only INDIRECTLY\n"
-            "(UR -> BA Avios -> combine) - NOT scored[/yellow]",
-            f"[yellow]{int(totals['legs_indirect_path_unverified'])} "
-            f"({', '.join(totals.get('legs_indirect_path_unverified_ids') or [])})"
-            f"[/yellow]",
-        )
+        rows.append(Row(
+            _one("Legs with an award reachable only INDIRECTLY\n"
+                 "(UR -> BA Avios -> combine) - NOT scored", "yellow"),
+            _one(f"{int(totals['legs_indirect_path_unverified'])} "
+                 f"({', '.join(totals.get('legs_indirect_path_unverified_ids') or [])})",
+                 "yellow"),
+        ))
     if totals.get("legs_metal_lookup_missing"):
-        table.add_row(
-            "[yellow]Legs whose operating airline was NOT LOOKED UP\n"
-            "(or NOT RECORDED) - nothing known about the metal[/yellow]",
-            f"[yellow]{int(totals['legs_metal_lookup_missing'])} "
-            f"({', '.join(totals.get('legs_metal_lookup_missing_ids') or [])})[/yellow]",
-        )
+        rows.append(Row(
+            _one("Legs whose operating airline was NOT LOOKED UP\n"
+                 "(or NOT RECORDED) - nothing known about the metal", "yellow"),
+            _one(f"{int(totals['legs_metal_lookup_missing'])} "
+                 f"({', '.join(totals.get('legs_metal_lookup_missing_ids') or [])})", "yellow"),
+        ))
     if totals.get("legs_metal_unknown"):
-        table.add_row(
-            "[yellow]Legs whose operating airline is NOT KNOWN\n"
-            "(looked up, metal not settled)[/yellow]",
-            f"[yellow]{int(totals['legs_metal_unknown'])} "
-            f"({', '.join(totals.get('legs_metal_unknown_ids') or [])})[/yellow]",
-        )
+        rows.append(Row(
+            _one("Legs whose operating airline is NOT KNOWN\n"
+                 "(looked up, metal not settled)", "yellow"),
+            _one(f"{int(totals['legs_metal_unknown'])} "
+                 f"({', '.join(totals.get('legs_metal_unknown_ids') or [])})", "yellow"),
+        ))
     if totals.get("legs_taxes_unknown"):
-        table.add_row(
-            "[red]Legs where the award's TAXES are UNKNOWN\n"
-            "(NOT $0) - the leg is not scored[/red]",
-            f"[red]{int(totals['legs_taxes_unknown'])} "
-            f"({', '.join(totals.get('legs_taxes_unknown_ids') or [])})[/red]",
-        )
+        rows.append(Row(
+            _one("Legs where the award's TAXES are UNKNOWN\n"
+                 "(NOT $0) - the leg is not scored", "red"),
+            _one(f"{int(totals['legs_taxes_unknown'])} "
+                 f"({', '.join(totals.get('legs_taxes_unknown_ids') or [])})", "red"),
+        ))
     # MR5-1, WAY (10). The leg line has always said this; the trip block said
     # nothing, and the trip block is where the number Tsuki quotes comes from.
     # An owed duty of unknown size is a real dollar missing from the points
@@ -1247,88 +1596,118 @@ def print_trip_totals(
     # different quantities with different payers and the reader must be able to
     # tell which one is missing.
     if totals.get("legs_apd_unknown"):
-        table.add_row(
-            "[red]Legs where UK APD is OWED but its amount\n"
-            "is UNKNOWN (NOT $0)[/red]",
-            f"[red]{int(totals['legs_apd_unknown'])} "
-            f"({', '.join(totals.get('legs_apd_unknown_ids') or [])})[/red]",
-        )
+        rows.append(Row(
+            _one("Legs where UK APD is OWED but its amount\n"
+                 "is UNKNOWN (NOT $0)", "red"),
+            _one(f"{int(totals['legs_apd_unknown'])} "
+                 f"({', '.join(totals.get('legs_apd_unknown_ids') or [])})", "red"),
+        ))
     # The amount IS known here and excluding it is defensible - the cash figure
     # came from Seats.aero's TotalTaxes and nobody has checked whether it
     # already contains the duty, so adding it could double-charge. That is a
     # decision, not an oversight, and it stays. But a tax the headline left out
     # must not be INVISIBLE at trip level, which is what it was.
     if totals.get("legs_apd_unverified"):
-        table.add_row(
-            "[yellow]Legs carrying UK APD that is STATED but NOT\n"
-            "ADDED (unverified whether the fare includes it)[/yellow]",
-            f"[yellow]{int(totals['legs_apd_unverified'])} "
-            f"({', '.join(totals.get('legs_apd_unverified_ids') or [])})[/yellow]",
-        )
+        rows.append(Row(
+            _one("Legs carrying UK APD that is STATED but NOT\n"
+                 "ADDED (unverified whether the fare includes it)", "yellow"),
+            _one(f"{int(totals['legs_apd_unverified'])} "
+                 f"({', '.join(totals.get('legs_apd_unverified_ids') or [])})", "yellow"),
+        ))
     if totals.get("legs_verdict_sensitive"):
-        table.add_row(
-            "[yellow]Legs whose verdict FLIPS inside the\n"
-            "surcharge estimate's own range[/yellow]",
-            f"[yellow]{int(totals['legs_verdict_sensitive'])}[/yellow]",
-        )
+        rows.append(Row(
+            _one("Legs whose verdict FLIPS inside the\n"
+                 "surcharge estimate's own range", "yellow"),
+            _one(f"{int(totals['legs_verdict_sensitive'])}", "yellow"),
+        ))
 
     if totals.get("legs_unpriceable"):
-        table.add_row(
-            "[bold red]Legs EXCLUDED from both totals because nothing\n"
-            "on them could be priced (NOT counted as $0)[/bold red]",
-            f"[bold red]{int(totals['legs_unpriceable'])} "
-            f"({', '.join(totals.get('legs_unpriceable_ids') or [])})[/bold red]",
-        )
+        rows.append(Row(
+            _one("Legs EXCLUDED from both totals because nothing\n"
+                 "on them could be priced (NOT counted as $0)", "bold red"),
+            _one(f"{int(totals['legs_unpriceable'])} "
+                 f"({', '.join(totals.get('legs_unpriceable_ids') or [])})", "bold red"),
+        ))
     if totals.get("legs_api_error"):
-        table.add_row(
-            "[bold red]Flight legs where Seats.aero was NEVER REACHED\n"
-            "(this says NOTHING about award space)[/bold red]",
-            f"[bold red]{int(totals['legs_api_error'])} "
-            f"({', '.join(totals.get('legs_api_error_ids') or [])})[/bold red]",
-        )
+        rows.append(Row(
+            _one("Flight legs where Seats.aero was NEVER REACHED\n"
+                 "(this says NOTHING about award space)", "bold red"),
+            _one(f"{int(totals['legs_api_error'])} "
+                 f"({', '.join(totals.get('legs_api_error_ids') or [])})", "bold red"),
+        ))
     if totals.get("legs_no_award_space"):
-        table.add_row(
-            "[yellow]Flight legs where Seats.aero ANSWERED with no\n"
-            "award space (this IS a finding)[/yellow]",
-            f"[yellow]{int(totals['legs_no_award_space'])} "
-            f"({', '.join(totals.get('legs_no_award_space_ids') or [])})[/yellow]",
-        )
+        rows.append(Row(
+            _one("Flight legs where Seats.aero ANSWERED with no\n"
+                 "award space (this IS a finding)", "yellow"),
+            _one(f"{int(totals['legs_no_award_space'])} "
+                 f"({', '.join(totals.get('legs_no_award_space_ids') or [])})", "yellow"),
+        ))
     if totals.get("legs_budget_exhausted"):
-        table.add_row(
-            "[bold red]Flight legs never queried because the daily\n"
-            "call budget ran out (NOT a finding)[/bold red]",
-            f"[bold red]{int(totals['legs_budget_exhausted'])} "
-            f"({', '.join(totals.get('legs_budget_exhausted_ids') or [])})[/bold red]",
-        )
+        rows.append(Row(
+            _one("Flight legs never queried because the daily\n"
+                 "call budget ran out (NOT a finding)", "bold red"),
+            _one(f"{int(totals['legs_budget_exhausted'])} "
+                 f"({', '.join(totals.get('legs_budget_exhausted_ids') or [])})", "bold red"),
+        ))
+    return rows
 
-    console.print(table)
 
+@dataclass
+class NoteLine:
+    """One line printed after the totals table: styled segments, in order."""
+
+    segments: List[Seg]
+    blank_before: bool = False
+    # What kind of line this is, from the totals keys that produced it.
+    topic: str = ""
+
+    def markup(self) -> str:
+        return ("\n" if self.blank_before else "") + segs_markup(self.segments)
+
+    @property
+    def text(self) -> str:
+        return segs_text(self.segments)
+
+    def to_json(self) -> Dict[str, object]:
+        return {
+            "text": self.text,
+            "style": self.segments[0].style if self.segments else "",
+            "segments": [s.to_json() for s in self.segments],
+            "topic": self.topic,
+        }
+
+
+def trip_notes(totals: Dict, today=None) -> List[NoteLine]:
+    """Every line printed after the totals table, in order."""
+    notes: List[NoteLine] = []
     if totals.get("margin_withheld") and totals.get("margin_withheld_reason"):
-        console.print(
-            f"\n[bold red]THE TRIP MARGIN IS WITHHELD.[/bold red] "
-            f"{totals['margin_withheld_reason']}. A total that leaves those legs "
-            f"out would report 'could not price' as a saving of zero. Per-leg "
-            f"results above are unaffected."
-        )
+        notes.append(NoteLine([
+            Seg("THE TRIP MARGIN IS WITHHELD.", "bold red"),
+            Seg(f" {totals['margin_withheld_reason']}. A total that leaves those legs "
+                f"out would report 'could not price' as a saving of zero. Per-leg "
+                f"results above are unaffected."),
+        ], blank_before=True, topic="withheld"))
     elif totals.get("margin_withheld"):
-        console.print(
-            f"\n[bold red]THE TRIP MARGIN IS WITHHELD.[/bold red] --require-all-live "
-            f"was passed and the margin's provenance is "
-            f"'{totals.get('margin_provenance')}', not 'live'. "
-            f"{totals.get('margin_provenance_note', '')} Per-leg results above are "
-            f"unaffected and remain valid. Re-run without --require-all-live to "
-            f"see the mixed-provenance number, clearly labelled as mixed."
-        )
+        notes.append(NoteLine([
+            Seg("THE TRIP MARGIN IS WITHHELD.", "bold red"),
+            Seg(f" --require-all-live "
+                f"was passed and the margin's provenance is "
+                f"'{totals.get('margin_provenance')}', not 'live'. "
+                f"{totals.get('margin_provenance_note', '')} Per-leg results above are "
+                f"unaffected and remain valid. Re-run without --require-all-live to "
+                f"see the mixed-provenance number, clearly labelled as mixed."),
+        ], blank_before=True, topic="withheld"))
     elif totals.get("margin_provenance") == "mixed":
-        console.print(
-            f"\n[bold yellow]THIS MARGIN MIXES LIVE AND BADGE-DERIVED LEGS.[/bold yellow] "
-            f"{totals.get('margin_provenance_note', '')} Do not quote it as a live "
-            f"number. Run with --require-all-live if you need one that can be."
-        )
+        notes.append(NoteLine([
+            Seg("THIS MARGIN MIXES LIVE AND BADGE-DERIVED LEGS.", "bold yellow"),
+            Seg(f" {totals.get('margin_provenance_note', '')} Do not quote it as a live "
+                f"number. Run with --require-all-live if you need one that can be."),
+        ], blank_before=True, topic="mixed"))
     elif totals.get("margin_provenance") == "badge":
-        console.print(
-            f"\n[yellow]{totals.get('margin_provenance_note', '')}[/yellow]"
-        )
+        notes.append(NoteLine(
+            [Seg(f"{totals.get('margin_provenance_note', '')}", "yellow")],
+            blank_before=True, topic="badge",
+        ))
 
     if totals.get("headline_is_a_range") and not totals.get("margin_withheld"):
         # MR5-1, WAY (10). This sentence used to say the spread was carrier
@@ -1367,59 +1746,82 @@ def print_trip_totals(
                 "those award taxes turn out to be nothing beyond any UK Air "
                 "Passenger Duty already counted, which they will not be"
             )
-        console.print(
-            "\n[bold yellow]The headline above is a RANGE and must not be quoted as "
-            f"a single number.[/bold yellow] The spread is {what}"
-            ". The low end is what the tool can defend today; the "
-            f"high end assumes {assumption}, which is "
-            # CARRIED FORWARD: no version numbers in user-facing output. The
-            # reader is being told what the high end depends on, and "an
-            # earlier version of this tool got it wrong" is a fact about the
-            # tool's history, not about their trip. The WARNING survives; the
-            # changelog does not.
-            "the assumption that turns an unknown into a saving that is not there."
-        )
+        notes.append(NoteLine([
+            Seg("The headline above is a RANGE and must not be quoted as "
+                "a single number.", "bold yellow"),
+            Seg(f" The spread is {what}"
+                ". The low end is what the tool can defend today; the "
+                f"high end assumes {assumption}, which is "
+                # CARRIED FORWARD: no version numbers in user-facing output. The
+                # reader is being told what the high end depends on, and "an
+                # earlier version of this tool got it wrong" is a fact about the
+                # tool's history, not about their trip. The WARNING survives; the
+                # changelog does not.
+                "the assumption that turns an unknown into a saving that is not there."),
+        ], blank_before=True, topic="range_caveat"))
     missing = list(totals.get("legs_metal_lookup_missing_ids") or [])
     not_recorded = list(totals.get("legs_metal_not_recorded_ids") or [])
     not_looked_up = [leg for leg in missing if leg not in not_recorded]
     if not_looked_up:
-        console.print(
-            f"[yellow]operating airline NOT LOOKED UP on {', '.join(not_looked_up)}: "
+        notes.append(NoteLine([Seg(
+            f"operating airline NOT LOOKED UP on {', '.join(not_looked_up)}: "
             f"nothing is known about which airline flies the chosen award there; "
-            f"each leg's line says why.[/yellow]"
-        )
+            f"each leg's line says why.", "yellow")], topic="metal_not_looked_up"))
     if not_recorded:
-        console.print(
-            f"[yellow]operating airline NOT RECORDED on {', '.join(not_recorded)}: "
-            f"this replay holds no itinerary lookup for the chosen award there.[/yellow]"
-        )
+        notes.append(NoteLine([Seg(
+            f"operating airline NOT RECORDED on {', '.join(not_recorded)}: "
+            f"this replay holds no itinerary lookup for the chosen award there.",
+            "yellow")], topic="metal_not_recorded"))
     if totals.get("legs_metal_unknown_ids"):
-        console.print(
-            f"[yellow]operating airline NOT KNOWN on "
+        notes.append(NoteLine([Seg(
+            f"operating airline NOT KNOWN on "
             f"{', '.join(totals['legs_metal_unknown_ids'])}: a lookup was made and did "
-            f"not settle one carrier set.[/yellow]"
-        )
+            f"not settle one carrier set.", "yellow")], topic="metal_unknown"))
     if totals.get("legs_verdict_sensitive_ids"):
-        console.print(
-            f"[bold yellow]VERDICT SENSITIVE: "
+        notes.append(NoteLine([Seg(
+            f"VERDICT SENSITIVE: "
             f"{', '.join(totals['legs_verdict_sensitive_ids'])} reverse inside their "
-            f"own surcharge range. Do not treat these as settled.[/bold yellow]"
-        )
+            f"own surcharge range. Do not treat these as settled.", "bold yellow")],
+            topic="sensitive"))
     if totals.get("rests_on_placeholder_fx"):
-        console.print(
-            "[bold yellow]At least one total above rests on an FX rate with NO "
-            "SOURCE. Supply one with --fx to clear the marker.[/bold yellow]"
-        )
+        notes.append(NoteLine([Seg(
+            "At least one total above rests on an FX rate with NO "
+            "SOURCE. Supply one with --fx to clear the marker.", "bold yellow")],
+            topic="fx_placeholder"))
     # A rate that WAS looked up, but a month ago. Every total above that touched
     # it inherits the staleness, exactly as a placeholder total does.
     stale = config.stale_currencies(today)
     if stale:
-        console.print(
-            f"[bold yellow]STALE RATE: {', '.join(stale)} were sourced more than "
+        notes.append(NoteLine([Seg(
+            f"STALE RATE: {', '.join(stale)} were sourced more than "
             f"{config.FX_STALE_AFTER_DAYS} days ago. EVERY TOTAL ABOVE THAT USED "
             f"THEM IS MARKED STALE. Re-source them, or supply one with --fx "
-            f"{stale[0]}=<rate>.[/bold yellow]"
-        )
+            f"{stale[0]}=<rate>.", "bold yellow")], topic="fx_stale"))
+    return notes
+
+
+def print_trip_totals(
+    totals: Dict[str, float],
+    label: str = "Trip",
+    console: Console = None,
+    today=None,
+) -> None:
+    """Print the both-ways totals and the headline beat-cash percentage."""
+    console = console or Console()
+
+    banner = trip_funding_banner(totals)
+    if banner:
+        console.print("\n" + "\n".join(s.markup() for s in banner))
+
+    table = Table(title=f"{label}: totals both ways")
+    table.add_column("Measure", style="cyan")
+    table.add_column("Value", justify="right")
+    for row in trip_totals_rows(totals):
+        table.add_row(segs_markup(row.label), segs_markup(row.value))
+    console.print(table)
+
+    for note in trip_notes(totals, today):
+        console.print(note.markup())
 
 
 # ---------------------------------------------------------------------------

@@ -359,27 +359,8 @@ def optimize(
                 continue
 
             points_cost = path.total_points_cost
-            # An award whose taxes could not be converted to USD contributes
-            # 0.0 here, which would silently understate it. Flag it rather than
-            # let it pass as a total: this is the same failure shape as v0's
-            # phantom $0 surcharge.
-            # MR-5: the getattr FALLBACK was `True` as well - a second copy of
-            # the unsafe default, which would have survived flipping the field.
-            # An object that cannot say whether it knows does not know.
-            cash_known = getattr(award, "cash_component_known", False)
-            below_duty = _search_taxes_below_owed_uk_duty(trip, award) if cash_known else ""
-            if below_duty:
-                # The trip path's rule, applied here too: a UK-departure tax
-                # figure below the duty it must contain is incomplete.
-                cash_known = False
-            cash_cost = award.cash_component if cash_known else 0.0
-            total_value = points_cost * valuation_cpp + cash_cost
-            apd_floor = 0.0 if cash_known else _search_uk_duty_floor(trip, award)
-            if apd_floor:
-                # An UNKNOWN cash side still has a known floor on a UK departure:
-                # the duty is owed on the ticket. The displayed ">=" total is a
-                # floor, and a floor that leaves out a certain tax is not one.
-                total_value += apd_floor
+            cash_known, cash_cost, cash_note, apd_floor = search_award_cash(trip, award)
+            total_value = points_cost * valuation_cpp + cash_cost + apd_floor
 
             strategy = Strategy(
                 award=award,
@@ -388,21 +369,7 @@ def optimize(
                 cash_cost=cash_cost,
                 total_value=total_value,
                 cash_cost_known=cash_known,
-                cash_cost_note=(
-                    ""
-                    if cash_known
-                    else (
-                        below_duty
-                        or getattr(award, "cash_component_note", "")
-                        or "The cash component of this award is unknown."
-                    )
-                    + (
-                        f" The total shown is a FLOOR that includes UK Air "
-                        f"Passenger Duty of ${apd_floor:,.2f}, owed on this ticket."
-                        if apd_floor
-                        else ""
-                    )
-                ),
+                cash_cost_note=cash_note,
             )
 
             # DEDUPLICATION USES THE RANKING RULE, not the raw total. Comparing
@@ -428,6 +395,52 @@ def optimize(
     # follow, ordered by points only, and are printed as UNKNOWN - never $0.
     results.sort(key=_strategy_rank)
     return results[:max_results]
+
+
+def search_award_cash(trip, award) -> Tuple[bool, float, str, float]:
+    """
+    (known, cash_usd, note, apd_floor) for one single-route search award.
+
+    The tax-trust rules of the search path, in ONE place: `optimize()` calls it
+    for every award it can fund, and the local UI calls it for the awards it
+    cannot, so every search cell - fundable or not - goes through the same
+    rules. `cash_usd` is 0.0 when `known` is False and MUST NOT be shown as a
+    number then: the unknown is carried by `known` and `note`.
+    """
+    # An award whose taxes could not be converted to USD contributes 0.0 to a
+    # total, which would silently understate it. Flag it rather than let it
+    # pass as a total: this is the same failure shape as v0's phantom $0
+    # surcharge.
+    # MR-5: the getattr FALLBACK was `True` as well - a second copy of the
+    # unsafe default, which would have survived flipping the field. An object
+    # that cannot say whether it knows does not know.
+    cash_known = getattr(award, "cash_component_known", False)
+    below_duty = _search_taxes_below_owed_uk_duty(trip, award) if cash_known else ""
+    if below_duty:
+        # The trip path's rule, applied here too: a UK-departure tax figure
+        # below the duty it must contain is incomplete.
+        cash_known = False
+    cash_cost = award.cash_component if cash_known else 0.0
+    # An UNKNOWN cash side still has a known floor on a UK departure: the duty
+    # is owed on the ticket. The displayed ">=" total is a floor, and a floor
+    # that leaves out a certain tax is not one.
+    apd_floor = 0.0 if cash_known else _search_uk_duty_floor(trip, award)
+    note = (
+        ""
+        if cash_known
+        else (
+            below_duty
+            or getattr(award, "cash_component_note", "")
+            or "The cash component of this award is unknown."
+        )
+        + (
+            f" The total shown is a FLOOR that includes UK Air "
+            f"Passenger Duty of ${apd_floor:,.2f}, owed on this ticket."
+            if apd_floor
+            else ""
+        )
+    )
+    return cash_known, cash_cost, note, apd_floor
 
 
 def _strategy_rank(s: "Strategy"):

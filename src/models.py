@@ -2936,6 +2936,13 @@ class MetalLookup:
             f"({', '.join(self.row_carriers)}) cannot be detected."
         )
 
+    @property
+    def parser_label_text(self) -> str:
+        """The UNVERIFIED parser label exactly as `render()` appends it to this
+        line, or "" when it appends none. The local UI reads this to decide
+        whether the UNVERIFIED tag belongs on the metal line."""
+        return self._parser_clause().strip()
+
     def _parser_clause(self) -> str:
         parse_derived = self.status in (
             MetalStatus.KNOWN,
