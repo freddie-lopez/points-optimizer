@@ -989,7 +989,7 @@ def metal_pass(
                 leg_id=leg.id,
                 trip_id=opts.trip_id,
                 award_date=str(award.date),
-                route=str(award.route or ""),
+                route=str(award.route or "").replace("-", "->", 1),
             )
             if getattr(entry, "request_sent", False):
                 state["sent"] += 1

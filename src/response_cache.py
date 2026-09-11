@@ -74,6 +74,35 @@ number somebody quoted, and changing one byte of one snapshot always does.
 """
 
 
+# THE TRIPS MANIFEST. Same column layout as the search manifest, so
+# `snapshot_replay.parse_manifest`, `select_replay_set` and `verify` - every
+# tamper, missing-file and zero-page check - read it unchanged.
+_TRIPS_MANIFEST_HEADER = """# Seats.aero trips-endpoint snapshot manifest
+
+Every row is one itinerary lookup (GET /partnerapi/trips/{availability id}). The
+columns are the search manifest's, reused so the same replay checks apply:
+`route` holds `trips:<availability id>`, `dates` the award's date, `rows` the
+number of itineraries in the response's `data` list (`n/a` when it is not a
+list), and `awards` the number of itineraries the trips parser could read.
+`state` is one of trips_readable, trips_unreadable, trips_empty,
+trips_incomplete or trips_shape_error. An HTTP error, a timeout, a spent budget
+or a body that is not JSON is never archived, so it never has a row.
+
+THE PROSE ABOVE THIS TABLE IS NOT HASHED. A replay's manifest hash covers these
+rows' snapshot CONTENT, and only when at least one trips row is selected.
+
+| fetched_at (UTC) | leg | route | dates | rows | awards | state | snapshot | content_hash | parser_version | trip_id |
+| --- | --- | --- | --- | ---: | ---: | --- | --- | --- | --- | --- |
+"""
+
+# The subdirectories the trips endpoint uses, under the cache and snapshot
+# directories. Kept apart because the search corpus globs `*.json` at its top
+# level, and the search parser would read a trips `data` list as unreadable
+# availability rows.
+TRIPS_CACHE_SUBDIR = "trips"
+TRIPS_SNAPSHOT_SUBDIR = "trips_endpoint"
+
+
 class CacheCorrupt(ValueError):
     """A cache file exists but cannot be read as an envelope."""
 
@@ -260,7 +289,9 @@ _ALLOWED_META_KEYS = frozenset(
 )
 
 
-def assert_no_key_material(text: str, where: str = "payload") -> None:
+def assert_no_key_material(
+    text: str, where: str = "payload", key: Optional[str] = None
+) -> None:
     """
     Refuse to write anything containing the live API key.
 
@@ -270,13 +301,20 @@ def assert_no_key_material(text: str, where: str = "payload") -> None:
     tree rather than here, because response bodies legitimately contain long
     opaque IDs and blocking those would block every write.
     """
-    key = os.getenv("SEATS_AERO_KEY") or ""
-    if key and key in text:
+    env_key = os.getenv("SEATS_AERO_KEY") or ""
+    if env_key and env_key in text:
         raise ValueError(
             f"REFUSING TO WRITE {where}: it contains the value of SEATS_AERO_KEY. "
             f"The Partner-Authorization header is not part of the cache key, is "
             f"not stored in _meta, and must never reach a file that gets "
             f"committed as a fixture."
+        )
+    # A key supplied some other way - `--api-key`, a .env file - is not in the
+    # environment, so the caller that resolved it passes it here explicitly.
+    if key and key in text:
+        raise ValueError(
+            f"REFUSING TO WRITE {where}: it contains the Seats.aero key this run "
+            f"resolved. Key material must never reach a file that gets committed."
         )
     if "Partner-Authorization" in text:
         raise ValueError(
@@ -323,6 +361,9 @@ class ResponseCache:
     # was skipped. Never raised - a bad cache file must degrade to a miss, never
     # to a crash and never to a silent empty result.
     warnings: List[str] = field(default_factory=list)
+    # "search" or "trips". Decides the snapshot name, the manifest header and
+    # the manifest's route/dates columns. Get a trips cache from `for_trips()`.
+    endpoint: str = "search"
 
     def __post_init__(self) -> None:
         self.cache_dir = Path(self.cache_dir)
@@ -331,6 +372,26 @@ class ResponseCache:
         # would put that distinction back where MR5-4 found it.
         if self.snapshot_dir is not None:
             self.snapshot_dir = Path(self.snapshot_dir)
+
+    def for_trips(self) -> "ResponseCache":
+        """
+        The same cache for the trips endpoint: `cache_dir/trips/` and
+        `snapshot_dir/trips_endpoint/` (or no archive, if this one has none),
+        sharing this cache's TTL and its warnings list.
+        """
+        if self.endpoint == "trips":
+            return self
+        return ResponseCache(
+            cache_dir=self.cache_dir / TRIPS_CACHE_SUBDIR,
+            snapshot_dir=(
+                self.snapshot_dir / TRIPS_SNAPSHOT_SUBDIR
+                if self.snapshot_dir is not None
+                else None
+            ),
+            ttl_seconds=self.ttl_seconds,
+            warnings=self.warnings,
+            endpoint="trips",
+        )
 
     @property
     def archives(self) -> bool:
@@ -436,14 +497,31 @@ class ResponseCache:
         meta: Optional[Dict[str, Any]] = None,
         *,
         now: Optional[datetime] = None,
+        secret: Optional[str] = None,
     ) -> CachedResponse:
         """
         Write the cache entry AND the snapshot AND the manifest row. One event.
 
         Returns the CachedResponse that was written, so a caller that just
         fetched has the same object shape as a caller that hit the cache.
+
+        `secret` is the key the caller resolved, if it may not be in the
+        environment (a key passed by flag); every write refuses to contain it.
         """
         meta = dict(meta or {})
+        endpoint = str(meta.get("endpoint") or "search")
+        # Trips envelopes say which endpoint and which lookup they are. Search
+        # envelopes are left exactly as they were.
+        endpoint_meta: Dict[str, Any] = (
+            {
+                "endpoint": endpoint,
+                "availability_id": meta.get("availability_id"),
+                "award_date": meta.get("award_date"),
+                "route": meta.get("route"),
+            }
+            if endpoint != "search"
+            else {}
+        )
         # Truncated to whole seconds because that is the resolution the envelope
         # stores. Without this, a fresh write reports a fetched_at with
         # microseconds that the very next cache hit cannot reproduce, and
@@ -455,9 +533,7 @@ class ResponseCache:
             "_meta": {
                 "cache_schema": CACHE_SCHEMA,
                 "request": dict(request),
-                "canonical_request": canonical_request(
-                    str(meta.get("endpoint") or "search"), request
-                ),
+                "canonical_request": canonical_request(endpoint, request),
                 "request_key": key,
                 "content_hash": content_hash(pages),
                 "fetched_at": _iso(fetched_at),
@@ -479,13 +555,17 @@ class ResponseCache:
                 # a reparse silently changes the award count and the reader has
                 # no way to know it happened. Imported lazily because
                 # seats_client imports this module.
-                "parser_version": _parser_version(),
+                # A caller's own parser version wins (the trips endpoint has
+                # its own), so a search snapshot never reads as REPARSED because
+                # a different parser changed.
+                "parser_version": str(meta.get("parser_version") or _parser_version()),
                 "key_note": (
                     "The partner auth header is not part of the request key, is "
                     "not written to this file, and is not recoverable from it."
                 ),
                 "leg_id": meta.get("leg_id"),
                 "trip_id": meta.get("trip_id"),
+                **endpoint_meta,
                 "state": meta.get("state", ""),
                 "awards_parsed": meta.get("awards_parsed"),
                 "rows_seen": meta.get("rows_seen"),
@@ -505,13 +585,15 @@ class ResponseCache:
         assert_persists_provenance(envelope["_meta"], where="a Seats.aero cache entry")
 
         text = json.dumps(envelope, indent=2, sort_keys=False)
-        assert_no_key_material(text, where="a Seats.aero cache entry")
+        assert_no_key_material(text, where="a Seats.aero cache entry", key=secret)
 
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         cache_path = self.path_for(key)
         cache_path.write_text(text + "\n")
 
-        snapshot_path = self._archive_snapshot(envelope, text, request, meta, fetched_at)
+        snapshot_path = self._archive_snapshot(
+            envelope, text, request, meta, fetched_at, secret=secret
+        )
         envelope["_meta"]["snapshot"] = snapshot_path.name if snapshot_path else None
         # The manifest row this fetch wrote, identified by its own timestamp so a
         # later identical re-fetch cannot claim it (finding L-8).
@@ -520,7 +602,7 @@ class ResponseCache:
         # cache hit cannot say which committed fixture holds the same bytes, and
         # the manifest stops being able to join the two on a later run.
         text = json.dumps(envelope, indent=2, sort_keys=False)
-        assert_no_key_material(text, where="a Seats.aero cache entry")
+        assert_no_key_material(text, where="a Seats.aero cache entry", key=secret)
         cache_path.write_text(text + "\n")
 
         return CachedResponse(
@@ -537,10 +619,14 @@ class ResponseCache:
         self, request: Dict[str, Any], meta: Dict[str, Any], fetched_at: datetime
     ) -> str:
         leg = str(meta.get("leg_id") or "adhoc")
+        stamp = fetched_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%MZ")
+        if self.endpoint == "trips":
+            aid = str(request.get("availability_id") or "noid")
+            safe = re.sub(r"[^A-Za-z0-9_.-]", "-", f"{leg}_trips_{aid}_{stamp}")
+            return f"{safe}.json"
         origin = str(request.get("origin_airport") or "???")
         destination = str(request.get("destination_airport") or "???")
         start = str(request.get("start_date") or "nodate")
-        stamp = fetched_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%MZ")
         safe = re.sub(r"[^A-Za-z0-9_.-]", "-", f"{leg}_{origin}_{destination}_{start}_{stamp}")
         return f"{safe}.json"
 
@@ -551,6 +637,7 @@ class ResponseCache:
         request: Dict[str, Any],
         meta: Dict[str, Any],
         fetched_at: datetime,
+        secret: Optional[str] = None,
     ) -> Optional[Path]:
         """
         Archive the response as a browsable fixture, deduplicated by content.
@@ -590,7 +677,7 @@ class ResponseCache:
         # with the content hash rather than dropping either.
         if path.exists():
             path = path.with_name(f"{path.stem}_{digest[:8]}.json")
-        assert_no_key_material(text, where=f"snapshot {path.name}")
+        assert_no_key_material(text, where=f"snapshot {path.name}", key=secret)
         path.write_text(text + "\n")
         self._append_manifest(request, meta, fetched_at, path, duplicate=False)
         return path
@@ -615,12 +702,20 @@ class ResponseCache:
     ) -> None:
         path = self.manifest_path
         if not path.exists():
-            path.write_text(_MANIFEST_HEADER)
-        route = (
-            f"{request.get('origin_airport', '?')}->"
-            f"{request.get('destination_airport', '?')}"
-        )
-        dates = f"{request.get('start_date', '?')}..{request.get('end_date', '?')}"
+            path.write_text(
+                _TRIPS_MANIFEST_HEADER if self.endpoint == "trips" else _MANIFEST_HEADER
+            )
+        if self.endpoint == "trips":
+            route = f"trips:{request.get('availability_id', '?')}"
+            dates = str(meta.get("award_date") or "?")
+            if meta.get("rows_seen") is None:
+                meta = {**meta, "rows_seen": "n/a"}
+        else:
+            route = (
+                f"{request.get('origin_airport', '?')}->"
+                f"{request.get('destination_airport', '?')}"
+            )
+            dates = f"{request.get('start_date', '?')}..{request.get('end_date', '?')}"
         note = f"{snapshot.name}" + (" (re-fetch, identical)" if duplicate else "")
         # v5 STEP 2. The content hash written here is RECOMPUTED FROM THE PAGES,
         # not copied out of `_meta`. That makes the column an independent second

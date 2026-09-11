@@ -1415,6 +1415,46 @@ class SeatsClient:
             )
         request = {"availability_id": availability_id, **seats_trips.TRIPS_REQUEST_PARAMS}
         key = response_cache.request_key("trips", request)
+        tcache = cache.for_trips() if cache is not None else None
+
+        if tcache is not None and not refresh:
+            hit = tcache.get(key, ttl=cache_ttl)
+            if hit is not None and len(hit.pages) != 1:
+                tcache.warnings.append(
+                    f"Trips cache file {hit.path.name} holds {len(hit.pages)} pages; "
+                    f"a trips response is exactly one. Treated as a MISS and "
+                    f"re-fetched. The file is left in place."
+                )
+            elif hit is not None:
+                payload = hit.pages[0]
+                # WAY (9): the stored coverage and the coverage recomputed from
+                # the bytes, unioned - neither can answer "complete" for the other.
+                stored = response_cache.provenance_from_meta(hit.meta)
+                recomputed, recomputed_why = seats_trips.trips_coverage(payload)
+                incomplete = bool(stored.get("incomplete")) or recomputed
+                reasons = [
+                    r
+                    for r in (str(stored.get("incomplete_reason") or ""), recomputed_why)
+                    if r
+                ]
+                return RawTripsResult(
+                    payload=payload,
+                    http_status=hit.http_status,
+                    served_from_cache=True,
+                    fetched_at=hit.fetched_at,
+                    request=request,
+                    request_key=key,
+                    snapshot_name=hit.meta.get("snapshot"),
+                    manifest_key="",
+                    incomplete=incomplete,
+                    incomplete_reason=(
+                        "; ".join(reasons)
+                        or "the cached response is INCOMPLETE and records no reason."
+                    )
+                    if incomplete
+                    else "",
+                    request_sent=False,
+                )
 
         if self._budget_remaining() <= 0:
             raise TripsLookupError(
@@ -1476,7 +1516,7 @@ class SeatsClient:
             ) from e
         text = getattr(response, "text", "")
         incomplete, why = seats_trips.trips_coverage(payload)
-        return RawTripsResult(
+        result = RawTripsResult(
             payload=payload,
             http_status=status,
             served_from_cache=False,
@@ -1488,6 +1528,43 @@ class SeatsClient:
             raw_text=text if isinstance(text, str) else "",
             request_sent=True,
         )
+        # A 2xx is archived WHATEVER its shape: a wrong-shaped answer is still
+        # the answer, and it must parse to the same named unknown on every read.
+        # Failures above raised before reaching here, so none is ever cached.
+        if tcache is not None:
+            data = payload.get("data") if isinstance(payload, dict) else None
+            try:
+                written = tcache.put(
+                    key,
+                    request,
+                    [payload],
+                    meta={
+                        "endpoint": "trips",
+                        "parser_version": seats_trips.TRIPS_PARSER_VERSION,
+                        "http_status": status,
+                        "pagination_note": why,
+                        "leg_id": leg_id,
+                        "trip_id": trip_id,
+                        "availability_id": availability_id,
+                        "award_date": award_date,
+                        "route": route,
+                        "rows_seen": len(data) if isinstance(data, list) else None,
+                        **response_cache.provenance_meta(result),
+                    },
+                    secret=self.api_key,
+                )
+            except (OSError, ValueError) as e:
+                tcache.warnings.append(
+                    f"COULD NOT ARCHIVE the trips response for {availability_id} "
+                    f"({type(e).__name__}: {e}). The response arrived and IS being "
+                    f"used; it is not in the cache or the snapshot corpus, so this "
+                    f"lookup is not reproducible from disk."
+                )
+            else:
+                result.fetched_at = written.fetched_at
+                result.snapshot_name = written.meta.get("snapshot")
+                result.manifest_key = str(written.meta.get("manifest_key") or "")
+        return result
 
     @staticmethod
     def parse_pages_detail(pages: List[Dict[str, Any]]) -> "ParsedPages":
