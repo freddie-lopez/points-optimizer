@@ -19,8 +19,11 @@ TRANSFER = {"transfer_date": "2026-09-15"}
 @pytest.fixture
 def pinned(monkeypatch):
     """The goldens' pinned date and clock, so a UI transcript can be compared
-    with a golden byte for byte."""
+    with a golden byte for byte - and a fresh daily call counter, as a freshly
+    launched app has."""
     from src import response_cache, seats_client, seats_trips
+
+    seats_client.SeatsClient.reset_call_budget()
 
     monkeypatch.setattr(config, "date", g._PinnedDate)
     monkeypatch.setattr(response_cache, "_utcnow", lambda: g.PINNED_NOW)
@@ -123,3 +126,213 @@ def test_bad_options_are_refused_before_any_argv_exists(client, options, field):
 
 def test_an_unknown_mode_is_400(client):
     assert client.post("/api/trips/trip_b_europe/run", {"mode": "fast"}).status == 400
+
+
+# ------------------------------------------------------------ LIVE / REPLAY
+#
+# The transport is the goldens' Stub (synthetic Trip B awards, VS19 on B4),
+# patched at `requests.get` exactly where the CLI's client calls it. Snapshots
+# and cache go to conftest's tmp directories.
+
+from unittest.mock import patch  # noqa: E402
+
+LIVE = {"mode": "live", "options": {**TRANSFER, "trips": "auto", "trips_cap": 10}}
+
+
+@pytest.fixture
+def live_client(tmp_path, pinned, monkeypatch):
+    monkeypatch.setenv(config.KEY_ENV_VAR, g.FAKE_KEY)
+    stub = g.Stub()
+    wallet = write_wallet(tmp_path / "wallet.json")
+    trips = copy_trips(tmp_path / "trips", names=["trip_b_europe.json"])
+    with patch("src.seats_client.requests.get", side_effect=stub):
+        with running_server(wallet_path=wallet, trips_dir=trips) as c:
+            c.stub = stub
+            c.trips_dir = trips
+            yield c
+
+
+def test_live_preflight_states_the_true_ceiling(live_client):
+    pf = live_client.post("/api/trips/trip_b_europe/preflight", LIVE).json()
+    assert pf["max_calls"] == 4 * 25 + 10
+    assert pf["breakdown"] == {"flight_legs": 4, "pages_per_search": 25, "lookup_cap": 10}
+    assert pf["confirm_id"] and pf["blocked"] is None
+    assert "--live --trips auto --trips-cap 10" in pf["argv_display"]
+    off = dict(LIVE, options={**LIVE["options"], "trips": "off"})
+    assert live_client.post("/api/trips/trip_b_europe/preflight", off).json()["max_calls"] == 100
+    assert live_client.stub.calls == []
+
+
+def test_live_without_a_confirm_spends_nothing(live_client):
+    r = live_client.post("/api/trips/trip_b_europe/run", LIVE)
+    assert r.status == 409 and r.json()["error"] == "confirm_required"
+    r = live_client.post("/api/trips/trip_b_europe/run", dict(LIVE, confirm_id="forged"))
+    assert r.status == 409 and r.json()["error"] == "confirm_required"
+    assert live_client.stub.calls == []
+
+
+def test_live_with_a_confirm_reports_exactly_the_calls_it_made(live_client):
+    pf = live_client.post("/api/trips/trip_b_europe/preflight", LIVE).json()
+    run = live_client.post("/api/trips/trip_b_europe/run",
+                           dict(LIVE, confirm_id=pf["confirm_id"])).json()
+    stub = live_client.stub
+    assert run["calls"]["this_run"] == {"search": stub.search_calls, "trips": stub.trips_calls}
+    assert (stub.search_calls, stub.trips_calls) == (4, 1)
+    assert run["calls"]["since_launch"] == 5
+    assert run["mode"] == "live" and run["exit_code"] == 0
+    assert run["headline"]["qualifier"] == "(live)"
+    # The confirm is single use.
+    again = live_client.post("/api/trips/trip_b_europe/run", dict(LIVE, confirm_id=pf["confirm_id"]))
+    assert again.status == 409 and again.json()["error"] == "confirm_required"
+    assert stub.search_calls == 4
+
+
+def test_the_live_transcript_matches_golden_g4_apart_from_key_line_and_paths(
+    live_client, monkeypatch
+):
+    # The relocation variables are conftest's, for CHILD processes; the goldens
+    # were recorded without them (see tests/_cli_golden.py).
+    for var in ("POINTS_OPTIMIZER_ENV_FILE", "POINTS_OPTIMIZER_CACHE_DIR",
+                "POINTS_OPTIMIZER_SNAPSHOT_DIR"):
+        monkeypatch.delenv(var, raising=False)
+    pf = live_client.post("/api/trips/trip_b_europe/preflight", LIVE).json()
+    run = live_client.post("/api/trips/trip_b_europe/run",
+                           dict(LIVE, confirm_id=pf["confirm_id"])).json()
+    masked, _ = g.normalize(run["transcript"])
+    want = _golden_body("G4").splitlines()
+    got = masked.splitlines()
+    import difflib
+
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=want, b=got, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        if tag == "insert":
+            # The UI always passes --show-alternatives (G4 did not): its block.
+            assert got[j1].startswith("No same-metal alternatives were found."), got[j1:j2]
+            continue
+        assert tag == "replace" and i2 - i1 == j2 - j1, (want[i1:i2], got[j1:j2])
+        for a, b in zip(want[i1:i2], got[j1:j2]):
+            if a.startswith("Seats.aero key: "):
+                assert b == ("Seats.aero key: (masked key not sent to the browser)   "
+                             "(source: environment)")
+            else:
+                assert a.startswith(("  snapshots: ", "  manifest:  ")), (a, b)
+
+
+def test_a_changed_fixture_between_confirm_and_run_is_stale(live_client):
+    pf = live_client.post("/api/trips/trip_b_europe/preflight", LIVE).json()
+    path = live_client.trips_dir / "trip_b_europe.json"
+    path.write_text(path.read_text() + "\n")  # one byte more; nothing semantic
+    r = live_client.post("/api/trips/trip_b_europe/run", dict(LIVE, confirm_id=pf["confirm_id"]))
+    assert r.status == 409
+    assert r.json() == {"error": "confirm_stale",
+                        "message": "The trip or options changed since you confirmed. Confirm again."}
+    assert live_client.stub.calls == []
+
+
+def test_changed_options_between_confirm_and_run_are_stale(live_client):
+    pf = live_client.post("/api/trips/trip_b_europe/preflight", LIVE).json()
+    other = {"mode": "live", "options": {**LIVE["options"], "trips_cap": 50}}
+    r = live_client.post("/api/trips/trip_b_europe/run", dict(other, confirm_id=pf["confirm_id"]))
+    assert r.json()["error"] == "confirm_stale"
+    assert live_client.stub.calls == []
+
+
+def test_one_run_at_a_time(live_client):
+    engine = live_client.srv.engine
+    engine._lock.acquire()
+    try:
+        r = live_client.post("/api/trips/trip_b_europe/run",
+                             {"mode": "offline", "options": TRANSFER})
+    finally:
+        engine._lock.release()
+    assert r.status == 409
+    assert r.json()["message"] == (
+        "Another run is in progress. One run at a time: the call counter and caches are shared.")
+
+
+def test_each_run_starts_with_an_empty_in_process_cache(live_client):
+    from src.seats_client import SeatsClient
+
+    for _ in range(2):
+        pf = live_client.post("/api/trips/trip_b_europe/preflight", LIVE).json()
+        live_client.post("/api/trips/trip_b_europe/run", dict(LIVE, confirm_id=pf["confirm_id"]))
+    # The second run was answered by the DISK cache (6h), never by the stale
+    # in-process one: every leg says where its bytes came from.
+    assert live_client.stub.search_calls == 4
+    SeatsClient.CACHE["poison"] = []
+    refresh = {"mode": "live", "options": {**LIVE["options"], "refresh": True}}
+    pf = live_client.post("/api/trips/trip_b_europe/preflight", refresh).json()
+    run = live_client.post("/api/trips/trip_b_europe/run", dict(refresh, confirm_id=pf["confirm_id"])).json()
+    assert "poison" not in SeatsClient.CACHE
+    assert run["calls"]["this_run"]["search"] == 4
+    assert live_client.stub.search_calls == 8
+
+
+def test_the_ceiling_holds_against_a_paginating_stub(tmp_path, pinned, monkeypatch):
+    """hasMore + cursor, three pages per search: the max stated is still a max."""
+    monkeypatch.setenv(config.KEY_ENV_VAR, g.FAKE_KEY)
+    real = g.Stub()
+
+    def pages(route, params):
+        cursor = params.get("cursor")
+        base = real.__class__(search_override=None)
+        if cursor is None:
+            body = {"data": [], "hasMore": True, "cursor": "p2"}
+        elif cursor == "p2":
+            body = {"data": [], "hasMore": True, "cursor": "p3"}
+        else:
+            body = {"data": [], "hasMore": False}
+        return body
+
+    stub = g.Stub(search_override=pages)
+    with patch("src.seats_client.requests.get", side_effect=stub):
+        with running_server(wallet_path=write_wallet(tmp_path / "w.json"),
+                            trips_dir=copy_trips(tmp_path / "t", ["trip_b_europe.json"])) as c:
+            pf = c.post("/api/trips/trip_b_europe/preflight", LIVE).json()
+            run = c.post("/api/trips/trip_b_europe/run", dict(LIVE, confirm_id=pf["confirm_id"])).json()
+    assert len(stub.calls) == 12
+    assert run["calls"]["this_run"]["search"] == 12
+    assert len(stub.calls) <= pf["max_calls"]
+
+
+def test_replay_of_the_live_runs_manifest_carries_the_hash(live_client):
+    pf = live_client.post("/api/trips/trip_b_europe/preflight", LIVE).json()
+    live_client.post("/api/trips/trip_b_europe/run", dict(LIVE, confirm_id=pf["confirm_id"]))
+    calls = len(live_client.stub.calls)
+    manifests = live_client.get("/api/state").json()["modes"]["replay_manifests"]
+    assert manifests[0]["rows"] >= 4
+    body = {"mode": "replay", "options": {**TRANSFER, "manifest_id": 0}}
+    pf = live_client.post("/api/trips/trip_b_europe/preflight", body).json()
+    assert pf["confirm_id"] is None and pf["max_calls"] == 0
+    run = live_client.post("/api/trips/trip_b_europe/run", body).json()
+    assert run["mode"] == "replay" and run["exit_code"] == 0
+    assert run["headline"]["qualifier"].startswith("(snapshot mh_")
+    assert run["calls"]["this_run"] is None
+    assert "--from-snapshot" in run["argv_display"]
+    assert len(live_client.stub.calls) == calls, "a replay asks nothing"
+
+
+@pytest.mark.parametrize("mid", [5, -1, "0", True, None])
+def test_a_replay_manifest_id_outside_the_list_is_400(live_client, mid):
+    body = {"mode": "replay", "options": {**TRANSFER, "manifest_id": mid}}
+    r = live_client.post("/api/trips/trip_b_europe/run", body)
+    assert r.status == 400
+
+
+def test_network_down_is_withheld_and_nothing_claims_a_partner(tmp_path, pinned, monkeypatch):
+    monkeypatch.setenv(config.KEY_ENV_VAR, g.FAKE_KEY)
+    with patch("src.seats_client.requests.get", side_effect=g.Refused()):
+        with running_server(wallet_path=write_wallet(tmp_path / "w.json")) as c:
+            pf = c.post("/api/trips/trip_b_europe/preflight", LIVE).json()
+            run = c.post("/api/trips/trip_b_europe/run", dict(LIVE, confirm_id=pf["confirm_id"])).json()
+    assert run["exit_code"] == 3 and run["headline"]["state"] == "withheld"
+    assert "not a partner" not in json.dumps([l["cells"] for l in run["legs"] if l["kind"] == "flight"])
+
+
+def test_live_with_no_key_is_blocked_before_any_confirm(tmp_path, pinned):
+    with running_server(wallet_path=write_wallet(tmp_path / "w.json")) as c:
+        pf = c.post("/api/trips/trip_b_europe/preflight", LIVE).json()
+        assert pf["confirm_id"] is None
+        assert pf["blocked"]["kind"] == "key"
+        assert pf["blocked"]["message"].startswith("No Seats.aero API key found.")

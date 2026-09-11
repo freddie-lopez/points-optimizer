@@ -469,20 +469,65 @@ class Engine:
         argv.append("--show-alternatives")
         return argv
 
+    def _trip_digest(self, trip_id: str, path: Path, opts: Dict[str, Any]) -> str:
+        """What a LIVE confirm is bound to: the trip, the fixture's BYTES, the
+        mode and options, and the wallet argv. Any change -> confirm_stale."""
+        return canonical_digest({
+            "kind": "trip",
+            "trip_id": trip_id,
+            "fixture_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "options": {k: v for k, v in opts.items() if k != "manifest"},
+            "wallet": self.wallet_argv(),
+            "wallet_file_sha256": self._wallet_file_digest(),
+        })
+
+    def _wallet_file_digest(self) -> Optional[str]:
+        if self.session_wallet is not None or not self.wallet_path:
+            return None
+        try:
+            return hashlib.sha256(Path(self.wallet_path).read_bytes()).hexdigest()
+        except OSError:
+            return None
+
     def trip_preflight(self, trip_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        from src.trip_loader import load_trip_fixture
+
         path = self.trip_path(trip_id)
         opts = self._trip_options(trip_id, body or {})
-        if opts["mode"] != "offline":
-            raise ApiError(400, "invalid_option", "Only OFFLINE runs are wired up so far.")
         argv = self.trip_argv(path, opts)
-        return {
+        out: Dict[str, Any] = {
             "mode": opts["mode"],
             "argv_display": shlex.join(PROG + argv),
             "max_calls": 0,
+            "breakdown": None,
+            "cache_answerable": None,
+            "calls": self.calls_state(),
+            "archive_dir": None,
             "confirm_id": None,
             "blocked": self._blocked(opts["mode"]),
-            "calls": self.calls_state(),
         }
+        if opts["mode"] == "replay":
+            out["manifest"] = display_path(opts["manifest"])
+        if opts["mode"] != "live":
+            return out
+        try:
+            fx = load_trip_fixture(path)
+            legs = sum(1 for l in fx.legs if l.kind == "flight" and l.origin and l.destination)
+        except Exception as e:  # noqa: BLE001 - the run itself will refuse it
+            raise ApiError(422, "cannot_load", f"{type(e).__name__}: {e}")
+        lookup_cap = 0 if opts["trips"] == "off" else opts["trips_cap"]
+        # D12: the true ceiling - MAX_PAGES per search plus every lookup the cap
+        # allows. An honest maximum beats a friendly guess.
+        out["max_calls"] = legs * PAGES_PER_SEARCH + lookup_cap
+        out["breakdown"] = {
+            "flight_legs": legs,
+            "pages_per_search": PAGES_PER_SEARCH,
+            "lookup_cap": lookup_cap,
+        }
+        out["archive_dir"] = display_path(Path(config.SNAPSHOT_DIR))
+        if out["blocked"] is None:
+            out["confirm_id"] = self.issue_confirm(self._trip_digest(trip_id, path, opts))
+        return out
 
     def _blocked(self, mode: str) -> Optional[Dict[str, str]]:
         """Why this run would be refused before it starts, in the CLI's words.
@@ -501,9 +546,11 @@ class Engine:
 
         path = self.trip_path(trip_id)
         opts = self._trip_options(trip_id, body or {})
-        if opts["mode"] != "offline":
-            raise ApiError(400, "invalid_option", "Only OFFLINE runs are wired up so far.")
         argv = self.trip_argv(path, opts)
+        if opts["mode"] == "live":
+            # Before ANY transport exists: no confirm, no call.
+            self.redeem_confirm((body or {}).get("confirm_id"),
+                                self._trip_digest(trip_id, path, opts))
         with self.run_slot():
             out = self.invoke(argv)
             payload = serialize.trip_run(out, opts["mode"], trip_id, self.calls_state())

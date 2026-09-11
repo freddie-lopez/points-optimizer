@@ -307,3 +307,42 @@ def test_a_busy_port_fails_loudly_and_never_moves():
         assert "Points optimizer UI:" not in out
     finally:
         sock.close()
+
+
+# ------------------------------------------------ the key, on every kind of run
+
+
+def test_no_body_log_or_transcript_ever_carries_the_key_or_its_mask(tmp_path, monkeypatch):
+    """LIVE, REPLAY, OFFLINE and refusals, with a fake key set: the key and its
+    mask appear in no response body and no log line. The transcript's key line
+    is replaced, and the source stays."""
+    from unittest.mock import patch
+
+    from tests import _cli_golden as g
+    from tests._ui_harness import copy_trips
+
+    monkeypatch.setenv(config.KEY_ENV_VAR, FAKE_KEY)
+    mask = config.mask_key(FAKE_KEY)
+    live = {"mode": "live", "options": {"transfer_date": "2026-09-15"}}
+    bodies = []
+    with patch("src.seats_client.requests.get", side_effect=g.Stub()):
+        with running_server(wallet_path=write_wallet(tmp_path / "w.json"),
+                            trips_dir=copy_trips(tmp_path / "t", ["trip_b_europe.json"])) as c:
+            pf = c.post("/api/trips/trip_b_europe/preflight", live)
+            bodies.append(pf)
+            run = c.post("/api/trips/trip_b_europe/run", dict(live, confirm_id=pf.json()["confirm_id"]))
+            bodies.append(run)
+            assert run.status == 200
+            assert ("Seats.aero key: (masked key not sent to the browser)   (source: environment)"
+                    in run.json()["transcript"])
+            for body in ({"mode": "replay", "options": {"manifest_id": 0}},
+                         {"mode": "offline", "options": {}},
+                         {"mode": "live", "options": {"trips": "all"}, "confirm_id": "x"}):
+                bodies.append(c.post("/api/trips/trip_b_europe/run", body))
+            bodies.append(c.post("/api/wallet", {"balances": {"XX": "1"}, "cards": []}))
+            bodies.append(c.get("/api/state"))
+            bodies.append(c.get("/api/trips"))
+            logs = list(c.logs)
+    for r in bodies:
+        assert FAKE_KEY not in r.text and mask not in r.text, r.text[:300]
+    assert not any(FAKE_KEY in line or mask in line for line in logs)
