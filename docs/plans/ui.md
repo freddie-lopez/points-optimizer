@@ -596,3 +596,14 @@ Each step: files, then acceptance. The full suite stays green after every step
 1. **D1: the UI runs the CLI's own `dispatch()` from argv, inside a long-lived threaded server.** It buys exact parity. It also inherits process-wide state that was written for one-shot runs: class-level caches and counters, `config` FX, `sys.exit` in argparse. The lock and per-run reset are the mitigation. Look for any other module-level state that a second run in the same process would inherit.
 2. **D2 + step 6: extracting row builders from `formatter.py`, pinned by goldens with a normalizer, and fixing F-1 in the same round.** It is more refactor than a minimal split, and it depends on a normalizer that must not hide a real diff. It also knowingly changes two CLI cells. The alternative is to leave F-1 in the CLI and special-case it in the UI, which would make the two disagree.
 3. **D3: the search view has no POINTS/CASH verdict, and every search spends fresh calls.** Tsuki asked to "search a route … see the verdicts". A verdict needs a fare, so the honest search screen shows award space, fundability and taxes trust, and sends him to a trip to score. If that feels like a dead end in use, the fix is a fare field on the search strip that builds a one-leg trip behind the scenes. That is a product change, not a bug.
+
+## Addendum (coordinator / design lead), after the plan
+
+1. **Design reference.** `docs/design/ui-mockup.html` is the visual reference for §4.7 and §4.8. It uses the real Trip B offline output and the synthetic LIVE stub, labelled as example data. Match its look: tokens, type, chips, spacing, the headline block, the legs table and the drawer sections. Its data and JS are mockup-only; the real app renders from the API.
+2. **Spec deltas from the mockup.**
+   - The display size is `--display: 28px`, used only for the headline value (24px below 720px).
+   - The drawer is **docked** as a third grid column (440px) at viewport ≥ 1180px, sticky under the top bar, and it scrolls on its own. Below 1180px it is a fixed overlay sheet, and it starts closed below that width.
+   - The search view's selected cabin cell gets `rgba(122,22,32,.22)`.
+   - `.result` children take `min-width: 0` so long commands scroll inside `.cmd` instead of widening the column.
+3. **F-3 (pre-existing CLI defect, fix in this round next to F-1).** On Trip B offline, B4's verdict sentence reads "Points path scores $280.00 vs $482.00 cash", but the score it verdicts on is $418.11: the $280.00 points plus the $138.11 UK APD the table and margin include. So the sentence shows a cleaner number than the one scored. Make the sentence use the scored figure, and name the APD when it was added. Pin it with a test, and regenerate only the affected golden lines, as the F-1 step does.
+4. **Feature 1 status.** `feature/operating-airline` has manager sign-off (Ship) at 3c104b3, plus the review commit f7b3ec2. R5-1 and R5-2 (Low) stay open; don't fix them in this round.

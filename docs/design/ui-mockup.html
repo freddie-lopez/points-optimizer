@@ -1,0 +1,860 @@
+<title>Points Optimizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Points Optimizer: design reference mockup.
+   Deliberately single-theme dark: a departure-board instrument in black and oxblood.
+   Every colour below is painted explicitly so the page holds on any host ground. */
+:root {
+  --ink: #0A0809;      /* page ground, black with a red bias */
+  --coal: #121011;     /* panels, table body */
+  --ash: #1B1718;      /* inputs, hover rows, raised */
+  --seam: #2B2325;     /* 1px hairlines */
+  --bone: #ECE4E3;     /* primary text */
+  --smoke: #9C8F8F;    /* secondary text, labels */
+  --oxblood: #7A1620;  /* brand accent: primary fill, selected edge, active tab */
+  --ember: #B4323C;    /* focus ring, accent hover, links */
+  --win: #5E9E73;      /* semantic: points win (never the accent) */
+  --warn: #C8923A;     /* semantic: withheld / partial / caution */
+  --unknown: #7D7475;  /* semantic: UNKNOWN border */
+  --sans: "Archivo", -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --s12: 12px; --s13: 13px; --s14: 14px; --s16: 16px; --s20: 20px; --display: 28px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { background: var(--ink); }
+body { margin: 0; background: var(--ink); color: var(--bone); font: 400 var(--s14)/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.dim { color: var(--smoke); }
+.label { font-family: var(--sans); font-stretch: 125%; font-weight: 600; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--smoke); }
+
+/* ---------- top bar ---------- */
+.topbar { position: sticky; top: 0; z-index: 20; background: var(--ink); border-bottom: 1px solid var(--seam); }
+.topbar-in { max-width: 1440px; margin: 0 auto; padding-inline: 16px; min-height: 40px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.wordmark { font-stretch: 125%; font-weight: 600; font-size: var(--s13); letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
+.wordmark span { color: var(--smoke); }
+.tabs { display: flex; gap: 2px; align-self: stretch; }
+.tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 0 12px; font-stretch: 125%; font-weight: 600; font-size: 11px; letter-spacing: .08em; color: var(--smoke); cursor: pointer; }
+.tab[aria-selected="true"] { color: var(--bone); border-bottom-color: var(--oxblood); }
+.tab:hover { color: var(--bone); }
+.bar-right { margin-left: auto; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: var(--s12); }
+.pill { font: 500 11px/1 var(--mono); letter-spacing: .06em; padding: 4px 8px; border-radius: 3px; border: 1px solid var(--seam); }
+.pill-live { background: var(--oxblood); border-color: var(--oxblood); color: var(--bone); }
+.pill-replay { border-color: var(--bone); }
+.pill-offline { border-color: var(--smoke); color: var(--smoke); }
+.calls b { font-weight: 500; color: var(--bone); }
+.wallet { background: none; border: 1px solid var(--seam); border-radius: 3px; padding: 3px 8px; cursor: pointer; }
+.wallet:hover { border-color: var(--smoke); }
+.mocktag { font: 500 10px/1 var(--mono); letter-spacing: .08em; color: var(--warn); border: 1px dashed var(--warn); padding: 3px 6px; border-radius: 3px; }
+
+/* ---------- shared bits ---------- */
+.chip { display: inline-flex; align-items: center; gap: 4px; font: 500 11px/1.45 var(--mono); letter-spacing: .02em; text-transform: uppercase; border: 1px solid var(--smoke); border-radius: 3px; padding: 1px 6px; white-space: nowrap; color: var(--bone); background: transparent; }
+.chip-points { background: rgba(94,158,115,.18); border-color: var(--win); color: var(--win); }
+.chip-cash { border-color: var(--smoke); }
+.chip-cashq { border-left: 3px solid var(--warn); }
+.chip-cashq .q { color: var(--warn); }
+.chip-withheld { border-color: var(--warn); color: var(--warn); background: repeating-linear-gradient(135deg, rgba(200,146,58,.16) 0 3px, transparent 3px 7px); }
+.chip-unknown { border: 1px dashed var(--unknown); color: var(--bone); }
+.chip-neutral { border-color: var(--seam); color: var(--smoke); }
+.chip-indirect { border-color: var(--warn); color: var(--bone); }
+.tag-unv { font-family: var(--sans); font-variant-caps: all-small-caps; font-size: 12px; letter-spacing: .06em; color: var(--warn); font-weight: 600; white-space: nowrap; }
+.btn { border: 1px solid var(--seam); background: var(--ash); border-radius: 3px; padding: 6px 12px; font-stretch: 125%; font-weight: 600; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
+.btn:hover { border-color: var(--smoke); }
+.btn-primary { background: var(--oxblood); border-color: var(--oxblood); color: var(--bone); }
+.btn-primary:hover { background: var(--ember); border-color: var(--ember); }
+.field { display: grid; gap: 4px; }
+.field input, .field select { background: var(--ash); border: 1px solid var(--seam); border-radius: 3px; padding: 6px 8px; font-family: var(--mono); font-size: var(--s13); min-width: 0; }
+.field input:focus, .field select:focus { border-color: var(--ember); outline: none; }
+.panel { background: var(--coal); border: 1px solid var(--seam); border-radius: 3px; }
+.seg { display: inline-flex; border: 1px solid var(--seam); border-radius: 3px; overflow: hidden; }
+.seg button { background: var(--coal); border: 0; border-right: 1px solid var(--seam); padding: 6px 14px; text-align: left; cursor: pointer; display: grid; gap: 1px; }
+.seg button:last-child { border-right: 0; }
+.seg button .t { font: 500 11px/1.3 var(--mono); letter-spacing: .06em; }
+.seg button .s { font-size: 11px; color: var(--smoke); }
+.seg button[aria-pressed="true"] { background: var(--ash); box-shadow: inset 0 -2px 0 var(--oxblood); }
+.note { font-size: var(--s13); color: var(--smoke); max-width: 78ch; }
+.warnline { color: var(--warn); }
+
+/* ---------- page grid ---------- */
+.page { max-width: 1440px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 48px; }
+.view[hidden] { display: none !important; }
+.trips-grid { display: grid; grid-template-columns: 208px minmax(0, 1fr); gap: 20px; align-items: start; }
+.has-drawer .trips-grid, .has-drawer .search-grid { grid-template-columns: 208px minmax(0, 1fr) 440px; }
+.search-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
+.has-drawer .search-grid { grid-template-columns: minmax(0, 1fr) 440px; }
+
+/* trip list */
+.triplist { display: grid; gap: 2px; }
+.triplist h2 { margin: 0 0 6px; }
+.trow { text-align: left; background: none; border: 0; border-left: 3px solid transparent; padding: 8px 10px; border-radius: 0 3px 3px 0; cursor: pointer; display: grid; gap: 2px; }
+.trow:hover { background: var(--coal); }
+.trow[aria-current="true"] { background: var(--coal); border-left-color: var(--oxblood); }
+.trow .n { font-weight: 500; font-size: var(--s13); }
+.trow .m { font-size: var(--s12); color: var(--smoke); }
+.trow .flag { font: 500 10px/1.4 var(--mono); color: var(--warn); letter-spacing: .04em; }
+.newtrip { margin-top: 10px; }
+
+/* trip result */
+.result { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; }
+.result > * { min-width: 0; }
+.trip-head h1 { margin: 2px 0 2px; font-size: var(--s20); font-weight: 500; text-wrap: balance; }
+.trip-head .d { font-size: var(--s13); color: var(--smoke); max-width: 90ch; }
+.runstrip { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; padding: 12px; }
+.runs { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.runchip { background: none; border: 1px solid var(--seam); border-radius: 3px; padding: 3px 8px; font: 500 11px/1.4 var(--mono); color: var(--smoke); cursor: pointer; }
+.runchip[aria-pressed="true"] { color: var(--bone); border-color: var(--smoke); }
+.meta { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-size: var(--s12); color: var(--smoke); }
+.cmd { font: 400 12px/1.4 var(--mono); color: var(--smoke); overflow-x: auto; white-space: nowrap; max-width: 100%; min-width: 0; }
+
+.headline { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 0; }
+.headline > div { padding: 16px 18px; }
+.headline > div + div { border-left: 1px solid var(--seam); }
+.hl-value { font: 500 var(--display)/1.1 var(--mono); font-variant-numeric: tabular-nums; margin: 6px 0 2px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.hl-value .q { font-size: var(--s14); color: var(--smoke); font-weight: 400; }
+.hl-part { font-size: var(--s12); letter-spacing: .06em; text-transform: uppercase; color: var(--warn); }
+.hl-rows { margin-top: 12px; display: grid; gap: 4px; font-size: var(--s13); }
+.hl-rows div, .kv div { display: flex; justify-content: space-between; gap: 16px; }
+.hl-rows span:last-child, .kv span:last-child { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.kv { display: grid; gap: 5px; font-size: var(--s13); }
+.kv .strong span { color: var(--bone); font-weight: 500; }
+.kv .sub { color: var(--smoke); padding-left: 12px; }
+.prov { grid-column: 1 / -1; border-top: 1px solid var(--seam); display: grid; gap: 6px; }
+.prov .row { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: var(--s13); }
+
+/* tables */
+.tscroll { overflow-x: auto; border: 1px solid var(--seam); border-radius: 3px; background: var(--coal); }
+table.grid { border-collapse: collapse; width: 100%; font-size: var(--s13); }
+table.grid th { position: sticky; top: 0; background: var(--coal); text-align: left; font-stretch: 125%; font-weight: 600; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--smoke); padding: 8px 10px; border-bottom: 1px solid var(--seam); white-space: nowrap; }
+table.grid td { padding: 6px 10px; border-bottom: 1px solid var(--seam); vertical-align: middle; white-space: nowrap; }
+table.grid tr:last-child td { border-bottom: 0; }
+table.grid td.num, table.grid th.num { text-align: right; }
+table.grid tbody tr { cursor: pointer; }
+table.grid tbody tr:hover { background: var(--ash); }
+table.grid tbody tr[aria-selected="true"] { background: var(--ash); box-shadow: inset 3px 0 0 var(--oxblood); }
+.legid { font: 500 12px var(--mono); color: var(--smoke); }
+.route { font-family: var(--mono); letter-spacing: .02em; }
+.route .arr { color: var(--smoke); padding: 0 2px; }
+.sub2 { display: block; font-size: 11px; color: var(--smoke); font-family: var(--sans); }
+.lower { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.lower .panel { padding: 14px 16px; }
+.notes { display: grid; gap: 6px; font-size: var(--s13); margin: 0; padding: 0; list-style: none; }
+details.fold { border-top: 1px solid var(--seam); padding-top: 10px; }
+details.fold summary { cursor: pointer; list-style: none; }
+details.fold summary::before { content: "+ "; font-family: var(--mono); color: var(--smoke); }
+details.fold[open] summary::before { content: "\2212  "; }
+pre.transcript { margin: 10px 0 0; padding: 12px; background: var(--ink); border: 1px solid var(--seam); border-radius: 3px; font: 400 12px/1.5 var(--mono); color: var(--smoke); overflow-x: auto; max-height: 280px; }
+
+/* search */
+.strip { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; padding: 12px; }
+.strip .field input { width: 92px; text-transform: uppercase; }
+.strip .field input.date { width: 128px; text-transform: none; }
+.cell { display: grid; gap: 2px; min-width: 128px; }
+.cell .l1 { font-family: var(--mono); }
+.cell .l1 .seats { color: var(--smoke); font-size: 11px; margin-left: 6px; }
+.cell .l2 { font-family: var(--mono); font-size: 12px; }
+.cell.none { color: var(--smoke); font-size: 12px; }
+td.cab { border-left: 1px solid var(--seam); }
+td.cab.sel { background: rgba(122,22,32,.22); }
+.synth { font: 500 10px/1 var(--mono); color: var(--warn); letter-spacing: .06em; margin-left: 6px; }
+.footer-lines { display: grid; gap: 6px; font-size: var(--s12); color: var(--smoke); }
+
+/* drawer */
+.drawer { position: sticky; top: 60px; max-height: calc(100vh - 76px); overflow-y: auto; background: var(--coal); border: 1px solid var(--seam); border-radius: 3px; box-shadow: 0 0 0 1px var(--seam), -12px 0 32px rgba(0,0,0,.6); }
+.drawer[hidden] { display: none; }
+.dhead { position: sticky; top: 0; background: var(--coal); border-bottom: 1px solid var(--seam); padding: 12px 14px; display: grid; gap: 8px; z-index: 1; }
+.dhead .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.dhead .ttl { font: 500 var(--s13) var(--mono); }
+.x { background: none; border: 1px solid var(--seam); border-radius: 3px; width: 26px; height: 26px; cursor: pointer; color: var(--smoke); font-family: var(--mono); }
+.x:hover { color: var(--bone); border-color: var(--smoke); }
+.dsec { padding: 12px 14px; border-bottom: 1px solid var(--seam); display: grid; gap: 6px; font-size: var(--s13); }
+.dsec:last-child { border-bottom: 0; }
+.dsec p { margin: 0; overflow-wrap: anywhere; }
+.dsec .figure { font: 500 var(--s16) var(--mono); font-variant-numeric: tabular-nums; }
+.mathgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mathgrid .cellm { background: var(--ink); border: 1px solid var(--seam); border-radius: 3px; padding: 8px 10px; }
+.cli { margin: 0; padding: 10px; background: var(--ink); border: 1px solid var(--seam); border-radius: 3px; font: 400 11.5px/1.55 var(--mono); color: var(--smoke); white-space: pre-wrap; overflow-wrap: anywhere; }
+.reason { font-size: var(--s13); overflow-wrap: anywhere; }
+
+/* modal */
+.scrim { position: fixed; inset: 0; background: rgba(10,8,9,.78); display: grid; place-items: center; z-index: 50; padding: 16px; }
+.scrim[hidden] { display: none; }
+.modal { width: min(560px, 100%); background: var(--coal); border: 1px solid var(--seam); border-top: 2px solid var(--oxblood); border-radius: 3px; padding: 18px; display: grid; gap: 12px; }
+.modal h3 { margin: 0; font-size: var(--s16); font-weight: 500; }
+.modal .big { font: 500 var(--s20) var(--mono); }
+.modal .acts { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+
+@media (max-width: 1180px) {
+  .has-drawer .trips-grid { grid-template-columns: 208px minmax(0, 1fr); }
+  .has-drawer .search-grid { grid-template-columns: minmax(0, 1fr); }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100%); max-height: none; z-index: 40; border-radius: 0; }
+}
+@media (max-width: 720px) {
+  .trips-grid, .has-drawer .trips-grid { grid-template-columns: minmax(0, 1fr); }
+  .triplist { grid-auto-flow: column; grid-auto-columns: minmax(180px, 1fr); overflow-x: auto; }
+  .triplist h2, .newtrip { display: none; }
+  .headline, .lower { grid-template-columns: minmax(0, 1fr); }
+  .headline > div + div { border-left: 0; border-top: 1px solid var(--seam); }
+  .drawer { width: 100%; }
+  .hl-value { font-size: 24px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  table.grid tbody tr, .trow, .btn { transition: background-color .12s ease, border-color .12s ease; }
+}
+</style>
+
+<header class="topbar">
+  <div class="topbar-in">
+    <div class="wordmark" data-testid="wordmark">Points <span>Optimizer</span></div>
+    <nav class="tabs" role="tablist" aria-label="Views">
+      <button class="tab" role="tab" id="tab-search" data-testid="tab-search" aria-selected="false">Search</button>
+      <button class="tab" role="tab" id="tab-trips" data-testid="tab-trips" aria-selected="true">Trips</button>
+    </nav>
+    <div class="bar-right">
+      <span class="mocktag" title="Design reference. Every figure comes from the repo's own Trip B fixture or a synthetic test stub.">MOCKUP · EXAMPLE DATA</span>
+      <span class="pill pill-offline" id="mode-pill" data-testid="mode-pill">OFFLINE</span>
+      <span class="calls mono" id="calls-counter" data-testid="calls-counter" title="Seats.aero also counts your other runs today, which this tool cannot see.">CALLS <b id="calls-run">0</b> this run · <b>5</b> since launch / 1,000</span>
+      <button class="wallet mono" id="wallet-chip" data-testid="wallet-chip-UR" title="Wallet: from wallet.json">UR 160,000</button>
+      <span class="dim">key: environment</span>
+    </div>
+  </div>
+</header>
+
+<main class="page" id="page">
+  <!-- ================= TRIPS ================= -->
+  <section class="view" id="view-trips" aria-labelledby="tab-trips">
+    <div class="trips-grid">
+      <nav class="triplist" data-testid="trip-list" aria-label="Trips">
+        <h2 class="label">Trips</h2>
+        <button class="trow" data-testid="trip-row-trip_a">
+          <span class="n">Trip A · Japan</span><span class="m">4 legs · 2 flights · 2 hotels</span>
+        </button>
+        <button class="trow" aria-current="true" data-testid="trip-row-trip_b_europe">
+          <span class="n">Trip B · Europe multi-city</span><span class="m">7 legs · 4 flights · 3 hotels</span>
+        </button>
+        <button class="trow" data-testid="trip-row-trip_c">
+          <span class="n">Trip C · Hawaii</span><span class="m">3 legs · 2 flights · 1 hotel</span>
+        </button>
+        <button class="trow" data-testid="trip-row-sfo_lhr_jan">
+          <span class="n">sfo_lhr_jan</span><span class="m">2 legs · 2 flights</span>
+          <span class="flag">NO POINTS PRICES — LIVE OR REPLAY ONLY</span>
+        </button>
+        <button class="btn newtrip" id="new-trip" data-testid="new-trip">+ New trip</button>
+      </nav>
+
+      <div class="result" data-testid="trip-result">
+        <div class="trip-head">
+          <div class="label">Trip</div>
+          <h1>TRIP B – Europe multi-city, Jan 15–27 2027</h1>
+          <div class="d">One-way legs, economy, 1 adult on flights / 2 people on hotels. Real cash prices captured by Tsuki on 2026-09-07.</div>
+        </div>
+
+        <div class="panel runstrip" data-testid="run-strip">
+          <div class="field">
+            <span class="label">Mode of the next run</span>
+            <div class="seg" role="group" aria-label="Mode">
+              <button id="mode-live" data-testid="mode-live" aria-pressed="false"><span class="t">LIVE</span><span class="s">points from Seats.aero, cash from captures</span></button>
+              <button id="mode-replay" data-testid="mode-replay" aria-pressed="false"><span class="t">REPLAY</span><span class="s">nothing is asked of Seats.aero</span></button>
+              <button id="mode-offline" data-testid="mode-offline" aria-pressed="true"><span class="t">OFFLINE</span><span class="s">scores the fixture's own points prices</span></button>
+            </div>
+          </div>
+          <button class="btn" data-testid="run-options">Options</button>
+          <button class="btn btn-primary" id="run-go" data-testid="run-go">Run</button>
+        </div>
+
+        <div class="meta">
+          <span class="label" style="margin-right:2px">Runs</span>
+          <div class="runs" id="runs"></div>
+        </div>
+        <div class="meta" id="run-meta"></div>
+
+        <div class="panel headline" data-testid="headline" id="headline"></div>
+
+        <div class="tscroll" data-testid="legs-table-scroll">
+          <table class="grid" data-testid="legs-table" id="legs-table">
+            <thead><tr>
+              <th>Leg</th><th>What</th><th class="num">Cash</th><th class="num">Cash as pts</th><th>Best points path</th><th class="num">Points</th><th class="num">Surcharge</th><th>Surch. source</th><th class="num">Score points</th><th class="num">Score cash</th><th>Provenance points | cash</th><th>Verdict</th>
+            </tr></thead>
+            <tbody id="legs-body"></tbody>
+          </table>
+        </div>
+
+        <div class="lower">
+          <div class="panel" data-testid="trip-notes">
+            <div class="label" style="margin-bottom:8px">Trip notes</div>
+            <ul class="notes" id="trip-notes"></ul>
+          </div>
+          <div class="panel" data-testid="residue">
+            <div class="label" style="margin-bottom:8px">Residue — what is left in each account</div>
+            <div class="kv" id="residue"></div>
+            <details class="fold" style="margin-top:14px" data-testid="transcript">
+              <summary class="label">CLI output</summary>
+              <pre class="transcript" id="transcript"></pre>
+            </details>
+          </div>
+        </div>
+      </div>
+
+      <aside class="drawer" id="drawer-trips" data-testid="drawer" aria-label="Leg detail"></aside>
+    </div>
+  </section>
+
+  <!-- ================= SEARCH ================= -->
+  <section class="view" id="view-search" aria-labelledby="tab-search" hidden>
+    <div class="search-grid">
+      <div class="result">
+        <div class="panel strip" data-testid="search-strip">
+          <label class="field"><span class="label">From</span><input id="search-from" data-testid="search-from" value="SFO" maxlength="3"></label>
+          <label class="field"><span class="label">To</span><input id="search-to" data-testid="search-to" value="MAD" maxlength="3"></label>
+          <label class="field"><span class="label">Date</span><input class="date" id="search-date" data-testid="search-date" value="2027-01-15"></label>
+          <label class="field"><span class="label">To date</span><input class="date" id="search-date-to" data-testid="search-date-to" placeholder="+30 days" value="2027-02-14"></label>
+          <label class="field"><span class="label">Cabin</span>
+            <select id="search-cabin" data-testid="search-cabin"><option>All</option><option>Y</option><option>W</option><option>J</option><option>F</option></select>
+          </label>
+          <button class="btn btn-primary" id="search-run" data-testid="search-run">Run search</button>
+        </div>
+        <p class="note" data-testid="search-window" style="margin:0">Searches 2027-01-15 to 2027-02-14 · 1 traveller (award prices are per seat) · single-route search is always LIVE and does not use the disk cache.</p>
+
+        <div class="meta"><span class="chip chip-neutral">exit 0 · OK</span><span class="mono">CALLS 1 this run</span><span>2.4 s</span></div>
+
+        <div class="tscroll" data-testid="search-table-scroll">
+          <table class="grid" data-testid="search-table">
+            <thead><tr><th>Date</th><th>Program</th><th>Y</th><th>W</th><th>J</th><th>F</th></tr></thead>
+            <tbody id="search-body"></tbody>
+          </table>
+        </div>
+
+        <div class="footer-lines" data-testid="search-footer">
+          <div>Seats.aero result coverage: single page; no pagination markers in the response. Another pagination mechanism has NOT been ruled out.</div>
+          <div>operating airline: NOT LOOKED UP - single-route search does not call the trips endpoint; use --trip-fixture or <span class="mono">python -m src.trips_tools capture</span></div>
+          <div>1 strategy above carries cash that is UNKNOWN (NOT $0).</div>
+          <div>FX rates used (table as of 2026-09-08) — 3 rates, every one CONFIRM BEFORE TRUSTING</div>
+          <div class="cmd">Equivalent command: .venv/bin/python -m src.main --origin SFO --destination MAD --date 2027-01-15:2027-02-14 --max-results 200 --wallet wallet.json</div>
+        </div>
+      </div>
+      <aside class="drawer" id="drawer-search" data-testid="drawer" aria-label="Award detail"></aside>
+    </div>
+  </section>
+</main>
+
+<div class="scrim" id="confirm" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" data-testid="run-confirm">
+    <div class="label">Before anything is spent</div>
+    <h3 id="confirm-title"><span id="confirm-lead">This run can spend at most</span> <span class="big mono" id="confirm-n">110</span> Seats.aero calls</h3>
+    <p class="note" id="confirm-why" style="margin:0">4 flight-leg searches × up to 25 pages each + up to 10 itinerary lookups. Cache hits are free and are not counted. Calls since launch: 5 of 1,000. Seats.aero also counts your other runs today, which this tool cannot see.</p>
+    <p class="note" id="confirm-cache" style="margin:0">The disk cache can answer 4 of the 4 searches right now (fetched within 6h). Snapshots are archived to tests/fixtures/seats_aero/live_trip_b/.</p>
+    <div class="cmd" id="confirm-cmd">Equivalent command: .venv/bin/python -m src.main --trip-fixture trip_b_europe.json --live --wallet wallet.json --trips auto --trips-cap 10</div>
+    <div class="acts">
+      <button class="btn" id="confirm-cancel">Cancel</button>
+      <button class="btn btn-primary" id="confirm-go" data-testid="run-confirm-go">Spend up to 110 calls</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var UNV = "[trips parser UNVERIFIED against a real Seats.aero response - built from the published schema only]";
+
+  /* ---------- example data: real CLI output of Trip B at 3c104b3 ---------- */
+  var RUNS = {
+    offline: {
+      chip: "OFFLINE · 19:12 · exit 0", mode: "OFFLINE", pill: "pill-offline", calls: "0",
+      exit: { text: "exit 0 · OK", cls: "chip-neutral" },
+      callsLine: "CALLS 0 this run (offline: no transport)", dur: "1.1 s",
+      cmd: ".venv/bin/python -m src.main --trip-fixture trip_b_europe.json --offline --wallet wallet.json --transfer-date 2026-09-15",
+      headline: {
+        state: "range", low: "2.04%", high: "11.03%", q: "(badge)",
+        part: "carrier SURCHARGE unknown on B3",
+        rows: [["low end = what is actually defensible", "2.04%  (badge)"], ["high end = only if every unknown surcharge is $0", "11.03%  (badge)"]],
+        prov: "badge", provText: "NO leg was scored against live availability. Every points price here is a Google Flights badge, of which exactly one has ever been corroborated. This is not a live margin.", legsLive: "0 of 4 legs live",
+        caveat: "The headline above is a RANGE and must not be quoted as a single number. The spread is carrier-imposed surcharges that are not known. The low end is what the tool can defend today; the high end assumes every unknown surcharge turns out to be $0, which is the assumption that turns an unknown into a saving that is not there."
+      },
+      totals: [["Pay cash for everything", "$3,126.11", "strong"], ["Optimizer's recommendation", "$3,062.22", "strong"], ["Saving", "$63.89", ""], ["Points spent", "28,000", ""], ["drawn from", "28,000 UR", "sub"], ["Cash still owed", "$2,644.11", ""], ["Legs where points win", "1", ""], ["Legs with NO UR path at all", "3", ""], ["Legs where a points path exists but its surcharge is UNKNOWN (NOT $0)", "1", ""]],
+      notes: [["Legs with NO points path at all (no partner exists): B5, B6, B7", ""], ["Legs where a points path exists but its carrier-imposed surcharge is UNKNOWN (NOT $0): B3", "warn"], ["FX RATES REQUIRE CONFIRMATION. EUR is back-derived from a single hotel quote; GBP and CAD were looked up on a date and go stale.", "warn"]],
+      residue: [["UR  ·  160,000 start", "132,000 left"], ["spent", "28,000"]],
+      legs: "OFF", select: "B3"
+    },
+    live: {
+      chip: "LIVE · synthetic stub · exit 0", mode: "LIVE", pill: "pill-live", calls: "5",
+      exit: { text: "exit 0 · OK", cls: "chip-neutral" },
+      callsLine: "CALLS 5 this run (4 search + 1 trips)", dur: "6.8 s",
+      cmd: ".venv/bin/python -m src.main --trip-fixture trip_b_europe.json --live --wallet wallet.json --trips auto --trips-cap 10",
+      headline: {
+        state: "single", value: "0.00%", q: "(live)", part: "",
+        rows: [],
+        prov: "live", provText: "4 of 4 flight legs scored against live Seats.aero availability (B1, B2, B3, B4). Cash is from captures, as it always is.", legsLive: "4 of 4 legs live",
+        caveat: "EXAMPLE: these awards come from the test suite's synthetic stub, not from a real Seats.aero answer."
+      },
+      totals: [["Pay cash for everything", "$3,126.11", "strong"], ["Optimizer's recommendation", "$3,126.11", "strong"], ["Saving", "$0.00", ""], ["Points spent", "0", ""], ["Cash still owed", "$3,126.11", ""], ["Legs where points win", "0", ""], ["Legs with NO UR path at all", "3", ""], ["Legs carrying UK APD that is STATED but NOT ADDED (unverified whether the fare includes it)", "1 (B4)", ""]],
+      notes: [["operating airline NOT LOOKED UP on B1, B2, B3: Air Canada Aeroplan levies no carrier surcharge whatever the metal, so the metal cannot change this answer.", ""], ["Legs with NO points path at all (no partner exists): B5, B6, B7", ""], ["CASH IS FROM SCREENSHOTS AND ALWAYS WILL BE.", "warn"]],
+      residue: [["UR  ·  160,000 start", "160,000 left"], ["spent", "0"]],
+      legs: "LIVE", select: "B4"
+    }
+  };
+
+  function V(chip, text, q) { return { chip: chip, text: text, q: q || "" }; }
+  var HOTEL = { cashPts: "", path: "none - not a partner", points: "-", sur: { t: "-" }, src: "-", sp: "-", prov: "none | unknown", verdict: V("cashq", "PAY CASH", "(no path)") };
+
+  var LEGS = {
+    OFF: [
+      { id: "B1", o: "MRY", d: "MAD", when: "Jan 15 2027 · economy · 1 adult", cash: "$395.00", cashPts: "39,500", path: "Air Canada Aeroplan @ 1:1", points: "50,000", sur: { t: "$0.00" }, src: "modeled", sp: "$500.00", sc: "$395.00", prov: "badge | unknown", verdict: V("cash", "PAY CASH"),
+        reason: "Cash is cheaper: $395.00 vs $500.00 on points at 1.0cpp. Do NOT burn points here.",
+        cashLine: "$395 British Airways (American, Iberia, Finnair) SFO-MAD, 1 stop LHR 1h45, 5:25pm-5:05pm+1, 14h40", cashProv: "screenshot 2026-09-07",
+        pointsLine: "Air Canada SFO-MAD via YUL (badge 50k pts)", unverified: true, assumed: true, pathLine: "UR 50,000 -> Air Canada Aeroplan 50,000 @ 1:1 [Chase Sapphire Preferred]", spend: "spend: 50,000 UR",
+        math: ["$500.00", "$395.00", "points cost $105.00 MORE than cash (26.6% worse)"],
+        taxes: { st: "unknown", text: "CAD 44.60 captured by a real Seats.aero search is NOT included - CAD had no configured FX rate when this badge was corroborated, so it is an explicit unknown that can only make the points side worse." },
+        surcharge: { known: true, text: "$0.00  via Air Canada Aeroplan / metal=* / * / cabin=* / dep=*", notes: "PROGRAM POLICY. Asserted for PARTNER awards. Applied without a confirmed operating carrier because this is a program-wide policy row, which does not depend on the metal." },
+        apd: null, metal: { legacy: "metal: AC (source: assumed), cabin Y", line: "", unv: false },
+        provLine: "badge: Google Flights '50k pts' badge. CONFIRMED BY SEATS.AERO 2026-09-08 on this leg only." },
+      { id: "B2", o: "MAD", d: "AMS", when: "Jan 19 2027 · economy · 1 adult", cash: "$44.00", cashPts: "4,400", path: "Club Iberia Plus @ 1:1", points: "8,000", sur: { u: true }, src: "unknown", sp: "≥ $80.00", sc: "$44.00", prov: "badge | unknown", verdict: V("cash", "PAY CASH"),
+        reason: "Cash is cheaper: $44.00 vs at least $80.00 on points at 1.0cpp. The carrier-imposed surcharge is UNKNOWN, but it can only ADD to the points side, so cash wins whatever it turns out to be. Do NOT burn points here.",
+        cashLine: "$44 Air Europa nonstop 7:00am-9:40am, 2h40", cashProv: "screenshot 2026-09-07",
+        pointsLine: "Iberia MAD-AMS nonstop (badge 7.5k pts)", unverified: true, assumed: true, pathLine: "UR 8,000 -> Club Iberia Plus 8,000 @ 1:1 [Chase Sapphire Preferred]", spend: "spend: 8,000 UR · stranded: 500 (within the unavoidable transfer increment)",
+        math: ["≥ $80.00", "$44.00", "a floor: the unknown surcharge is not in it. The verdict is CERTAIN despite the unknown."],
+        taxes: { st: "n/a", text: "Badge price: no award taxes were captured for this leg." },
+        surcharge: { known: false, text: "Break-even: points beat cash only if the surcharge is below $0.00.", notes: "No surcharge rule for Club Iberia Plus on IB metal, EU-EU Y departing ES. This is NOT zero - the figure is simply not known." },
+        apd: null, metal: { legacy: "metal: IB (source: captured), cabin Y", line: "", unv: false },
+        provLine: "badge: Google Flights '7.5k pts' badge. UNVERIFIED." },
+      { id: "B3", o: "AMS", d: "LON", when: "Jan 23 2027 · economy · 1 adult", cash: "$76.00", cashPts: "7,600", path: "Air France-KLM Flying Blue @ 1:1", points: "4,000", sur: { u: true }, src: "unknown", sp: "? (win if surch < $36.00)", sc: "$76.00", prov: "badge | unknown", verdict: V("withheld", "WITHHELD (surch unknown)"),
+        reason: "A points path exists (Air France-KLM Flying Blue, 4,000 points) but the carrier-imposed surcharge on this metal is UNKNOWN, so it cannot be scored against $76.00 cash. It is NOT $0, and it must not be treated as $0. Points win only if the surcharge is below $36.00.",
+        cashLine: "$76 easyJet AMS-LGW 2:20pm-2:40pm, 1h20 (marked Unsupported - no points option)", cashProv: "screenshot 2026-09-07",
+        pointsLine: "KLM AMS-LHR (badge 4k pts)", unverified: true, assumed: true, pathLine: "UR 4,000 -> Air France-KLM Flying Blue 4,000 @ 1:1 [Chase Sapphire Preferred]", spend: "spend: 4,000 UR",
+        math: ["UNKNOWN", "$76.00", "points win ONLY if the carrier surcharge is below $36.00"],
+        taxes: { st: "n/a", text: "Badge price: no award taxes were captured for this leg." },
+        surcharge: { known: false, text: "Break-even: points beat cash only if the surcharge is below $36.00.", notes: "Cannot model a surcharge for 'KLM AMS-LHR (badge 4k pts)'. No surcharge rule for Air France-KLM Flying Blue on KL metal, EU-EU Y departing NL. This is NOT zero - the figure is simply not known." },
+        apd: null, metal: { legacy: "metal: KL (source: captured), cabin Y", line: "", unv: false },
+        provLine: "badge: Google Flights '4k pts' badge. UNVERIFIED." },
+      { id: "B4", o: "LON", d: "MRY", when: "Jan 27 2027 · economy · 1 adult", cash: "$482.00", cashPts: "48,200", path: "United MileagePlus @ 1:1", points: "28,000", sur: { t: "$0.00" }, src: "modeled", sp: "$418.11", sc: "$482.00", prov: "badge | unknown", verdict: V("points", "POINTS"),
+        reason: "Points path scores $418.11 vs $482.00 cash (points $280.00 + UK APD $138.11).",
+        reasonNote: "Mockup shows the corrected sentence. Today the CLI prints \"$280.00 vs $482.00\", leaving out the APD the score includes (finding F-3).",
+        cashLine: "$482 British Airways (American, Iberia, Finnair) LHR-SFO nonstop 11:45am-2:55pm, 11h10", cashProv: "screenshot 2026-09-07",
+        pointsLine: "United LHR-SFO nonstop (badge 27.6k pts)", unverified: true, assumed: true, pathLine: "UR 28,000 -> United MileagePlus 28,000 @ 1:1 [Chase Sapphire Preferred]", spend: "spend: 28,000 UR · stranded: 400 (within the unavoidable transfer increment)",
+        math: ["$418.11", "$482.00", "points save $63.89 (13.3% of the cash price)"],
+        taxes: { st: "n/a", text: "Badge price: government taxes and airport charges are still owed on this leg and are NOT modelled." },
+        surcharge: { known: true, text: "$0.00  via United MileagePlus / metal=* / * / cabin=* / dep=*", notes: "PROGRAM POLICY not a route observation. United does not pass carrier-imposed surcharges through on awards." },
+        apd: { st: "ADDED", text: "UK AIR PASSENGER DUTY on B4: this leg DEPARTS GB for US. ADDED to the points-side cash total: GBP 102.00 x 1 = GBP 102.00 = $138.11 per the reduced rate. Band B chosen because HMRC bands by distance from London to the DESTINATION COUNTRY'S CAPITAL: Washington DC, 3665 miles." },
+        metal: { legacy: "metal: UA (source: assumed), cabin Y", line: "", unv: false },
+        provLine: "badge: Google Flights '27.6k pts' badge. UNVERIFIED." },
+      Object.assign({ id: "B5", o: "", d: "", name: "Novotel Madrid Center (Accor)", when: "Jan 15–19 2027 · 4 nights · 2 people", cash: "$747.83", cashPts: "74,783", sc: "$747.83", reason: "No UR transfer partner covers this leg. Cash is the only option.", cashLine: "Standard Room queen, Stay Longer and Save, non-refundable, 4 nights (EUR643.57 incl. fees/taxes) · 643.57 EUR -> $747.83 at the FX rate above (rate unconfirmed)", cashProv: "screenshot 2026-09-07", hotel: true }, HOTEL, { cashPts: "74,783" }),
+      Object.assign({ id: "B6", o: "", d: "", name: "NH City Centre Amsterdam", when: "Jan 15–19 2027 · 4 nights · 2 adults", cash: "$635.09", sc: "$700.71", reason: "No UR transfer partner covers this leg. Cash is the only option.", cashLine: "Standard Room, room only, non-refundable · score cash includes mandatory fees", cashProv: "screenshot 2026-09-07", hotel: true }, HOTEL, { cashPts: "70,071" }),
+      Object.assign({ id: "B7", o: "", d: "", name: "Hilton London Hyde Park", when: "4 nights · Queen Guest Room", cash: "$680.57", sc: "$680.57", reason: "No UR transfer partner covers this leg. Cash is the only option.", cashLine: "GBP125.66/night · 502.64 GBP -> $680.57 at the FX rate above (rate unconfirmed)", cashProv: "screenshot 2026-09-07", hotel: true, flag: "Hilton Honors is an Amex Membership Rewards partner, NOT a Chase UR partner. Cash only under the current UR-only scope." }, HOTEL, { cashPts: "68,057" })
+    ]
+  };
+
+  var AEROPLAN_LIVE = { path: "Air Canada Aeroplan @ 1:1", points: "50,000", sur: { t: "$32.36" }, src: "captured", sp: "$532.36", prov: "live | unknown", verdict: V("cash", "PAY CASH"),
+    pointsLine: "LIVE Air Canada Aeroplan economy 50,000 pts (9 seats)", unverified: false, assumed: false, pathLine: "UR 50,000 -> Air Canada Aeroplan 50,000 @ 1:1 [Chase Sapphire Preferred]", spend: "spend: 50,000 UR",
+    taxes: { st: "policy", text: "$32.36 (CAD 44.60) - taken as the COMPLETE carrier-side cash figure because this program levies no carrier surcharge as a matter of policy. A $0 carrier surcharge is not a $0 ticket." },
+    surcharge: { known: true, text: "$0.00 · program policy", notes: "Air Canada Aeroplan levies no carrier surcharge whatever the metal." },
+    apd: null,
+    metal: { legacy: "", line: "operating airline: NOT LOOKED UP - Air Canada Aeroplan levies no carrier surcharge whatever the metal, so the metal cannot change this answer. Nothing is known about which airline flies it; the possible carriers are AC, LH, UA, VL.", unv: false },
+    provLine: "live: Seats.aero returned 1 award(s) on the leg's own date. EXAMPLE: synthetic stub, re-dated from the real SFO-MAD capture." };
+
+  LEGS.LIVE = LEGS.OFF.map(function (l) {
+    if (l.hotel) { return l; }
+    if (l.id === "B4") {
+      return Object.assign({}, l, { path: "Virgin Atlantic Flying Club @ 1:1", points: "60,000", sur: { u: true }, src: "unknown", sp: "≥ $1,209.30", sc: "$482.00", prov: "live | unknown", verdict: V("cash", "PAY CASH"),
+        reason: "Cash is cheaper: $482.00 vs at least $1,209.30 on points at 1.0cpp. The carrier-imposed surcharge is UNKNOWN, but it can only ADD to the points side, so cash wins whatever it turns out to be. Do NOT burn points here.", reasonNote: "",
+        pointsLine: "LIVE Virgin Atlantic Flying Club LHR-SFO J 60,000 pts (2 seats)", unverified: true, assumed: false, pathLine: "UR 60,000 -> Virgin Atlantic Flying Club 60,000 @ 1:1 [Chase Sapphire Preferred]", spend: "spend: 60,000 UR",
+        math: ["≥ $1,209.30", "$482.00", "a floor: the unknown surcharge is not in it. The verdict is CERTAIN despite the unknown."],
+        taxes: { st: "known", text: "$609.30 (GBP 450.00) - a KNOWN cost, counted into every points figure. GBP rate sourced 2026-09-08, CONFIRM BEFORE TRUSTING." },
+        surcharge: { known: false, text: "Break-even: points beat cash only if the surcharge is below $0.00.", notes: "The itinerary lookup names VS by flight number, and that metal is NOT used for a surcharge because whether Seats.aero's taxes for this source already include one is not verified." },
+        apd: { st: "STATED, NOT ADDED", text: "UK AIR PASSENGER DUTY on B4: this leg DEPARTS GB for US. It owes GBP 244.00 x 1 = GBP 244.00 = $330.38 per the standard rate. IT IS NOT ADDED HERE: this leg's points-side cash came from Seats.aero's TotalTaxes, and NOBODY HAS CHECKED whether that figure already includes APD." },
+        metal: { legacy: "", unv: true,
+          line: "operating airline: VS by flight number (VS19). Seats.aero reports the MARKETING carrier; it does not report who operates the flight. A codeshare operated by another airline in this award's list (VS, DL) cannot be detected.",
+          extra: ["flights: VS19 LHR 2027-01-27T11:00:00Z -> SFO 2027-01-27T14:00:00Z (787-9)", "per-itinerary taxes: raw 45000 GBP (unit NOT VERIFIED: GBP 450.00 if cents, GBP 45,000 if whole units); not used in any figure", "modelled carrier surcharge for VS metal under Virgin Atlantic Flying Club: $200-$350 (pt $275) one-way - NOT ADDED: whether Seats.aero's taxes for 'virginatlantic' already include it is UNVERIFIED, so adding it could double count."] },
+        provLine: "live: Seats.aero returned 1 award(s) for LHR->SFO on 2027-01-27. EXAMPLE: synthetic stub, not a real Seats.aero answer." });
+    }
+    var cashNum = l.cash;
+    return Object.assign({}, l, AEROPLAN_LIVE, { sc: l.sc, reasonNote: "",
+      reason: "Cash is cheaper: " + cashNum + " vs $532.36 on points at 1.0cpp. Do NOT burn points here.",
+      math: ["$532.36", cashNum, "points cost more than cash at 1.0cpp"] });
+  });
+
+  var SEARCH = [
+    { date: "2027-01-15", program: "Air Canada Aeroplan", source: "aeroplan", synth: false,
+      cab: { Y: { miles: "50,000", seats: "9 seats", taxes: "$32.36", unknown: false, fund: "FUNDABLE #1", cls: "chip-neutral" } } },
+    { date: "2027-01-16", program: "Singapore KrisFlyer", source: "singapore", synth: true,
+      cab: { J: { miles: "88,000", seats: "2 seats", taxes: "", unknown: true, fund: "FUNDABLE #2", cls: "chip-neutral", floor: true } } }
+  ];
+
+  /* ---------- tiny DOM helpers (textContent only, never innerHTML with data) ---------- */
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) { n.className = cls; }
+    if (text !== undefined && text !== null) { n.textContent = text; }
+    return n;
+  }
+  function add(parent) { for (var i = 1; i < arguments.length; i++) { if (arguments[i]) { parent.appendChild(arguments[i]); } } return parent; }
+  function chip(kind, text, q) {
+    var c = el("span", "chip chip-" + kind, text);
+    if (q) { add(c, el("span", "q", q)); }
+    return c;
+  }
+  function unknownChip() { return chip("unknown", "UNKNOWN"); }
+  function unv() { return el("span", "tag-unv", "unverified"); }
+  function route(o, d) {
+    var s = el("span", "route");
+    add(s, document.createTextNode(o), el("span", "arr", "→"), document.createTextNode(d));
+    return s;
+  }
+  function section(title) { var s = el("section", "dsec"); add(s, el("div", "label", title)); return s; }
+
+  /* ---------- trips view ---------- */
+  var state = { run: "offline", leg: "B3", view: "trips", cabinSel: "Y", searchRow: 0 };
+
+  function renderRuns() {
+    var box = document.getElementById("runs"); box.textContent = "";
+    ["offline", "live"].forEach(function (k) {
+      var b = el("button", "runchip", RUNS[k].chip);
+      b.setAttribute("aria-pressed", String(state.run === k));
+      b.addEventListener("click", function () { state.run = k; state.leg = RUNS[k].select; renderTrip(); });
+      box.appendChild(b);
+    });
+  }
+
+  function renderMeta(r) {
+    var m = document.getElementById("run-meta"); m.textContent = "";
+    add(m, el("span", "pill " + r.pill, r.mode), chip(r.exit.cls.replace("chip-", ""), r.exit.text), el("span", "mono", r.callsLine), el("span", "", r.dur));
+    var c = el("div", "cmd", "Equivalent command: " + r.cmd); c.style.flexBasis = "100%";
+    m.appendChild(c);
+    var pill = document.getElementById("mode-pill"); pill.className = "pill " + r.pill; pill.textContent = r.mode;
+    document.getElementById("calls-run").textContent = r.calls;
+  }
+
+  function renderHeadline(r) {
+    var h = document.getElementById("headline"); h.textContent = "";
+    var hd = r.headline;
+    var left = el("div");
+    add(left, el("div", "label", "Optimizer beats paying cash by"));
+    var v = el("div", "hl-value"); v.setAttribute("data-testid", "headline-value");
+    if (hd.state === "range") {
+      add(v, el("span", "", hd.low + " – " + hd.high), el("span", "q", hd.q));
+    } else {
+      add(v, el("span", "", hd.value), el("span", "q", hd.q));
+    }
+    add(left, v);
+    if (hd.part) { add(left, el("div", "hl-part", hd.part)); }
+    if (hd.rows.length) {
+      var rows = el("div", "hl-rows");
+      hd.rows.forEach(function (rw) { var d = el("div"); add(d, el("span", "dim", rw[0]), el("span", "", rw[1])); rows.appendChild(d); });
+      add(left, rows);
+    }
+    var right = el("div", "kv");
+    r.totals.forEach(function (t) { var d = el("div", t[2]); add(d, el("span", t[2] === "strong" ? "" : "dim", t[0]), el("span", "", t[1])); right.appendChild(d); });
+    var prov = el("div", "prov");
+    var row = el("div", "row");
+    add(row, el("span", "label", "Margin provenance"), chip(hd.prov === "live" ? "neutral" : "cashq", hd.prov), el("span", "mono dim", hd.legsLive));
+    add(prov, row, el("p", "note", hd.provText), el("p", "note", hd.caveat));
+    prov.querySelectorAll("p").forEach(function (p) { p.style.margin = "0"; });
+    add(h, left, right, prov);
+  }
+
+  function cliVerdict(v) {
+    if (v.chip === "points") { return "POINTS"; }
+    if (v.chip === "withheld") { return "CASH (SURCHARGE UNKNOWN)"; }
+    if (v.q === "(no path)") { return "CASH (NO POINTS PATH)"; }
+    return "CASH";
+  }
+  function verdictChip(v) { return chip(v.chip === "cashq" ? "cashq" : v.chip, v.text, v.q ? " " + v.q : ""); }
+
+  function renderLegs(r) {
+    var body = document.getElementById("legs-body"); body.textContent = "";
+    LEGS[r.legs].forEach(function (l) {
+      var tr = el("tr"); tr.tabIndex = 0; tr.setAttribute("data-testid", "leg-row-" + l.id);
+      tr.setAttribute("aria-selected", String(state.leg === l.id));
+      var what = el("td");
+      if (l.hotel) { add(what, el("span", "", l.name)); } else { add(what, route(l.o, l.d)); }
+      add(what, el("span", "sub2", l.when));
+      var sur = el("td", "num mono");
+      if (l.sur.u) { sur.appendChild(unknownChip()); } else { sur.textContent = l.sur.t; if (l.sur.t === "-") { sur.className += " dim"; } }
+      var vd = el("td"); vd.setAttribute("data-testid", "verdict-" + l.id); vd.appendChild(verdictChip(l.verdict));
+      add(tr,
+        el("td", "legid", l.id), what,
+        el("td", "num mono", l.cash), el("td", "num mono dim", l.cashPts),
+        el("td", l.hotel ? "dim" : "", l.path), el("td", "num mono" + (l.points === "-" ? " dim" : ""), l.points),
+        sur, el("td", "dim", l.src),
+        el("td", "num mono" + (l.sp === "-" ? " dim" : ""), l.sp), el("td", "num mono", l.sc),
+        el("td", "mono dim", l.prov), vd);
+      function open() { state.leg = l.id; renderTrip(); }
+      tr.addEventListener("click", open);
+      tr.addEventListener("keydown", function (e) { if (e.key === "Enter") { open(); } });
+      body.appendChild(tr);
+    });
+  }
+
+  function renderLower(r) {
+    var n = document.getElementById("trip-notes"); n.textContent = "";
+    r.notes.forEach(function (t) { n.appendChild(el("li", t[1] === "warn" ? "warnline" : "", t[0])); });
+    var res = document.getElementById("residue"); res.textContent = "";
+    r.residue.forEach(function (t) { var d = el("div"); add(d, el("span", "dim", t[0]), el("span", "", t[1])); res.appendChild(d); });
+    document.getElementById("transcript").textContent =
+      "Seats.aero key: (masked key not sent to the browser)   (source: environment)\n" +
+      "TRIP B - Europe multi-city, Jan 15-27 2027\n" +
+      "Wallet (supplied at runtime - nothing is assumed)\n  UR: 160,000   valued at 1.00 cents/point\n  cards: Chase Sapphire Preferred\n" +
+      "...\n" + LEGS[r.legs].filter(function (l) { return !l.hotel; }).map(function (l) {
+        return l.id + " - " + l.o + "->" + l.d + "\n  Verdict: " + cliVerdict(l.verdict) + " - " + l.reason;
+      }).join("\n") + "\n...";
+  }
+
+  function legDrawer(l) {
+    var d = document.getElementById("drawer-trips"); d.textContent = "";
+    var head = el("div", "dhead");
+    var top = el("div", "top");
+    var ttl = el("div", "ttl");
+    add(ttl, el("span", "legid", l.id + "  "));
+    if (l.hotel) { add(ttl, document.createTextNode(l.name)); } else { add(ttl, route(l.o, l.d)); }
+    var x = el("button", "x", "×"); x.setAttribute("aria-label", "Close detail");
+    x.addEventListener("click", function () { state.leg = null; renderTrip(); });
+    add(top, ttl, x);
+    var chips = el("div"); chips.style.display = "flex"; chips.style.gap = "6px"; chips.style.flexWrap = "wrap";
+    add(chips, verdictChip(l.verdict), el("span", "dim", l.when));
+    add(head, top, chips, el("p", "reason", l.reason));
+    if (l.reasonNote) { var rn = el("p", "note warnline", l.reasonNote); rn.style.margin = "0"; add(head, rn); }
+    d.appendChild(head);
+
+    var cash = section("Cash");
+    add(cash, el("p", "", l.cashLine));
+    var cp = el("p", "dim", "provenance: " + l.cashProv); add(cash, cp);
+    d.appendChild(cash);
+
+    if (l.hotel) {
+      var np = section("Points");
+      add(np, el("p", "", "none - not a partner"), el("p", "dim", "No UR transfer partner covers this leg. Cash is the only option."));
+      if (l.flag) { add(np, el("p", "warnline", "FLAG: " + l.flag)); }
+      d.appendChild(np);
+    } else {
+      var pts = section("Points");
+      var pl = el("p"); add(pl, document.createTextNode(l.pointsLine + "  "));
+      if (l.unverified) { add(pl, unv()); }
+      if (l.assumed) { add(pl, document.createTextNode("  "), el("span", "tag-unv", "program attribution assumed")); }
+      add(pts, pl, el("p", "mono dim", l.pathLine), el("p", "mono dim", l.spend));
+      d.appendChild(pts);
+
+      var m = section("The math");
+      var g = el("div", "mathgrid");
+      [["score points", l.math[0]], ["score cash", l.math[1]]].forEach(function (p) {
+        var c = el("div", "cellm"); add(c, el("div", "label", p[0]));
+        var f = el("div", "figure");
+        if (p[1] === "UNKNOWN") { f.appendChild(unknownChip()); } else { f.textContent = p[1]; }
+        add(c, f); g.appendChild(c);
+      });
+      add(m, g, el("p", "dim", l.math[2]));
+      d.appendChild(m);
+
+      var t = section("Taxes");
+      if (l.taxes.st === "unknown") {
+        var tp = el("p"); add(tp, unknownChip(), document.createTextNode("  IT IS NOT $0.")); add(t, tp);
+      }
+      add(t, el("p", l.taxes.st === "n/a" ? "dim" : "", l.taxes.text));
+      d.appendChild(t);
+
+      var s = section("Surcharge");
+      if (l.surcharge.known) { add(s, el("p", "mono", l.surcharge.text)); }
+      else { var sp = el("p"); add(sp, unknownChip(), document.createTextNode("  this is NOT $0.")); add(s, sp, el("p", "", l.surcharge.text)); }
+      add(s, el("p", "dim", l.surcharge.notes));
+      d.appendChild(s);
+
+      if (l.apd) {
+        var a = section("UK APD");
+        var ap = el("p"); add(ap, chip(l.apd.st === "ADDED" ? "neutral" : "withheld", l.apd.st)); add(a, ap, el("p", "", l.apd.text));
+        d.appendChild(a);
+      }
+
+      var oa = section("Operating airline");
+      if (l.metal.legacy) { add(oa, el("p", "mono dim", l.metal.legacy)); }
+      if (l.metal.line) {
+        var ml = el("p");
+        if (l.metal.unv) { add(ml, unv(), document.createTextNode("  ")); }
+        add(ml, document.createTextNode(l.metal.line));
+        add(oa, ml);
+        if (l.metal.unv) { add(oa, el("p", "dim", UNV)); }
+      }
+      (l.metal.extra || []).forEach(function (x2) { add(oa, el("p", "mono dim", x2)); });
+      if (!l.metal.line && state.run === "offline") { add(oa, el("p", "dim", "Offline run: no itinerary lookup was made.")); }
+      d.appendChild(oa);
+
+      var pv = section("Provenance");
+      add(pv, el("p", "", l.provLine));
+      d.appendChild(pv);
+    }
+
+    var cli = section("Every line the CLI prints for this leg");
+    var pre = el("pre", "cli");
+    pre.textContent = l.id + " - " + (l.hotel ? l.name : l.o + "->" + l.d) + "\n  Verdict: " + cliVerdict(l.verdict) + " - " + l.reason + "\n  Cash: " + l.cashLine + (l.pointsLine ? "\n  Points: " + l.pointsLine + "\n        " + l.pathLine : "");
+    add(cli, pre);
+    d.appendChild(cli);
+    d.hidden = false;
+  }
+
+  function renderTrip() {
+    var r = RUNS[state.run];
+    renderRuns(); renderMeta(r); renderHeadline(r); renderLegs(r); renderLower(r);
+    var dr = document.getElementById("drawer-trips");
+    var leg = LEGS[r.legs].filter(function (l) { return l.id === state.leg; })[0];
+    if (leg) { legDrawer(leg); } else { dr.hidden = true; dr.textContent = ""; }
+    setDrawerClass();
+    ["live", "replay", "offline"].forEach(function (k) {
+      document.getElementById("mode-" + k).setAttribute("aria-pressed", String(k === (state.run === "live" ? "live" : "offline")));
+    });
+  }
+
+  /* ---------- search view ---------- */
+  function renderSearch() {
+    var body = document.getElementById("search-body"); body.textContent = "";
+    SEARCH.forEach(function (row, i) {
+      var tr = el("tr");
+      var dt = el("td", "mono", row.date);
+      var pg = el("td"); add(pg, el("span", "", row.program));
+      if (row.synth) { add(pg, el("span", "synth", "SYNTHETIC ROW")); }
+      add(pg, el("span", "sub2", row.source));
+      add(tr, dt, pg);
+      ["Y", "W", "J", "F"].forEach(function (c) {
+        var td = el("td", "cab");
+        var cell = row.cab[c];
+        if (!cell) { add(td, el("div", "cell none", "no space")); }
+        else {
+          td.tabIndex = 0; td.setAttribute("data-testid", "cell-" + row.date + "-" + row.source + "-" + c);
+          if (state.searchRow === i && state.cabinSel === c) { td.className += " sel"; }
+          var box = el("div", "cell");
+          var l1 = el("div", "l1", cell.miles); add(l1, el("span", "seats", cell.seats));
+          var l2 = el("div", "l2");
+          if (cell.unknown) { add(l2, unknownChip()); } else { l2.textContent = cell.taxes; }
+          var l3 = el("div"); add(l3, chip(cell.cls.replace("chip-", ""), cell.fund));
+          add(box, l1, l2, l3); td.appendChild(box);
+          var open = function () { state.searchRow = i; state.cabinSel = c; renderSearch(); };
+          td.addEventListener("click", open);
+          td.addEventListener("keydown", function (e) { if (e.key === "Enter") { open(); } });
+        }
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+    searchDrawer();
+    setDrawerClass();
+  }
+
+  function searchDrawer() {
+    var d = document.getElementById("drawer-search"); d.textContent = "";
+    if (state.searchRow === null) { d.hidden = true; return; }
+    var row = SEARCH[state.searchRow]; var c = state.cabinSel; var cell = row.cab[c];
+    var head = el("div", "dhead"); var top = el("div", "top");
+    var ttl = el("div", "ttl"); add(ttl, route("SFO", "MAD"), document.createTextNode("  · " + row.date + " · " + row.program + " · " + c));
+    var x = el("button", "x", "×"); x.setAttribute("aria-label", "Close detail");
+    x.addEventListener("click", function () { state.searchRow = null; renderSearch(); });
+    add(top, ttl, x); add(head, top);
+    if (row.synth) { add(head, el("p", "note warnline", "SYNTHETIC ROW: shows the UNKNOWN state; not a real Seats.aero answer.")); }
+    d.appendChild(head);
+
+    var a = section("Award");
+    var kv = el("div", "kv");
+    [["Miles", cell.miles], ["Seats", cell.seats.replace(" seats", "")], ["Possible carriers", row.synth ? "SQ" : "AC, LH, UA, VL"]].forEach(function (p) {
+      var dv = el("div"); add(dv, el("span", "dim", p[0]), el("span", "", p[1])); kv.appendChild(dv);
+    });
+    add(a, kv); d.appendChild(a);
+
+    var t = section("Taxes");
+    if (cell.unknown) {
+      var tp = el("p"); add(tp, unknownChip()); add(t, tp,
+        el("p", "", "Seats.aero does not report taxes for the 'singapore' source, so the cash side of this award is UNKNOWN. IT IS NOT $0."));
+    } else {
+      var tp2 = el("p"); add(tp2, el("span", "figure", "$32.36"), document.createTextNode("  (CAD 44.60)  "), el("span", "tag-unv", "confirm before trusting"));
+      add(t, tp2);
+    }
+    d.appendChild(t);
+
+    var f = section("Funding");
+    add(f, el("p", "mono", row.synth ? "UR 88,000 -> Singapore KrisFlyer 88,000 @ 1:1 [Chase Sapphire Preferred]" : "UR 50,000 -> Air Canada Aeroplan 50,000 @ 1:1 [Chase Sapphire Preferred]"),
+      el("p", "dim", "rank #" + (row.synth ? "2" : "1") + " of 2"));
+    d.appendChild(f);
+
+    var tot = section("Total at 1¢/pt");
+    add(tot, el("p", "figure", row.synth ? "≥ $880.00" : "$532.36"));
+    if (row.synth) { add(tot, el("p", "dim", "a floor: the unknown cash is not in it")); }
+    d.appendChild(tot);
+
+    var oa = section("Operating airline");
+    add(oa, el("p", "", "NOT LOOKED UP - single-route search does not call the trips endpoint. The possible carriers are " + (row.synth ? "SQ" : "AC, LH, UA, VL") + "."));
+    d.appendChild(oa);
+
+    var pv = section("Provenance");
+    add(pv, el("p", "", "seats_aero_live · captured 2026-09-08 · parser 2026-09-10.taxes-trust"));
+    d.appendChild(pv);
+
+    var nv = section("No verdict");
+    add(nv, el("p", "", "A single-route search has no cash price to compare against, so it cannot say POINTS or PAY CASH. Add it to a trip with the fare you found."));
+    var go = el("button", "btn btn-primary", "Score against a fare →"); go.setAttribute("data-testid", "drawer-to-trip");
+    go.addEventListener("click", function () { showView("trips"); });
+    var wrap = el("div"); wrap.appendChild(go); add(nv, wrap);
+    d.appendChild(nv);
+    d.hidden = false;
+  }
+
+  /* ---------- chrome ---------- */
+  function setDrawerClass() {
+    var open = state.view === "trips" ? !document.getElementById("drawer-trips").hidden : !document.getElementById("drawer-search").hidden;
+    document.getElementById("page").classList.toggle("has-drawer", open);
+  }
+  function showView(v) {
+    state.view = v;
+    document.getElementById("view-trips").hidden = v !== "trips";
+    document.getElementById("view-search").hidden = v !== "search";
+    document.getElementById("tab-trips").setAttribute("aria-selected", String(v === "trips"));
+    document.getElementById("tab-search").setAttribute("aria-selected", String(v === "search"));
+    if (v === "search") {
+      var pill = document.getElementById("mode-pill"); pill.className = "pill pill-live"; pill.textContent = "LIVE";
+      document.getElementById("calls-run").textContent = "1";
+      renderSearch();
+    } else { renderTrip(); }
+  }
+  document.getElementById("tab-trips").addEventListener("click", function () { showView("trips"); });
+  document.getElementById("tab-search").addEventListener("click", function () { showView("search"); });
+
+  ["live", "replay", "offline"].forEach(function (k) {
+    document.getElementById("mode-" + k).addEventListener("click", function () {
+      ["live", "replay", "offline"].forEach(function (j) { document.getElementById("mode-" + j).setAttribute("aria-pressed", String(j === k)); });
+    });
+  });
+  var scrim = document.getElementById("confirm");
+  var CONFIRM = {
+    trip: { lead: "This run can spend at most", n: "110", go: "Spend up to 110 calls", cache: true,
+      why: "4 flight-leg searches × up to 25 pages each + up to 10 itinerary lookups. Cache hits are free and are not counted. Calls since launch: 5 of 1,000. Seats.aero also counts your other runs today, which this tool cannot see.",
+      cmd: "Equivalent command: .venv/bin/python -m src.main --trip-fixture trip_b_europe.json --live --wallet wallet.json --trips auto --trips-cap 10" },
+    search: { lead: "This search can spend up to", n: "25", go: "Spend up to 25 calls", cache: false,
+      why: "One call per results page (one page is the only shape seen so far). Calls since launch: 5 of 1,000. Seats.aero also counts your other runs today, which this tool cannot see.",
+      cmd: "Equivalent command: .venv/bin/python -m src.main --origin SFO --destination MAD --date 2027-01-15:2027-02-14 --max-results 200 --wallet wallet.json" }
+  };
+  function openConfirm(kind) {
+    var c = CONFIRM[kind || "trip"];
+    document.getElementById("confirm-lead").textContent = c.lead;
+    document.getElementById("confirm-n").textContent = c.n;
+    document.getElementById("confirm-go").textContent = c.go;
+    document.getElementById("confirm-why").textContent = c.why;
+    document.getElementById("confirm-cmd").textContent = c.cmd;
+    document.getElementById("confirm-cache").hidden = !c.cache;
+    scrim.hidden = false; document.getElementById("confirm-cancel").focus();
+  }
+  function closeConfirm() { scrim.hidden = true; }
+  document.getElementById("run-go").addEventListener("click", function () {
+    if (document.getElementById("mode-live").getAttribute("aria-pressed") === "true") { openConfirm("trip"); }
+    else { state.run = "offline"; state.leg = "B3"; renderTrip(); }
+  });
+  document.getElementById("search-run").addEventListener("click", function () {
+    openConfirm("search");
+  });
+  document.getElementById("confirm-cancel").addEventListener("click", closeConfirm);
+  document.getElementById("confirm-go").addEventListener("click", function () { closeConfirm(); if (state.view === "trips") { state.run = "live"; state.leg = "B4"; renderTrip(); } });
+  scrim.addEventListener("click", function (e) { if (e.target === scrim) { closeConfirm(); } });
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") { return; }
+    if (!scrim.hidden) { closeConfirm(); return; }
+    if (state.view === "trips") { state.leg = null; renderTrip(); } else { state.searchRow = null; renderSearch(); }
+  });
+
+  if (window.innerWidth < 1180) { state.leg = null; state.searchRow = null; }
+  renderTrip();
+})();
+</script>
