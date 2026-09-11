@@ -495,3 +495,214 @@ as 5, which is fine.)
   but worth telling him before he runs it.
 - His `live_trip_b/` corpus has no `trips_endpoint/`. Its replay hash is unchanged
   (checked against master's code above).
+
+---
+
+# Re-test 2 (fixes `f3f0869..1990866`, fix report `77f548f`)
+
+Tester pass, 2026-09-11. As in round 1, I changed no application code and no
+existing test, and every probe runs behind the socket canary. It recorded zero
+connection attempts in both modes.
+
+New probes are in `docs/test-reports/operating-airline-probes/test_oa_r2_retest.py`
+(81 tests). The round-1 probes are unchanged.
+
+```
+.venv/bin/python -m pytest -q -p no:cacheprovider docs/test-reports/operating-airline-probes
+```
+
+Recorded state: **10 red / 367 green**, with the same red set under `python -O`.
+All 296 round-1 probes are green, and all 10 reds are new round-2 probes.
+
+## Invariants, re-verified
+
+| Check | Result |
+|---|---|
+| `pytest -q` / `python -O -m pytest -q` | **1460 passed, 13 skipped** in both (the Coder's claim holds) |
+| Tree after the full suite | clean |
+| v5 / adversarial / known-failures red sets | 19 / 40 / 0, identical by id to the saved baselines |
+| Nothing moves with the header-only `yq_inclusion.csv` | holds. The 36 round-1 equivalence probes pass, and exit code and headline are identical to `--trips off` |
+| Couple trip | still WITHHELD, exit 3, `cash (multi-traveller points not priced)` |
+| `-O` structural guards | hold. Dropping a way-ten row, adding an `*_UNKNOWN` code, or unclassifying `provenance` each still refuse at import under `-O`. `NOT_NEEDED_PARTY` is classified and documented |
+| Key leakage | none. A key from env, from `.env` or from `--api-key` appears in no cache, snapshot, manifest, capture or `.raw.txt` file, and not in stdout. A body that reflects the key is refused |
+| Network | none. The canary recorded 0 attempts over 377 probes, and replays make 0 `requests.get` calls |
+| Search path unchanged | `_next_page_params` gives **byte-identical answers to master `a17497d`** on a 14-payload grid (both run in subprocesses). The old-corpus replay hash still equals master's own `manifest_hash`. Step 0's pinned hashes pass |
+| D29 | output when lookups are not engaged is still byte-identical to master |
+
+## The Coder's edits to three test files this branch added
+
+| File | Edit | Verdict |
+|---|---|---|
+| `tests/test_trips_flags.py` | two expected strings changed to the new 429 wording | follows the intended change (`db2e5ca`, `1990866`); nothing weakened |
+| `tests/test_trips_tools.py` | expects `<VERDICT>` in the printed row, plus a new assertion that no row with a verdict is printed | follows the intended change and adds an assertion. **But** its fill step, `.replace("____", "GBP 450.00")`, replaces *every* `____` in the file, including the one in the record's own intro prose. That hides new finding R2-1 |
+| `tests/test_yq_inclusion.py` | `GOOD_RECORD` is now a full record; the marker and blanks tests derive from it and keep their `match=` strings | follows the intended change; nothing weakened |
+
+## New findings
+
+| # | Sev | Title | Probe |
+|---|---|---|---|
+| R2-1 | Medium | A record written by `yq-check`, with every field filled, is refused as "still has ____ blanks" | `test_oa_r2_retest.py::test_the_whole_verdict_flow_a_record_the_tool_wrote_filled_by_hand_loads` |
+| R2-2 | Medium | A replay of an honest corpus is refused when two different ids got byte-identical responses | `::test_two_lookups_that_returned_identical_bytes_still_replay` |
+| R2-3 | Low | A refused `capture` leaves a one-page INCOMPLETE search in the runtime cache, and the next trip run is served it | `::test_a_refused_capture_does_not_leave_a_truncated_search_for_the_next_trip_run` |
+| R2-4 | Low | `capture` still says "CAPTURED CLEAN ... set TRIPS_SCHEMA_VERIFIED_BY" (exit 0) for a capture the flip check refuses | `::test_capture_never_says_clean_and_set_the_constant_for_a_capture_the_flip_check_refuses` |
+| R2-5 | Low | The committed synthetic page, re-wrapped with three more fields, still verifies the parser | `::test_the_committed_synthetic_page_cannot_verify_the_parser_under_any_wrapper` |
+| R2-6 | Low | "This lookup established nothing further" is printed on NOT LOOKED UP and NOT RECORDED lines, where no lookup was made | `::test_a_line_about_a_lookup_that_was_never_made_does_not_speak_of_this_lookup[4 params]` |
+| R2-7 | Low | Two more lines still name the looked-up metal without the parser label (the class behind M3) | `::test_M3_class_every_line_that_names_trips_metal_carries_the_parser_label` |
+
+No Critical, no High. **2 Medium, 5 Low.**
+
+### R2-1. Medium: a legitimately filled yq-check record cannot load
+
+**Repro:**
+1. Run `yq-check` (stubbed).
+2. Fill the five blank fields exactly as the record asks: date checked, flights
+   shown, taxes, separate carrier-charge line, and the verdict line
+   `includes_yq`.
+3. Add the printed row with `<VERDICT>` replaced by `includes_yq`.
+4. Call `yq_inclusion.load`.
+
+**Expected:** the row loads. **Actual:** `YqInclusionError: ... still has ____
+blanks`. The intro paragraph `_write_record` puts in every record says "fill
+every ____ from the program's own site before adding a row", and the loader's
+`BLANK in body` check counts that prose.
+
+This happens on every record the tool writes, so the only path to the first YQ
+verdict fails until Tsuki edits the tool's own sentence. It fails closed and
+loud, so no number moves, hence Medium. It has been there since Step 12. I missed
+it in round 1, and round 2's flow makes it certain to hit.
+
+**Location:** `src/trips_tools.py` `_write_record` (the intro line) and
+`src/yq_inclusion.py` `_check_evidence` (the `BLANK` check over the whole body).
+The Coder's test hides it (see the table above).
+
+### R2-2. Medium: identical bytes for two ids make an honest corpus unreplayable
+
+**Repro:** a stubbed live run with a tmp corpus. B3 (Flying Blue) and B4 (Virgin
+Atlantic) both qualify, and both lookups return `tp.payload([])`. Live, both
+correctly read `EMPTY_DATA`. Then `--from-snapshot` exits 1 with
+`[trips_snapshot_is_another_lookup] ... is a lookup of availability B3..., not of
+B4.... Its bytes say nothing about B4...`.
+
+**Cause:** `_archive_snapshot` de-duplicates snapshots by **content hash across
+requests**, so the second id's manifest row is written as "(re-fetch,
+identical)" and points at the first id's file. The new L13 check
+(`_recorded_id` in `load_trips_replay_set` and `SnapshotTransport.trips_raw`)
+then reads the first id from that file and refuses the whole replay. Its message
+is also false: those bytes are exactly what Seats.aero sent for B4.
+
+It needs two lookups with byte-identical bodies. An empty list with the same
+route coordinates, or the same wrong-shape 2xx, is plausible. The remedy the tool
+offers (delete a row) throws away honest evidence.
+
+**Location:** `src/response_cache.py` `_archive_snapshot` / `_snapshot_with_content`
+combined with `src/snapshot_replay.py` `_recorded_id`. This is a regression
+introduced by fix 7.
+
+### R2-3. Low: `capture`'s one-page search stays in the cache for the next trip run
+
+**Repro:**
+1. `capture --origin LHR --destination SFO --date 2027-01-27 --source
+   virginatlantic`, with a first search page that says `hasMore` and a cursor.
+   It is refused (fix 9), correctly.
+2. A Trip B run inside the TTL, using the same `config.CACHE_DIR`, sends **no**
+   LHR-SFO search.
+3. B4 prints "COVERAGE IS INCOMPLETE: the 1-page safety cap was reached".
+
+`search_raw` caches an incomplete result; only a budget failure is kept out. The
+capture's request key (origin, destination, one day) is the key a trip leg with
+flex 0 uses. The failure is loud and `--refresh` clears it, and it needs a
+one-day search that paginates, hence Low. Before fix 9 the capture followed the
+pages and cached a complete result, so this is a regression introduced by fix 9.
+A capture that sets MAX_PAGES=1 should not write the shared cache (or should
+refuse before caching).
+
+### R2-4. Low: `capture`'s "clean" verdict disagrees with the flip check
+
+**Repro:** `capture --availability-id <id>` with no local row. The route is
+inferred, and `schema_verification_problems` now refuses the file, correctly.
+The tool still exits 0 and prints "CAPTURED CLEAN. To flip the UNVERIFIED label,
+commit both files and set TRIPS_SCHEMA_VERIFIED_BY = '...'". Following that
+advice turns the label test red. It is loud, hence Low. `run_capture` should end
+with the flip check's own verdict.
+
+### R2-5. Low: a crafted capture can still flip the label
+
+**Repro:** take the committed `synthetic/openapi_example.json` page and wrap it
+with `synthetic: false`, `captured_by`, a recomputed content hash, a `.raw.txt`
+equal to the page, an `availability_row` carrying the page's own id, and
+`route_inferred_from_itineraries: false`. `schema_verification_problems`
+returns `[]`.
+
+Fix 8 closed every honest-mistake path I could find, including an empty
+`.raw.txt`, an inferred route, another id's row, and the synthetic example
+re-wrapped the round-1 way. No unsigned check can stop deliberate forgery. The
+one cheap exact closure is missing: refuse a page whose content hash is a
+committed `synthetic/` page's. Hence Low.
+
+### R2-6. Low: "This lookup established nothing further" where nothing was looked up
+
+**Repro:** a `MetalLookup` for CAP_REACHED, TRIPS_OFF or RATE_LIMITED_EARLIER
+(NOT LOOKED UP), or NO_TRIPS_SNAPSHOT (NOT RECORDED), whose row names one
+carrier, renders "... NOT LOOKED UP - the per-run cap ... was reached. **This
+lookup established nothing further**; the award's own carrier list names one
+carrier ...".
+
+Fix 6's single-carrier domain clause is applied to every non-KNOWN status. The
+domain is still right, so this is cosmetic.
+
+**Location:** `src/models.py` `MetalLookup._domain_clause`.
+
+### R2-7. Low: two lines that name the looked-up metal still have no parser label
+
+**Repro:** B4 with a KNOWN `VS19` itinerary. The band note ("modelled carrier
+surcharge for VS metal under Virgin Atlantic Flying Club: $200-$350 ... NOT
+ADDED") and the surcharge note ("... the itinerary lookup names VS by flight
+number, and that metal is NOT used ...") carry no UNVERIFIED parser label.
+
+Fix 2 labelled the two places round 1 named: the alternatives and the yq-check
+block. Neither of these lines moves a number and the band note sits directly
+under the labelled operating-airline line, hence Low. They are the rest of M3's
+class.
+
+## Round-1 findings: closure
+
+Each round-1 probe is green. I also attacked each fix beyond the exact input its
+probe used. The class checks below are new round-2 probes, all green unless
+stated.
+
+| # | Round-1 finding | Closed? | Class checked beyond the probe |
+|---|---|---|---|
+| 1 H | Record's verdict not cross-checked | **Closed** | 12 near-miss verdict lines are refused. These include `includes_yq.`, `includes-yq`, `` `includes_yq` ``, `**includes_yq**`, two verdicts, `inconclusive` with a comment, and `excludes_yq`. `Includes_YQ`, padded values and CRLF records load. The refusals cite the right reason. The end-to-end flow is blocked by R2-1 |
+| 2 M | Record for another source | **Closed** | A title naming two sources, a second `(source flyingblue)` program line, and a `(source X)` elsewhere in the body: all refused for flyingblue |
+| 3 M | Parse-derived lines unlabelled | **Closed for the two named places** | The alternatives note and the yq-check flights and carrier lines carry the label and the marketing caveat. The rest of the class is R2-7 |
+| 4 M | `"<id>\n"` passes the id gate | **Closed** | `\r`, `\t`, space, `\x0b`, `\x0c`, NBSP, line separator, NUL and `\n\n`, before or after the id, and full-width digits or dotless-ı: all refused. The transport sends nothing for `<id>\r` |
+| 5 M | Pagination signals narrower than search | **Closed** | 11 spellings the shared reader knows block KNOWN, and 7 "nothing more" values do not. The search path answers exactly as master on the grid. (Spellings neither path knows, such as `hasNextPage` or `total`, still only appear as drift lines. That is D12, not a defect) |
+| 6 L | Stored `incomplete` dropped | **Closed** | |
+| 7 L | `count` larger than the list | **Closed** | `count: "2"` and `2.0` block; `count: 1` and `"abc"` do not |
+| 8 L | Cap stops counting on an odd exception | **Closed** | |
+| 9 L | Search 429 does not stop trips | **Closed** | After a search 429, a lookup the cache can answer is read (KNOWN, from cache) and nothing is sent |
+| 10 L | Paid lookups printed nowhere | **Closed** | Auto sends no call for a party leg (`NOT_NEEDED_PARTY`, not counted). `--trips all` looks it up and prints it. The couple trip stays WITHHELD, exit 3 |
+| 11 L | Single-carrier "nothing known" | **Closed**; wording issue R2-6 | The legacy `metal:` line is kept, and D29 byte identity holds |
+| 12 L | Truncated trips manifest read as none | **Closed** | An old corpus with no `trips_endpoint/` still replays, and its hash equals master's |
+| 13 L | Replay never checks the file's id | **Closed**; introduced R2-2 | |
+| 14 L | Duplicate id / foreign leg | **Closed** | The same id with the same bytes under two legs is not a conflict (checked on `load_trips_replay_set` directly: a twin flight leg cannot be built into a replayable corpus because the *search* manifest refuses a leg whose search was a cache hit, which predates this feature) |
+| 15 L | Cap before cache; README | **Closed** | `--refresh` after the cap correctly does not read the cache |
+| 16 L | Flip checks weaker than README | **Closed for honest mistakes** | Harmless byte changes to a genuine `.raw.txt` (CRLF, trailing newlines, re-indented, compact, re-ordered keys) still flip. Crafted forgery: R2-5. Tool advice: R2-4 |
+| 17 L | Capture promise vs pagination | **Closed**; introduced R2-3 | |
+| 18 L | Unsanitized capture filename | **Closed** | |
+| 19 L | Closed stdin traceback | **Closed** | |
+| 20 L | yq-check compares untrusted figures | **Closed** | |
+| 21 L | MixedCabinPct not drift | **Closed** | A live lookup still reads KNOWN (VS) with the mixed itinerary excluded; only the flip is blocked |
+| 22 L | `--trips-cap ²` | **Closed** | |
+
+## What I could not break in round 2
+
+Beyond the class checks above:
+- The shared pagination reader did not change the search path.
+- A search 429 stops every trips request, while cached answers are still read.
+- `--refresh` is honoured after the cap.
+- The party skip is free in auto mode and still available under `--trips all`.
+- Mixed-cabin drift blocks only the flip.
+- The new replay refusals let an old corpus, and a same-bytes duplicate, through.
+- A genuine capture flips despite harmless byte changes.
+- Every invariant in the table at the top of this section holds.
