@@ -27,7 +27,9 @@ def record(source="virginatlantic", verdict_line=VERDICT.format(v="includes_yq")
     program_source = program_source or source
     return (
         f"# yq-check record: {source}, 2026-09-10\n\n## Seats.aero\n\n"
-        f"- program: Some Program (source {program_source})\n\n## site\n\n"
+        f"- program: Some Program (source {program_source})\n"
+        f"- itinerary lookup status: KNOWN\n"
+        f"- checked airline (the award's KNOWN flight-number carrier): VS\n\n## site\n\n"
         f"- taxes, fees and carrier-imposed charges for ONE adult: GBP 450.00\n"
         f"{verdict_line}\n"
     )
@@ -38,11 +40,11 @@ def load_with(tmp_path, body, *rows):
     d.mkdir(parents=True, exist_ok=True)
     (d / "rec.md").write_text(body)
     csv = tmp_path / "yq.csv"
-    csv.write_text("source,verdict,verified_on,evidence,notes\n" + "\n".join(rows) + "\n")
+    csv.write_text("source,airline,verdict,verified_on,evidence,notes\n" + "\n".join(rows) + "\n")
     return yq_inclusion.load(csv, today=TODAY, root=tmp_path)
 
 
-ROW = "virginatlantic,{v},2026-09-10,docs/yq-checks/rec.md,x"
+ROW = "virginatlantic,VS,{v},2026-09-10,docs/yq-checks/rec.md,x"
 
 
 @pytest.mark.parametrize("says", ["excludes_yq", "inconclusive", "INCONCLUSIVE", "", "maybe"])
@@ -69,7 +71,7 @@ def test_a_record_for_one_source_cannot_back_another(tmp_path):
         load_with(
             tmp_path, record(),
             ROW.format(v="includes_yq"),
-            "flyingblue,includes_yq,2026-09-10,docs/yq-checks/rec.md,copied",
+            "flyingblue,VS,includes_yq,2026-09-10,docs/yq-checks/rec.md,copied",
         )
 
 
@@ -87,7 +89,7 @@ def test_a_record_with_no_source_title_is_refused(tmp_path):
 @pytest.mark.parametrize("v", ["includes_yq", "excludes_yq"])
 def test_a_matching_record_loads(tmp_path, v):
     table = load_with(tmp_path, record(verdict_line=VERDICT.format(v=v)), ROW.format(v=v))
-    assert table["virginatlantic"].verdict == v
+    assert table[("virginatlantic", "VS")].verdict == v
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +119,7 @@ def test_yq_check_prints_no_row_with_a_verdict_in_it(tmp_path):
     code, out = run_yq(tmp_path)
     assert code == 0
     assert "includes_yq,2026" not in out and "excludes_yq,2026" not in out
-    assert "virginatlantic,<VERDICT>,2026-09-11," in out
+    assert "virginatlantic,VS,<VERDICT>,2026-09-11," in out
 
 
 def test_the_printed_template_pasted_unchanged_is_refused(tmp_path):
@@ -132,11 +134,12 @@ def test_the_printed_template_pasted_unchanged_is_refused(tmp_path):
     csv = tmp_path / "yq.csv"
     for verdict, ok in (("<VERDICT>", False), ("includes_yq", False), ("excludes_yq", True)):
         csv.write_text(
-            "source,verdict,verified_on,evidence,notes\n"
-            f"virginatlantic,{verdict},2026-09-11,{ev},x\n"
+            "source,airline,verdict,verified_on,evidence,notes\n"
+            f"virginatlantic,VS,{verdict},2026-09-11,{ev},x\n"
         )
         if ok:
-            assert yq_inclusion.load(csv, today=TODAY, root=tmp_path)["virginatlantic"].excludes
+            table = yq_inclusion.load(csv, today=TODAY, root=tmp_path)
+            assert table[("virginatlantic", "VS")].excludes
         else:
             with pytest.raises(YqInclusionError):
                 yq_inclusion.load(csv, today=TODAY, root=tmp_path)

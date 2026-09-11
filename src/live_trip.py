@@ -448,6 +448,7 @@ def _taxes_are_the_whole_carrier_cash_figure(
     *,
     yq_verdict=None,
     metal: Optional[MetalLookup] = None,
+    yq_scope_note: str = "",
 ) -> Tuple[bool, str]:
     """
     May `{X}TotalTaxes` be taken as the COMPLETE carrier-side cash figure?
@@ -496,15 +497,19 @@ def _taxes_are_the_whole_carrier_cash_figure(
         )
     source = award.program_source_code or "(no source)"
     if yq_verdict is not None and yq_verdict.includes:
-        # CASE B. The source's taxes were VERIFIED to contain the surcharge, so
+        # CASE B. The source's taxes were VERIFIED to contain the surcharge on
+        # THIS airline (D1: the caller passes a verdict only when the award's
+        # itinerary lookup is KNOWN on the airline the check was run on), so
         # they are the whole carrier figure and no band is added on top.
         return True, (
-            f"Seats.aero's taxes for the {source!r} source were VERIFIED to include "
-            f"carrier-imposed surcharges ({yq_verdict.evidence}, "
-            f"{yq_verdict.verified_on}), so the API's tax figure is taken as the "
-            f"complete carrier-side cash cost and NO modelled surcharge is added "
-            f"on top of it. That check was one flight on one date; it may not "
-            f"hold for every route and metal in this program."
+            f"Seats.aero's taxes for the {source!r} source on {yq_verdict.airline} "
+            f"metal were VERIFIED to include carrier-imposed surcharges "
+            f"({yq_verdict.evidence}, {yq_verdict.verified_on}), and the itinerary "
+            f"lookup names {yq_verdict.airline} by flight number for this award, so "
+            f"the API's tax figure is taken as the complete carrier-side cash cost "
+            f"and NO modelled surcharge is added on top of it. That check was one "
+            f"flight on one date; it may not hold for every route in this program."
+            + _parser_tail()
         )
     if yq_verdict is not None and yq_verdict.excludes:
         if metal is not None and metal.status in (MetalStatus.KNOWN, MetalStatus.AMBIGUOUS):
@@ -543,6 +548,40 @@ def _taxes_are_the_whole_carrier_cash_figure(
         f"it. Adding them could double count; ignoring the surcharge would "
         f"undercount, which is the v0 bug. Reported as a floor plus a break-even "
         f"instead of as a number the tool cannot defend."
+        + (f" {yq_scope_note}" if yq_scope_note else "")
+    )
+
+
+def _known_airline(metal: Optional[MetalLookup]) -> Optional[str]:
+    """The one airline a KNOWN itinerary lookup names, else None (D1)."""
+    if metal is None or metal.status is not MetalStatus.KNOWN or len(metal.carriers) != 1:
+        return None
+    return metal.carriers[0]
+
+
+def _yq_scope_note(source: str, verdicts, metal: Optional[MetalLookup]) -> str:
+    """Why a YQ check recorded for this source does not apply to this award (D1)."""
+    if not verdicts:
+        return ""
+    checked = ", ".join(f"{v.airline} ({v.verdict}, {v.evidence})" for v in verdicts)
+    if metal is None:
+        why = "was never looked up"
+    elif metal.status is MetalStatus.KNOWN and len(metal.carriers) == 1:
+        why = f"is {metal.carriers[0]} by flight number, a different airline"
+    elif metal.status is MetalStatus.KNOWN:
+        why = (
+            f"is several airlines by flight number ({', '.join(metal.carriers)}), "
+            f"not one"
+        )
+    else:
+        why = f"is {metal.status.value.replace('_', ' ').upper()}" + (
+            f" ({metal.reason_code})" if metal.reason_code else ""
+        )
+    return (
+        f"A YQ check is recorded for the {source!r} source on {checked}. It covers "
+        f"only an award whose itinerary lookup is KNOWN on that airline, and this "
+        f"award's operating airline {why}, so the check does not apply here."
+        + _parser_tail()
     )
 
 
@@ -643,9 +682,25 @@ def award_to_candidate(
     from src import yq_inclusion
 
     carriers = list(award.candidate_carriers)
-    yq_verdict = yq_inclusion.verdict_for(award.program_source_code, yq_table or {})
+    # D1: a verdict applies only when the itinerary lookup is KNOWN and names the
+    # one airline the check was run on. Anything else - AMBIGUOUS, UNKNOWN, NOT
+    # LOOKED UP, or another airline - is scored exactly as with no verdict, and
+    # says why the recorded check does not reach it.
+    yq_verdict = yq_inclusion.verdict_for(
+        award.program_source_code, _known_airline(metal), yq_table
+    )
+    yq_scope_note = (
+        ""
+        if yq_verdict is not None
+        else _yq_scope_note(
+            award.program_source_code or "(no source)",
+            yq_inclusion.verdicts_for_source(award.program_source_code, yq_table),
+            metal,
+        )
+    )
     scoreable, why = _taxes_are_the_whole_carrier_cash_figure(
-        leg, award, surcharges, yq_verdict=yq_verdict, metal=metal
+        leg, award, surcharges, yq_verdict=yq_verdict, metal=metal,
+        yq_scope_note=yq_scope_note,
     )
     policy_zero = bool(scoreable) and not (yq_verdict is not None and yq_verdict.includes)
     band_from_metal = bool(
@@ -872,7 +927,8 @@ def _metal_band_note(leg, award, surcharges, metal, yq_verdict, policy_zero) -> 
         f"modelled carrier surcharge for {carriers} metal under {award.program}: "
         f"{est.render()} one-way - NOT ADDED: whether Seats.aero's taxes for "
         f"{source!r} already include it is UNVERIFIED (data/yq_inclusion.csv has "
-        f"no row for {source!r}), so adding it could double count.{tail}"
+        f"no row for {source!r} on {carriers} metal), so adding it could double "
+        f"count.{tail}"
     )
 
 

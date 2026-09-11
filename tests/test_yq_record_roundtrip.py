@@ -39,7 +39,7 @@ def _check(tmp_path, monkeypatch):
         out.split("<VERDICT> replaced by that same word:", 1)[1]
         .split(" An inconclusive check", 1)[0].strip()
     )
-    assert template.startswith("virginatlantic,<VERDICT>,2026-09-11,docs/yq-checks/"), template
+    assert template.startswith("virginatlantic,VS,<VERDICT>,2026-09-11,docs/yq-checks/"), template
     return next(rec_dir.glob("*.md")), template
 
 
@@ -61,10 +61,10 @@ def test_a_record_filled_as_instructed_loads(tmp_path, monkeypatch):
     _fill(rec, "includes_yq")
     csv = tmp_path / "yq.csv"
     csv.write_text(
-        "source,verdict,verified_on,evidence,notes\n"
+        "source,airline,verdict,verified_on,evidence,notes\n"
         + template.replace("<VERDICT>", "includes_yq") + "\n"
     )
-    assert yq_inclusion.load(csv, today=TODAY, root=tmp_path)["virginatlantic"].includes
+    assert yq_inclusion.load(csv, today=TODAY, root=tmp_path)[("virginatlantic", "VS")].includes
 
 
 def test_one_field_left_blank_is_still_refused(tmp_path, monkeypatch):
@@ -75,7 +75,7 @@ def test_one_field_left_blank_is_still_refused(tmp_path, monkeypatch):
     rec.write_text(rec.read_text().replace("- date checked: 2026-09-12", "- date checked: ____"))
     csv = tmp_path / "yq.csv"
     csv.write_text(
-        "source,verdict,verified_on,evidence,notes\n"
+        "source,airline,verdict,verified_on,evidence,notes\n"
         + template.replace("<VERDICT>", "includes_yq") + "\n"
     )
     with pytest.raises(yq_inclusion.YqInclusionError, match="blanks"):

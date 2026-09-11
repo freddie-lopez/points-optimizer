@@ -659,6 +659,17 @@ def _inconclusive_warning(cap: "Capture", args) -> str:
     return ""
 
 
+def _checked_airline(cap: "Capture", args) -> Tuple[str, str]:
+    """(itinerary lookup status, the one KNOWN airline or "") for the checked cabin (D1)."""
+    lookup = cap.lookups.get(args.cabin.upper())
+    if lookup is None:
+        return "NONE", ""
+    status = lookup.status.value.replace("_", " ").upper()
+    if lookup.status is MetalStatus.KNOWN and len(lookup.carriers) == 1:
+        return status, lookup.carriers[0]
+    return status, ""
+
+
 def _write_record(cap: "Capture", args, fields: Dict[str, str], today: date, warning: str) -> Path:
     source = args.source.strip().lower()
     record_dir = Path(args.record_dir) if args.record_dir else DEFAULT_RECORD_DIR
@@ -679,7 +690,15 @@ def _write_record(cap: "Capture", args, fields: Dict[str, str], today: date, war
         "",
     ]
     lines += [f"- {key}: {value}" for key, value in fields.items()]
+    # D1: the verdict this record backs covers ONE airline, the one the lookup
+    # KNOWS. The loader reads both lines; a record without one KNOWN airline
+    # backs nothing.
+    status, airline = _checked_airline(cap, args)
     lines += [
+        f"- itinerary lookup status: {status}",
+        "- checked airline (the award's KNOWN flight-number carrier): "
+        + (airline or "NONE - the lookup did not name one KNOWN airline, so this "
+           "record cannot back a verdict"),
         f"- capture: {cap.path.name if cap.path else '(none)'}",
     ]
     if warning:
@@ -767,6 +786,16 @@ def run_yq_check(args, console: Console, read, today: date) -> int:
     # from there, and the loader refuses a row whose verdict differs from its
     # record's (or a record that says inconclusive) - so a pre-filled row that
     # is one line off can never be pasted in and scored.
+    status, airline = _checked_airline(cap, args)
+    if not airline:
+        console.print(
+            f"[bold yellow]This check cannot back a verdict: the itinerary lookup "
+            f"for cabin {escape(args.cabin.upper())} is {escape(status)}, not one KNOWN "
+            f"airline, and a verdict covers only the airline it was checked on. "
+            f"Record nothing from it; pick a flight the program's own airline "
+            f"operates.[/bold yellow]"
+        )
+        return code
     console.print(
         "When every ____ is filled, and ONLY if the record's verdict line says "
         "includes_yq or excludes_yq, add this row to data/yq_inclusion.csv with "
@@ -774,7 +803,7 @@ def run_yq_check(args, console: Console, read, today: date) -> int:
     )
     console.print(
         escape(
-            f"  {source},<VERDICT>,{today.isoformat()},{evidence},"
+            f"  {source},{airline},<VERDICT>,{today.isoformat()},{evidence},"
             f"{args.origin.upper()}-{args.destination.upper()} {args.cabin.upper()} "
             f"{args.date}"
         )

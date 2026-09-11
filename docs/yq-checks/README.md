@@ -11,8 +11,8 @@ blanks from the program's site (taxes, fees and carrier-imposed charges for ONE
 adult on the SAME flight), then add ONE row to `data/yq_inclusion.csv`:
 
 ```
-source,verdict,verified_on,evidence,notes
-virginatlantic,includes_yq,2026-09-12,docs/yq-checks/2026-09-12-virginatlantic.md,JFK-LHR J on VS metal
+source,airline,verdict,verified_on,evidence,notes
+virginatlantic,VS,includes_yq,2026-09-12,docs/yq-checks/2026-09-12-virginatlantic.md,JFK-LHR J on VS metal
 ```
 
 - About equal to the row figure: `includes_yq`.
@@ -26,5 +26,8 @@ also refuses a record that is for another source (its `# yq-check record:
 verdict is not the word on the record's one verdict line - including a record
 that says `inconclusive`. yq-check prints the row with `<VERDICT>` in it, never a
 verdict, for exactly that reason.
-A verdict is per SOURCE and rests on one flight; it may not carry over to other
-metal or other routes in the same program.
+A verdict is per SOURCE AND AIRLINE (decision D1): it applies only to awards
+whose itinerary lookup is KNOWN on the airline the check was run on, which
+yq-check writes into the record ("itinerary lookup status" and "checked
+airline"); the loader refuses a record whose lookup was not KNOWN or names
+another airline. It rests on one flight and may not carry over to other routes.

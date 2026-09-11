@@ -322,7 +322,7 @@ def test_yq_check_prints_every_field_and_writes_a_record_with_blanks(tmp_path):
     text = record.read_text()
     assert "yq-check record" in text
     assert "____" in text
-    assert f"virginatlantic,<VERDICT>,2026-09-11,{record}," in out
+    assert f"virginatlantic,VS,<VERDICT>,2026-09-11,{record}," in out
     assert "virginatlantic,includes_yq" not in out and "virginatlantic,excludes_yq" not in out
     assert "likely INCONCLUSIVE" not in out
 
@@ -335,7 +335,7 @@ def test_the_record_it_writes_is_refused_until_the_blanks_are_filled(tmp_path):
     (tmp_path / "docs" / "yq-checks").mkdir(parents=True)
     (tmp_path / rel).write_text((tmp_path / "records" / "2026-09-11-virginatlantic.md").read_text())
     table = tmp_path / "yq.csv"
-    table.write_text(f"source,verdict,verified_on,evidence,notes\nvirginatlantic,includes_yq,2026-09-11,{rel},\n")
+    table.write_text(f"source,airline,verdict,verified_on,evidence,notes\nvirginatlantic,VS,includes_yq,2026-09-11,{rel},\n")
     with pytest.raises(YqInclusionError, match="blanks"):
         load(table, today=TODAY, root=tmp_path)
     # Fill the five FIELD lines exactly as the record asks, and nothing else: a
@@ -356,7 +356,7 @@ def test_the_record_it_writes_is_refused_until_the_blanks_are_filled(tmp_path):
         assert text.count(blank) == 1, blank
         text = text.replace(blank, filled)
     (tmp_path / rel).write_text(text)
-    assert load(table, today=TODAY, root=tmp_path)["virginatlantic"].includes
+    assert load(table, today=TODAY, root=tmp_path)[("virginatlantic", "VS")].includes
 
 
 def test_yq_check_refuses_qatar_before_any_call(tmp_path):

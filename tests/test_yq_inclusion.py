@@ -31,8 +31,13 @@ EVIDENCE = "docs/yq-checks/2026-09-10-virginatlantic.md"
 FB_ID = "B1flyingblueAAAAAAAAAAAAAA1"
 
 
-def verdict(source="virginatlantic", which="includes_yq", evidence=EVIDENCE):
-    return {source: YqVerdict(source, which, date(2026, 9, 10), evidence)}
+# The airline each test verdict was "checked on" (D1: a verdict covers one airline).
+CHECKED_ON = {"virginatlantic": "VS", "flyingblue": "AF"}
+
+
+def verdict(source="virginatlantic", which="includes_yq", evidence=EVIDENCE, airline=None):
+    airline = airline or CHECKED_ON[source]
+    return {(source, airline): YqVerdict(source, airline, which, date(2026, 9, 10), evidence)}
 
 
 @pytest.fixture
@@ -115,7 +120,7 @@ def codes(result):
 
 def test_the_committed_table_is_header_only():
     text = (ROOT / "data" / "yq_inclusion.csv").read_text()
-    assert text.strip() == "source,verdict,verified_on,evidence,notes"
+    assert text.strip() == "source,airline,verdict,verified_on,evidence,notes"
     assert yq_inclusion.load() == {}
 
 
@@ -155,9 +160,50 @@ def test_includes_yq_scores_at_taxes_only_and_names_the_evidence(rm):
     assert f"VERIFIED to include carrier-imposed surcharges (evidence: {EVIDENCE})" in out
 
 
-def test_includes_yq_does_not_need_the_metal(rm):
-    legs, _ = scored(rm, verdict(which="includes_yq"), trips_mode="off")
-    assert legs["B4"].points_total_score_usd != float("inf")
+class DLStub(Stub):
+    """B4's itinerary list names a DL flight, or VS and DL (AMBIGUOUS)."""
+
+    def __init__(self, flights):
+        super().__init__(trips_payloads={B4_ID: tp.payload([
+            tp.vs_direct(f, trip_id=f"t{i}") for i, f in enumerate(flights)
+        ])})
+
+
+@pytest.mark.parametrize(
+    "trips_mode,stub,why",
+    [
+        ("off", None, "is NOT LOOKED UP (TRIPS_OFF)"),
+        ("auto", Stub(trips_status={B4_ID: 404}), "is UNKNOWN (HTTP_404)"),
+        ("auto", DLStub(["DL41"]), "is DL by flight number, a different airline"),
+        ("auto", DLStub(["VS19", "DL41"]), "is AMBIGUOUS"),
+    ],
+    ids=["not_looked_up", "unknown", "other_airline", "ambiguous"],
+)
+@pytest.mark.parametrize("which", ["includes_yq", "excludes_yq"])
+def test_a_verdict_covers_only_known_metal_on_its_airline(rm, trips_mode, stub, why, which):
+    """D1 (b): anything but KNOWN metal on the checked airline scores as unverified."""
+    legs, _ = scored(rm, verdict(which=which), trips_mode=trips_mode, stub=stub)
+    b4 = legs["B4"]
+    assert b4.points_total_score_usd == float("inf")
+    assert "SURCHARGE_UNKNOWN" in codes(b4)
+    assert "TAXES_UNKNOWN" not in codes(b4)
+    note = b4.best_points.source_note
+    assert "A YQ check is recorded for the 'virginatlantic' source on VS" in note
+    assert f"this award's operating airline {why}" in note
+    assert "so the check does not apply here" in note
+    assert not b4.best_points.observed_taxes_are_the_surcharge
+    # Exactly as with no verdict: the same numbers.
+    SeatsClient.CACHE.clear()
+    none, _ = scored(rm, None, trips_mode=trips_mode, stub=stub)
+    assert none["B4"].points_floor_usd == b4.points_floor_usd
+    assert codes(none["B4"]) == codes(b4)
+
+
+def test_a_verdict_for_another_airline_does_not_reach_vs_metal(rm):
+    legs, _ = scored(rm, verdict(which="includes_yq", airline="AF"))
+    b4 = legs["B4"]
+    assert b4.points_total_score_usd == float("inf")
+    assert "is VS by flight number, a different airline" in b4.best_points.source_note
 
 
 # ---------------------------------------------------------------------------
@@ -183,34 +229,31 @@ def test_excludes_yq_with_known_vs_adds_the_halved_band_to_the_taxes(rm):
     assert not cand.observed_taxes_are_the_surcharge
 
 
-@pytest.mark.parametrize(
-    "trips_mode,stub",
-    [("off", None), ("auto", Stub(trips_status={B4_ID: 404}))],
-    ids=["not_looked_up", "unknown"],
-)
-def test_excludes_yq_without_known_metal_is_unscoreable_surcharge_unknown(rm, trips_mode, stub):
-    legs, _ = scored(rm, verdict(which="excludes_yq"), trips_mode=trips_mode, stub=stub)
-    b4 = legs["B4"]
-    assert b4.points_total_score_usd == float("inf")
-    assert "SURCHARGE_UNKNOWN" in codes(b4)
-    assert "TAXES_UNKNOWN" not in codes(b4)
-    assert "VERIFIED to EXCLUDE" in b4.best_points.source_note
+@pytest.mark.usefixtures("unverified_constants")
+def test_flying_blue_checked_on_af_adds_the_af_band_to_an_af_itinerary(rm):
+    stub = FBStub([tp.segment("AF84", "SFO", "MAD", 1)])
+    legs, _ = scored(rm, verdict("flyingblue", "excludes_yq"), stub=stub)
+    b1 = legs["B1"]
+    metal = b1.best_points.metal
+    assert metal.status is MetalStatus.KNOWN and metal.carriers == ("AF",)
+    assert b1.best_points.carrier_source == "seats_aero_trips"
+    assert b1.surcharge.is_known
 
 
 @pytest.mark.usefixtures("unverified_constants")
-def test_flying_blue_on_an_af_kl_itinerary_resolves_together(rm):
+def test_flying_blue_on_an_af_kl_itinerary_is_not_covered_by_an_af_check(rm):
+    """D1 (b): KNOWN on two airlines is not the one airline the check was run on."""
     stub = FBStub([tp.segment("KL606", "SFO", "AMS", 1), tp.segment("AF1401", "AMS", "MAD", 2)])
     legs, _ = scored(rm, verdict("flyingblue", "excludes_yq"), stub=stub)
     b1 = legs["B1"]
     metal = b1.best_points.metal
     assert metal.status is MetalStatus.KNOWN and set(metal.carriers) == {"KL", "AF"}
-    assert b1.surcharge.is_known
-    assert (b1.surcharge.amount_low, b1.surcharge.amount_high) == (75.0, 125.0)
-    assert "OPERATING METAL AMBIGUOUS" in b1.surcharge.notes
+    assert b1.points_total_score_usd == float("inf")
+    assert "is several airlines by flight number" in b1.best_points.source_note
 
 
 @pytest.mark.usefixtures("unverified_constants")
-def test_flying_blue_ambiguous_af_or_kl_resolves_too(rm):
+def test_flying_blue_ambiguous_af_or_kl_is_not_covered_by_an_af_check(rm):
     stub = FBStub([tp.segment("KL606", "SFO", "MAD", 1)])
     stub.trips_payloads[FB_ID]["data"].append(tp.trip(
         [tp.segment("AF84", "SFO", "MAD", 1)], trip_id="t2", availability_id=FB_ID,
@@ -219,7 +262,8 @@ def test_flying_blue_ambiguous_af_or_kl_resolves_too(rm):
     legs, _ = scored(rm, verdict("flyingblue", "excludes_yq"), stub=stub)
     b1 = legs["B1"]
     assert b1.best_points.metal.status is MetalStatus.AMBIGUOUS
-    assert b1.surcharge.is_known
+    assert b1.points_total_score_usd == float("inf")
+    assert "is AMBIGUOUS" in b1.best_points.source_note
 
 
 @pytest.mark.usefixtures("unverified_constants")
@@ -228,7 +272,6 @@ def test_flying_blue_on_af_plus_dl_does_not_resolve(rm):
     legs, _ = scored(rm, verdict("flyingblue", "excludes_yq"), stub=stub)
     b1 = legs["B1"]
     assert b1.best_points.metal.status is MetalStatus.KNOWN
-    assert not b1.surcharge.is_known
     assert b1.points_total_score_usd == float("inf")
     assert "SURCHARGE_UNKNOWN" in codes(b1)
 
@@ -269,7 +312,9 @@ def test_untrusted_taxes_stay_unscoreable_under_both_verdicts(rm, which, cents):
 
 GOOD_RECORD = (
     "# yq-check record: virginatlantic, 2026-09-10\n\n## Seats.aero\n\n"
-    "- program: Virgin Atlantic Flying Club (source virginatlantic)\n\n"
+    "- program: Virgin Atlantic Flying Club (source virginatlantic)\n"
+    "- itinerary lookup status: KNOWN\n"
+    "- checked airline (the award's KNOWN flight-number carrier): VS\n\n"
     "## virginatlantic.com\n\n- taxes, fees and carrier-imposed charges for ONE adult: "
     "GBP 450.00\n- verdict (includes_yq / excludes_yq / inconclusive): includes_yq\n"
 )
@@ -281,7 +326,7 @@ def _root(tmp_path, record=GOOD_RECORD, name="2026-09-10-virginatlantic.md"):
     return tmp_path
 
 
-def _table(tmp_path, *rows, header="source,verdict,verified_on,evidence,notes"):
+def _table(tmp_path, *rows, header="source,airline,verdict,verified_on,evidence,notes"):
     path = tmp_path / "yq.csv"
     path.write_text("\n".join([header, *rows]) + "\n")
     return path
@@ -293,23 +338,27 @@ def _load(tmp_path, *rows, **kw):
 
 def test_a_valid_row_loads(tmp_path):
     _root(tmp_path)
-    table = _load(tmp_path, f"virginatlantic,includes_yq,2026-09-10,{EVIDENCE},JFK-LHR J")
-    assert table["virginatlantic"].includes
-    assert table["virginatlantic"].notes == "JFK-LHR J"
+    table = _load(tmp_path, f"virginatlantic,VS,includes_yq,2026-09-10,{EVIDENCE},JFK-LHR J")
+    assert table[("virginatlantic", "VS")].includes
+    assert table[("virginatlantic", "VS")].airline == "VS"
+    assert table[("virginatlantic", "VS")].notes == "JFK-LHR J"
 
 
 BAD = {
-    "not_a_source": f"britishairways,includes_yq,2026-09-10,{EVIDENCE},",
-    "unreported_source": f"qatar,includes_yq,2026-09-10,{EVIDENCE},",
-    "verdict_unverified": f"virginatlantic,unverified,2026-09-10,{EVIDENCE},",
-    "verdict_misspelt": f"virginatlantic,include_yq,2026-09-10,{EVIDENCE},",
-    "future_date": f"virginatlantic,includes_yq,2026-09-12,{EVIDENCE},",
-    "unparseable_date": f"virginatlantic,includes_yq,10/09/2026,{EVIDENCE},",
-    "evidence_missing": "virginatlantic,includes_yq,2026-09-10,docs/yq-checks/nope.md,",
-    "evidence_blank": "virginatlantic,includes_yq,2026-09-10,,",
-    "evidence_outside": "virginatlantic,includes_yq,2026-09-10,README.md,",
-    "evidence_absolute": "virginatlantic,includes_yq,2026-09-10,/etc/passwd,",
-    "evidence_dotdot": "virginatlantic,includes_yq,2026-09-10,docs/yq-checks/../../README.md,",
+    "not_a_source": f"britishairways,VS,includes_yq,2026-09-10,{EVIDENCE},",
+    "unreported_source": f"qatar,VS,includes_yq,2026-09-10,{EVIDENCE},",
+    "verdict_unverified": f"virginatlantic,VS,unverified,2026-09-10,{EVIDENCE},",
+    "verdict_misspelt": f"virginatlantic,VS,include_yq,2026-09-10,{EVIDENCE},",
+    "future_date": f"virginatlantic,VS,includes_yq,2026-09-12,{EVIDENCE},",
+    "unparseable_date": f"virginatlantic,VS,includes_yq,10/09/2026,{EVIDENCE},",
+    "evidence_missing": "virginatlantic,VS,includes_yq,2026-09-10,docs/yq-checks/nope.md,",
+    "evidence_blank": "virginatlantic,VS,includes_yq,2026-09-10,,",
+    "evidence_outside": "virginatlantic,VS,includes_yq,2026-09-10,README.md,",
+    "evidence_absolute": "virginatlantic,VS,includes_yq,2026-09-10,/etc/passwd,",
+    "evidence_dotdot": "virginatlantic,VS,includes_yq,2026-09-10,docs/yq-checks/../../README.md,",
+    "airline_blank": f"virginatlantic,,includes_yq,2026-09-10,{EVIDENCE},",
+    "airline_name": f"virginatlantic,Virgin,includes_yq,2026-09-10,{EVIDENCE},",
+    "airline_other_than_the_record": f"virginatlantic,DL,includes_yq,2026-09-10,{EVIDENCE},",
 }
 
 
@@ -323,7 +372,7 @@ def test_the_validator_refuses_a_bad_row(tmp_path, name):
 
 def test_the_validator_refuses_a_duplicate_source(tmp_path):
     _root(tmp_path)
-    row = f"virginatlantic,includes_yq,2026-09-10,{EVIDENCE},"
+    row = f"virginatlantic,VS,includes_yq,2026-09-10,{EVIDENCE},"
     with pytest.raises(YqInclusionError, match="twice"):
         _load(tmp_path, row, row)
 
@@ -331,19 +380,19 @@ def test_the_validator_refuses_a_duplicate_source(tmp_path):
 def test_the_validator_refuses_a_record_without_the_marker(tmp_path):
     _root(tmp_path, record=GOOD_RECORD.replace("yq-check record", "notes"))
     with pytest.raises(YqInclusionError, match="marker"):
-        _load(tmp_path, f"virginatlantic,includes_yq,2026-09-10,{EVIDENCE},")
+        _load(tmp_path, f"virginatlantic,VS,includes_yq,2026-09-10,{EVIDENCE},")
 
 
 def test_the_validator_refuses_a_record_with_blanks(tmp_path):
     _root(tmp_path, record=GOOD_RECORD.replace("GBP 450.00", "____"))
     with pytest.raises(YqInclusionError, match="blanks"):
-        _load(tmp_path, f"virginatlantic,includes_yq,2026-09-10,{EVIDENCE},")
+        _load(tmp_path, f"virginatlantic,VS,includes_yq,2026-09-10,{EVIDENCE},")
 
 
 def test_the_validator_refuses_a_wrong_header(tmp_path):
     _root(tmp_path)
     with pytest.raises(YqInclusionError, match="columns"):
-        _load(tmp_path, header="source,verdict,verified_on,evidence")
+        _load(tmp_path, header="source,verdict,verified_on,evidence,notes")
 
 
 def test_a_missing_table_is_an_error_not_an_empty_table(tmp_path):
@@ -352,7 +401,7 @@ def test_a_missing_table_is_an_error_not_an_empty_table(tmp_path):
 
 
 def test_a_bad_committed_table_stops_a_live_run_with_exit_1(tmp_path, monkeypatch, capsys):
-    bad = _table(tmp_path, "qatar,includes_yq,2026-09-10,docs/yq-checks/x.md,")
+    bad = _table(tmp_path, "qatar,QR,includes_yq,2026-09-10,docs/yq-checks/x.md,")
     monkeypatch.setattr(yq_inclusion, "YQ_TABLE_PATH", bad)
     monkeypatch.setenv("SEATS_AERO_KEY", "k_test_000000000000")
     from tests.test_from_snapshot import run_cli

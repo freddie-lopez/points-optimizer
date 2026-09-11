@@ -453,24 +453,40 @@ the award's taxes UNKNOWN; a lower one is disclosed only.
 
 ### The YQ question
 
-`data/yq_inclusion.csv` (`source,verdict,verified_on,evidence,notes`) holds one
-verdict per Seats.aero source. It is committed with the header only. **An absent
-row means unverified; a row can never say "unverified".** The loader refuses a
-source it does not map, a source whose taxes Seats.aero does not report, a
-verdict other than `includes_yq` / `excludes_yq`, a future date, a duplicate, and
-evidence that is missing, outside `docs/yq-checks/`, lacks the `yq-check record`
-marker or still has `____` blanks. The record must also be **for the row's
-source** (its title and program line name it) and its **one verdict line must say
-the row's verdict**; a record that says `inconclusive` backs nothing. Two
-independent statements that must agree, so a verdict copied from another
-source's record, or typed differently from the one written after reading the
-airline's site, is refused rather than scored.
+`data/yq_inclusion.csv` (`source,airline,verdict,verified_on,evidence,notes`)
+holds one verdict per Seats.aero **source and airline**. It is committed with the
+header only. **An absent row means unverified; a row can never say
+"unverified".** The loader refuses a source it does not map, a source whose taxes
+Seats.aero does not report, an `airline` that is not a two-character code, a
+verdict other than `includes_yq` / `excludes_yq`, a future date, a duplicate
+(source, airline), and evidence that is missing, outside `docs/yq-checks/`, lacks
+the `yq-check record` marker or still has `____` blanks. The record must also be
+**for the row's source** (its title and program line name it), its **one verdict
+line must say the row's verdict** (a record that says `inconclusive` backs
+nothing), and it must record an itinerary lookup that was **KNOWN on the row's
+airline** (yq-check writes both lines). Independent statements that must agree,
+so a verdict copied from another source's or airline's record, or typed
+differently from the one written after reading the airline's site, is refused
+rather than scored.
 
-| Source verdict | Scored cash side of a live award (trusted taxes only) |
+**Decision D1: a verdict covers only the airline it was checked on.** A row
+applies to an award only when that award's own itinerary lookup is KNOWN and
+names exactly the row's airline. A Virgin Atlantic check on a VS flight says
+nothing about how Seats.aero builds the taxes figure for a Virgin Atlantic award
+on an Air France or KLM flight, so that award stays unscoreable - AMBIGUOUS,
+UNKNOWN, NOT LOOKED UP, a different airline and a multi-airline itinerary all
+score exactly as with no row, and the award's line says which check exists and
+why it does not reach it. This was chosen while the table is empty because it is
+cheap now and expensive once numbers have been quoted. **It is reversible:** the
+other option (a) is one verdict per source whatever the metal; choosing it later
+means dropping the `airline` column's role in `live_trip.award_to_candidate` (use
+`verdicts_for_source`) and saying so here.
+
+| Verdict for (source, the award's KNOWN airline) | Scored cash side of a live award (trusted taxes only) |
 |---|---|
 | no row (the default) | today's rule: scoreable only under a program-wide $0 surcharge. Known metal's modelled band is printed and marked **NOT ADDED** |
 | `includes_yq` | the API's taxes are the whole carrier figure; **no band is added**, and the line names the evidence file |
-| `excludes_yq` | the taxes **plus** the modelled band for the looked-up metal (KNOWN or AMBIGUOUS, resolved together across its carriers); anything else stays unscoreable as `SURCHARGE_UNKNOWN` |
+| `excludes_yq` | the taxes **plus** the modelled band for that airline |
 
 Untrusted taxes (unreported source, 0, negative, unconvertible, below UK APD)
 are unscoreable under every verdict, exactly as before.
@@ -716,7 +732,8 @@ Every verdict the code can produce is listed here;
 - **A flight number names the MARKETING carrier.** A codeshare between two
   carriers that are both in the award's own list cannot be detected.
 - **No YQ verdict exists yet**, so a lookup changes no number. One verdict is per
-  source and rests on one flight; it may not carry over to other metal or routes.
+  source and airline and rests on one flight; it may not carry over to other
+  routes, and by decision D1 it never carries over to other metal.
 - **The trips call budget is per process.** It cannot see your other runs today;
   Seats.aero's real limit shows up as HTTP 429. A 429 on any search or itinerary
   lookup in a run stops every later trips REQUEST in that run; a lookup the disk
