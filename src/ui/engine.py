@@ -104,6 +104,15 @@ def display_path(p: Path) -> str:
         return str(p)
 
 
+def path_arg(p: Path) -> str:
+    """A path for an argv: relative to the working directory when it is inside
+    it (so "Equivalent command" reads the way it would be typed), else absolute."""
+    try:
+        return str(Path(p).resolve().relative_to(Path.cwd().resolve()))
+    except ValueError:
+        return str(Path(p).resolve())
+
+
 class Engine:
     def __init__(
         self,
@@ -325,6 +334,181 @@ class Engine:
             "running": self._lock.locked(),
         }
 
+    # ---------------------------------------------------------------- trips
+
+    def _trip_files(self) -> Dict[str, Path]:
+        """id -> path for every fixture file in the trips directory. `*_answer.json`
+        (acceptance ANSWER files) are excluded; nothing else is hidden."""
+        from src.trip_builder import _SAFE_NAME
+
+        out: Dict[str, Path] = {}
+        if not self.trips_dir.is_dir():
+            return out
+        for p in sorted(self.trips_dir.glob("*.json")):
+            if p.name.endswith("_answer.json") or not p.is_file():
+                continue
+            if not _SAFE_NAME.match(p.stem) or ".." in p.stem:
+                continue
+            out[p.stem] = p
+        return out
+
+    def trip_path(self, trip_id: str) -> Path:
+        """Resolve a trip id ONLY against the current listing. Never joined."""
+        files = self._trip_files()
+        if trip_id not in files:
+            raise ApiError(404, "not_found", f"No trip {trip_id!r} in {display_path(self.trips_dir)}.")
+        return files[trip_id]
+
+    def fixture_arg(self, path: Path) -> str:
+        """What goes after --trip-fixture: the bare filename when the CLI would
+        find this very file by it, the full path otherwise."""
+        if (path.parent.resolve() == Path(cli.FIXTURE_DIR).resolve()
+                and not Path(path.name).exists()):
+            return path.name
+        return str(path)
+
+    def list_trips(self) -> List[Dict[str, Any]]:
+        from src.trip_builder import LIVE_ONLY_FLAG
+        from src.trip_loader import load_trip_fixture
+
+        out = []
+        for trip_id, path in self._trip_files().items():
+            row: Dict[str, Any] = {"id": trip_id, "file": path.name, "load_error": None}
+            try:
+                fx = load_trip_fixture(path)
+            except Exception as e:  # noqa: BLE001 - listed, never hidden
+                row.update(name=trip_id, legs=None, flights=None, hotels=None,
+                           max_flight_travellers=None, fixture_has_points_prices=None,
+                           live_only=None, load_error=f"{type(e).__name__}: {e}")
+                out.append(row)
+                continue
+            flights = [l for l in fx.legs if l.kind == "flight"]
+            row.update(
+                name=fx.name,
+                legs=len(fx.legs),
+                flights=len(flights),
+                hotels=sum(1 for l in fx.legs if l.kind == "hotel"),
+                max_flight_travellers=max((l.travelers for l in flights), default=0),
+                fixture_has_points_prices=any(l.points_candidates for l in flights),
+                live_only=LIVE_ONLY_FLAG in fx.trip_level_flags,
+                flight_legs_queryable=sum(1 for l in flights if l.origin and l.destination),
+            )
+            out.append(row)
+        return out
+
+    def trip_detail(self, trip_id: str) -> Dict[str, Any]:
+        from src.trip_loader import load_trip_fixture
+
+        from src.ui import serialize
+
+        path = self.trip_path(trip_id)
+        try:
+            fx = load_trip_fixture(path)
+        except Exception as e:  # noqa: BLE001
+            raise ApiError(422, "cannot_load", f"{type(e).__name__}: {e}")
+        return serialize.fixture_detail(trip_id, path, fx)
+
+    def _trip_options(self, trip_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Every UI field validated BEFORE an argv exists (argparse would exit)."""
+        mode = body.get("mode")
+        if mode not in ("live", "replay", "offline"):
+            raise ApiError(400, "invalid_option", "mode must be live, replay or offline.")
+        raw = body.get("options") or {}
+        if not isinstance(raw, dict):
+            raise ApiError(400, "invalid_option", "options must be an object.")
+        opts: Dict[str, Any] = {"mode": mode}
+        td = str(raw.get("transfer_date") or "").strip()
+        if td:
+            try:
+                datetime.strptime(td, "%Y-%m-%d")
+            except ValueError:
+                raise ApiError(400, "invalid_option",
+                               f"Transfer date {td!r} is not an ISO date (YYYY-MM-DD).",
+                               field="transfer_date")
+        opts["transfer_date"] = td or None
+        if mode == "live":
+            opts["flex_days"] = _int_in(raw.get("flex_days", 0), 0, FLEX_MAX, "flex_days",
+                                        "Flex days")
+            trips = raw.get("trips", "auto")
+            if trips not in ("auto", "all", "off"):
+                raise ApiError(400, "invalid_option",
+                               "Operating-airline lookup must be auto, all or off.",
+                               field="trips")
+            opts["trips"] = trips
+            opts["trips_cap"] = _int_in(raw.get("trips_cap", 10), 1, 50, "trips_cap",
+                                        "Lookup cap")
+            opts["refresh"] = raw.get("refresh", False) is True
+        if mode == "replay":
+            manifests = _replay_manifest_candidates()
+            mid = raw.get("manifest_id", 0)
+            if isinstance(mid, bool) or not isinstance(mid, int) or not 0 <= mid < len(manifests):
+                raise ApiError(400, "invalid_option",
+                               "That replay manifest is not in the list this app offers.",
+                               field="manifest_id")
+            opts["manifest"] = manifests[mid]
+            opts["manifest_id"] = mid
+        return opts
+
+    def trip_argv(self, path: Path, opts: Dict[str, Any]) -> List[str]:
+        argv = ["--trip-fixture", self.fixture_arg(path)]
+        if opts["mode"] == "offline":
+            argv.append("--offline")
+        elif opts["mode"] == "replay":
+            argv += ["--from-snapshot", path_arg(opts["manifest"])]
+        else:
+            argv += ["--live", "--trips", opts["trips"], "--trips-cap", str(opts["trips_cap"])]
+            if opts["flex_days"]:
+                argv += ["--flex-days", str(opts["flex_days"])]
+            if opts["refresh"]:
+                argv.append("--refresh")
+        argv += self.wallet_argv()
+        if opts.get("transfer_date"):
+            argv += ["--transfer-date", opts["transfer_date"]]
+        # Display only: every same-metal alternative the CLI would print is in
+        # the drawer anyway, and the transcript then matches the CLI's.
+        argv.append("--show-alternatives")
+        return argv
+
+    def trip_preflight(self, trip_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        path = self.trip_path(trip_id)
+        opts = self._trip_options(trip_id, body or {})
+        if opts["mode"] != "offline":
+            raise ApiError(400, "invalid_option", "Only OFFLINE runs are wired up so far.")
+        argv = self.trip_argv(path, opts)
+        return {
+            "mode": opts["mode"],
+            "argv_display": shlex.join(PROG + argv),
+            "max_calls": 0,
+            "confirm_id": None,
+            "blocked": self._blocked(opts["mode"]),
+            "calls": self.calls_state(),
+        }
+
+    def _blocked(self, mode: str) -> Optional[Dict[str, str]]:
+        """Why this run would be refused before it starts, in the CLI's words.
+        The run itself still goes through dispatch, which refuses it the same way."""
+        w = self.wallet_state()
+        if w.get("error"):
+            return {"kind": "wallet", "message": f"Wallet error: {w['error']}"}
+        if mode in ("live", "search"):
+            key = self.key_state()
+            if not key["found"]:
+                return {"kind": "key", "message": key["error_text"]}
+        return None
+
+    def trip_run(self, trip_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        from src.ui import serialize
+
+        path = self.trip_path(trip_id)
+        opts = self._trip_options(trip_id, body or {})
+        if opts["mode"] != "offline":
+            raise ApiError(400, "invalid_option", "Only OFFLINE runs are wired up so far.")
+        argv = self.trip_argv(path, opts)
+        with self.run_slot():
+            out = self.invoke(argv)
+            payload = serialize.trip_run(out, opts["mode"], trip_id, self.calls_state())
+        return self.store(payload)
+
     # ------------------------------------------------------------- running
 
     @contextmanager
@@ -415,6 +599,21 @@ class Engine:
         expected, expires = entry
         if time.monotonic() > expires or expected != digest:
             raise ApiError(409, "confirm_stale", CONFIRM_STALE)
+
+
+def _int_in(value, lo: int, hi: int, field: str, label: str) -> int:
+    if isinstance(value, bool):
+        raise ApiError(400, "invalid_option", f"{label} must be a whole number from {lo} to {hi}.",
+                       field=field)
+    try:
+        n = int(str(value).strip())
+    except (TypeError, ValueError):
+        raise ApiError(400, "invalid_option", f"{label} must be a whole number from {lo} to {hi}.",
+                       field=field)
+    if not lo <= n <= hi:
+        raise ApiError(400, "invalid_option", f"{label} must be a whole number from {lo} to {hi}.",
+                       field=field)
+    return n
 
 
 def _fmt_cents(cents: float) -> str:

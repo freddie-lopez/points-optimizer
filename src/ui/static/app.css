@@ -164,7 +164,7 @@ table.static tbody tr { cursor: default; }
 .legid { font: 500 12px var(--mono); color: var(--smoke); }
 .route { font-family: var(--mono); letter-spacing: .02em; }
 .route .arr { color: var(--smoke); padding: 0 2px; }
-.sub2 { display: block; font-size: 11px; color: var(--smoke); font-family: var(--sans); }
+.sub2 { display: block; font-size: 11px; color: var(--smoke); font-family: var(--sans); white-space: normal; max-width: 34ch; overflow-wrap: anywhere; }
 .lower { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
 .lower .panel { padding: 14px 16px; min-width: 0; }
 .notes { display: grid; gap: 6px; font-size: var(--s13); margin: 0; padding: 0; list-style: none; }
