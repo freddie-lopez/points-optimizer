@@ -715,7 +715,9 @@ def build_replay(args, console: Console, fixture):
         + snapshot_replay.verify_covers_legs(selection.selected, queryable)
     )
     # The recorded itinerary lookups, held to the same no-partial-replay rule.
-    trips = snapshot_replay.load_trips_replay_set(snapshot_dir, fixture.id)
+    trips = snapshot_replay.load_trips_replay_set(
+        snapshot_dir, fixture.id, leg_ids=[q.leg_id for q in queryable]
+    )
     problems += trips.problems
     if problems:
         trips_hint = (

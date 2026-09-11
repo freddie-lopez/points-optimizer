@@ -713,7 +713,31 @@ class TripsReplaySet:
         return self.manifest_path.parent if self.manifest_path else None
 
 
-def load_trips_replay_set(snapshot_dir: Path, trip_id: Optional[str]) -> TripsReplaySet:
+TRIPS_TABLE_HEADER = "| fetched_at (UTC) | leg | route | dates |"
+
+
+def _recorded_id(path: Path) -> Tuple[Optional[str], str]:
+    """(the availability id a trips envelope records, problem)."""
+    try:
+        meta = (json.loads(path.read_text()) or {}).get("_meta") or {}
+    except (OSError, ValueError, AttributeError) as e:
+        return None, f"{path.name} cannot be read ({e})"
+    ids = {
+        str(v)
+        for v in (meta.get("availability_id"), (meta.get("request") or {}).get("availability_id"))
+        if v
+    }
+    if len(ids) != 1:
+        return None, (
+            f"{path.name} records {sorted(ids) or 'no'} availability id(s); a trips "
+            f"snapshot records exactly one"
+        )
+    return ids.pop(), ""
+
+
+def load_trips_replay_set(
+    snapshot_dir: Path, trip_id: Optional[str], leg_ids: Optional[List[str]] = None
+) -> TripsReplaySet:
     """
     The trips rows beside a search manifest, verified exactly like search rows.
 
@@ -731,22 +755,40 @@ def load_trips_replay_set(snapshot_dir: Path, trip_id: Optional[str]) -> TripsRe
         rows = parse_manifest(manifest)
     except ManifestError as e:
         try:
-            manifest.read_text()
+            text = manifest.read_text()
         except OSError:
             out.problems.append(Problem("trips_manifest_unreadable", None, str(e)))
             return out
-        # A trips manifest whose rows were all deleted records NO lookups. That
-        # is the documented remedy for a bad trips snapshot, and every lookup
-        # then replays as NOT RECORDED - an honest state, and no score depends
-        # on it. (A SEARCH manifest with no rows is still refused.)
+        if TRIPS_TABLE_HEADER not in text:
+            # Zero bytes, a merge conflict, any text that is not a manifest:
+            # refused, never read as "no lookups recorded" while the recordings
+            # sit beside it.
+            out.problems.append(
+                Problem(
+                    "trips_manifest_unreadable",
+                    None,
+                    f"{manifest} has no manifest table header, so it is not a "
+                    f"trips manifest. It is NOT being read as 'no lookups "
+                    f"recorded'. Restore it, or delete the file to replay with "
+                    f"no lookups.",
+                )
+            )
+            return out
+        # A trips manifest whose rows were all deleted (the table header is
+        # still there) records NO lookups. That is the documented remedy for a
+        # bad trips snapshot, and every lookup then replays as NOT RECORDED.
+        # (A SEARCH manifest with no rows is still refused.)
         rows = []
     out.selection = select_replay_set(rows, trip_id)
     out.problems.extend(out.selection.problems)
     out.problems.extend(verify(out.selection.selected, manifest.parent))
-    for row in out.selection.selected:
-        from src import seats_trips
+    from src import seats_trips
 
-        if not seats_trips.valid_availability_id(trips_availability_id(row)):
+    seen: Dict[str, ManifestRow] = {}
+    missing_files = {p.row.snapshot_name for p in out.problems if p.row is not None}
+    for row in out.selection.selected:
+        aid = trips_availability_id(row)
+        if not seats_trips.valid_availability_id(aid):
             out.problems.append(
                 Problem(
                     "trips_row_unreadable",
@@ -755,6 +797,44 @@ def load_trips_replay_set(snapshot_dir: Path, trip_id: Optional[str]) -> TripsRe
                     f"id>', so there is no lookup to replay it as.",
                 )
             )
+            continue
+        if leg_ids is not None and row.leg_id not in leg_ids:
+            out.problems.append(
+                Problem(
+                    "trips_row_for_unknown_leg",
+                    row,
+                    f"the row is for leg {row.leg_id!r}, which this trip does not "
+                    f"have as a flight leg. It was recorded for a different trip "
+                    f"or fixture; replaying it here would attribute it to "
+                    f"whichever award happens to share the id.",
+                )
+            )
+        path = manifest.parent / row.snapshot_name
+        if row.snapshot_name not in missing_files and path.is_file():
+            recorded, why = _recorded_id(path)
+            if recorded is None or recorded != aid:
+                out.problems.append(
+                    Problem(
+                        "trips_snapshot_is_another_lookup",
+                        row,
+                        why
+                        or f"{row.snapshot_name} is a lookup of availability "
+                        f"{recorded}, not of {aid}. Its bytes say nothing about "
+                        f"{aid}.",
+                    )
+                )
+        earlier = seen.get(aid)
+        if earlier is not None and earlier.content_hash != row.content_hash:
+            out.problems.append(
+                Problem(
+                    "duplicate_trips_lookup",
+                    row,
+                    f"availability {aid} is recorded twice with DIFFERENT bytes "
+                    f"({earlier.describe()} and this row). There is no rule that "
+                    f"picks one; delete the row that should not be replayed.",
+                )
+            )
+        seen.setdefault(aid, row)
     return out
 
 
@@ -860,6 +940,14 @@ class SnapshotTransport(SeatsClient):
         envelope = json.loads(path.read_text())
         pages = envelope.get("pages") or []
         meta = envelope.get("_meta") or {}
+        recorded, why = _recorded_id(path)
+        if recorded != availability_id:
+            # `load_trips_replay_set` refuses this before scoring; the transport
+            # still must not answer for an id its file is not about.
+            raise TripsLookupError(
+                "AVAILABILITY_ID_MISMATCH",
+                why or f"{row.snapshot_name} is a lookup of {recorded}, not {availability_id}",
+            )
         if len(pages) != 1:
             raise TripsLookupError(
                 "SHAPE_ERROR",

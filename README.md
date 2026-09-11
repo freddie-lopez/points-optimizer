@@ -468,7 +468,11 @@ and never the network. A recorded lookup is used whatever `auto` would have
 decided; an award with no recorded lookup reads `NOT RECORDED`. A selected trips
 row whose file is missing, tampered with or empty **refuses the whole replay**
 (exit `1`); re-fetch it, or delete its row, and that lookup replays as NOT
-RECORDED. The manifest hash gains `trips|...` lines **only when trips rows
+RECORDED. So does a row whose file is a lookup of a different availability id,
+a row for a leg the trip does not fly, one id recorded twice with different
+bytes, and a trips manifest with no table header (zero bytes, a merge conflict):
+only a manifest whose header is intact and whose rows were deleted reads as "no
+lookups recorded". The manifest hash gains `trips|...` lines **only when trips rows
 exist**, so every hash quoted before this feature reproduces byte for byte. A
 trips row captured under an older trips parser prints **TRIPS LOOKUPS
 REPARSED**.
