@@ -1,8 +1,9 @@
 """CLI entry point for points transfer optimizer."""
 import argparse
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from rich.console import Console
 
@@ -869,9 +870,109 @@ def print_replay_banner(console: Console, selection, manifest_hash, transport) -
         )
 
 
-def run_fixture(args, console: Console) -> int:
-    """Score a multi-leg trip fixture: every leg, cash vs points."""
-    from src.formatter import print_live_banner, print_live_leg_detail
+# ---------------------------------------------------------------------------
+# Structured runs. THE CLI AND THE LOCAL UI READ THE SAME OBJECTS.
+# ---------------------------------------------------------------------------
+#
+# `score_fixture` computes everything a trip report needs and prints only the
+# banners that come before the first table; `print_fixture_report` prints the
+# rest FROM THE SAME OBJECT. The UI (src/ui/) receives that object through a
+# `sink` and renders it, so every refusal, UNKNOWN and provenance label it shows
+# comes from the run the terminal printed - not from a second computation that
+# could disagree with it. tests/test_cli_output_unchanged.py pins the bytes.
+
+
+@dataclass
+class FixtureRun:
+    """Everything the trip report reads. Built BEFORE any post-scoring print."""
+
+    args: Any
+    fixture: Any
+    fixture_path: Path
+    wallet: Any
+    wallet_warnings: List[str]
+    transfer_date: date
+    ratios: Any
+    live_opts: Any
+    cache: Any
+    client: Any  # None offline; a SnapshotTransport on a replay
+    replay_selection: Any
+    manifest_hash: str
+    outcomes: List[Any]
+    results: List[Any]
+    totals: Dict[str, Any]
+    residue: Dict[str, Any]
+    # 0 / 3 / 4, computed exactly as the report returns it.
+    exit_code: int
+    # `KeyResolution.source` (+ path) when a key was resolved. NEVER the key or
+    # its mask: this object crosses into the UI.
+    key_source: Optional[str] = None
+
+
+@dataclass
+class SearchRun:
+    """Everything the single-route search report reads."""
+
+    args: Any
+    trip: Any
+    date_range: Any
+    wallet: Any
+    wallet_warnings: List[str]
+    strategies: List[Any]
+    # What optimize() actually saw (client.last_search_awards), NOT a second
+    # search: re-asking would reset the coverage line on a run that made one.
+    awards: List[Any]
+    last_error: Optional[str]
+    pagination_note: str
+    # The budget counter's movement across optimize(): calls this run spent.
+    calls_spent: int
+    key_source: Optional[str]
+    exit_code: int
+    client: Any = None
+
+
+@dataclass
+class RunRefusal:
+    """A run that scored NOTHING (exit 1 or 2). `message` is the exact text the
+    terminal printed, markup removed."""
+
+    exit_code: int
+    kind: str  # wallet|replay_refused|value|file|trips_flags|conflict|key|search_args|optimization
+    message: str
+
+
+def _plain(*markup: str) -> str:
+    """The text rich prints for these markup strings, one line per string."""
+    from rich.text import Text
+
+    return "\n".join(Text.from_markup(m).plain for m in markup)
+
+
+def _refuse(console: Console, sink, code: int, kind: str, *markup: str) -> None:
+    """Print these markup strings exactly as before, and record the refusal.
+    The caller then returns `code` as a LITERAL, so the exit-code contract stays
+    discoverable from source (tests/test_exit_codes_are_documented.py)."""
+    for m in markup:
+        console.print(m)
+    if sink is not None:
+        sink.append(RunRefusal(exit_code=code, kind=kind, message=_plain(*markup)))
+
+
+def _key_source(client) -> Optional[str]:
+    resolution = getattr(client, "key_resolution", None)
+    if resolution is None:
+        return None
+    return (
+        f"{resolution.source} {resolution.path}" if resolution.path else resolution.source
+    )
+
+
+def score_fixture(args, console: Console) -> FixtureRun:
+    """
+    Score a multi-leg trip fixture: every leg, cash vs points. Prints ONLY the
+    banners that come before scoring (key, relocation, header, wallet, FX,
+    valuation, flags, replay banner). Everything after is `print_fixture_report`.
+    """
     from src.live_trip import annotate_live_verdicts, apply_live
 
     path = resolve_fixture(args.trip_fixture)
@@ -915,14 +1016,6 @@ def run_fixture(args, console: Console) -> int:
         if replay_selection is not None:
             print_replay_banner(console, replay_selection, manifest_hash, client)
         fixture, outcomes = apply_live(fixture, client, live_opts)
-        print_live_banner(outcomes, live_opts, cache, console)
-        for leg_id, row_ver, meta_ver in getattr(client, "parser_version_disagreements", []):
-            console.print(
-                f"[bold red]  PARSER VERSION DISAGREEMENT on {leg_id}: the manifest "
-                f"row says {row_ver} but the snapshot itself says it was captured "
-                f"under {meta_ver}; it is being read by "
-                f"{client.current_parser_version}. Treat this leg as REPARSED.[/bold red]"
-            )
 
     results = evaluate_trip(
         legs=fixture.legs,
@@ -938,13 +1031,6 @@ def run_fixture(args, console: Console) -> int:
 
     if live_opts.live:
         annotate_live_verdicts(results)
-
-    console.print()
-    print_leg_results(results, console)
-    print_leg_detail(results, console)
-    print_live_leg_detail(results, console)
-    if args.show_alternatives:
-        print_alternatives(results, console)
 
     # THE WALLET IS PASSED IN so the trip-level balance ceiling is actually
     # checked (finding C-3). Without it `trip_totals` reports that the check did
@@ -1001,10 +1087,65 @@ def run_fixture(args, console: Console) -> int:
         )
         totals["manifest_parser_now"] = client.current_parser_version
 
-    console.print()
-    print_trip_totals(totals, label=fixture.name, console=console)
-    print_residue_report(trip_residue(results, wallet), console)
+    exit_code = fixture_exit_code(totals, withheld)
 
+    return FixtureRun(
+        args=args,
+        fixture=fixture,
+        fixture_path=path,
+        wallet=wallet,
+        wallet_warnings=wallet_warnings,
+        transfer_date=transfer_date,
+        ratios=ratios,
+        live_opts=live_opts,
+        cache=cache,
+        client=client,
+        replay_selection=replay_selection,
+        manifest_hash=manifest_hash,
+        outcomes=outcomes,
+        results=results,
+        totals=totals,
+        residue=trip_residue(results, wallet),
+        exit_code=exit_code,
+        key_source=None if replay_selection is not None else _key_source(client),
+    )
+
+
+def fixture_exit_code(totals, withheld: bool) -> int:
+    """The exit status of a scored trip: 4, 3 or 0."""
+    if not totals.get("trip_funding_executable", True):
+        # Non-zero, and a DIFFERENT code from the --require-all-live withholding
+        # below: "the number is not quotable" and "the plan cannot be executed"
+        # are different failures and a script must be able to tell them apart.
+        return 4
+    if withheld:
+        # Non-zero so a script cannot mistake a withheld margin for a quoted one.
+        return 3
+    return 0
+
+
+@dataclass
+class FooterLine:
+    """One line printed after the residue table: styled segments, in order."""
+
+    segments: List[Tuple[str, str]]  # (text, rich style or "")
+    blank_before: bool = False
+
+    def markup(self) -> str:
+        body = "".join(f"[{st}]{t}[/{st}]" if st else t for t, st in self.segments)
+        return ("\n" if self.blank_before else "") + body
+
+    @property
+    def text(self) -> str:
+        return "".join(t for t, _ in self.segments)
+
+
+def fixture_footer_lines(results, totals) -> List[FooterLine]:
+    """
+    The lines printed after the residue table, in order. The UI shows these
+    verbatim; the terminal prints them through `FooterLine.markup`.
+    """
+    lines: List[FooterLine] = []
     # H-4. THE TWO REASONS A LEG HAS NO POINTS PATH ARE DIFFERENT FACTS and used
     # to share one line. "(no partner exists)" is a claim about partnerships; an
     # absent capture is a claim about our own inputs, and printing the first when
@@ -1018,60 +1159,113 @@ def run_fixture(args, console: Console) -> int:
         r.leg.id for r in results if r.points_absence == "never_priced"
     ]
     if no_path:
-        console.print(
-            f"\n[bold]Legs with NO points path at all (no partner exists):[/bold] "
-            f"{', '.join(no_path)}"
-        )
+        lines.append(FooterLine(
+            [("Legs with NO points path at all (no partner exists):", "bold"),
+             (f" {', '.join(no_path)}", "")],
+            blank_before=True,
+        ))
     if never_priced:
-        console.print(
-            f"\n[bold yellow]Legs whose points side was NEVER PRICED (no award "
-            f"price captured and none fetched - this says NOTHING about whether "
-            f"a partner covers them):[/bold yellow] {', '.join(never_priced)}"
-        )
+        lines.append(FooterLine(
+            [("Legs whose points side was NEVER PRICED (no award price captured "
+              "and none fetched - this says NOTHING about whether a partner "
+              "covers them):", "bold yellow"),
+             (f" {', '.join(never_priced)}", "")],
+            blank_before=True,
+        ))
     unpriced = [r.leg.id for r in results if r.verdict == "cash (points unpriced)"]
     if unpriced:
-        console.print(
-            f"[bold]Legs where a partner exists but no award price was "
-            f"captured:[/bold] {', '.join(unpriced)}"
-        )
+        lines.append(FooterLine(
+            [("Legs where a partner exists but no award price was captured:", "bold"),
+             (f" {', '.join(unpriced)}", "")],
+        ))
     unknown = totals.get("legs_surcharge_unknown_ids") or []
     if unknown:
-        console.print(
-            f"[bold yellow]Legs where a points path exists but its carrier-imposed "
-            f"surcharge is UNKNOWN (NOT $0):[/bold yellow] {', '.join(unknown)}"
-        )
+        lines.append(FooterLine(
+            [("Legs where a points path exists but its carrier-imposed surcharge "
+              "is UNKNOWN (NOT $0):", "bold yellow"),
+             (f" {', '.join(unknown)}", "")],
+        ))
     taxes_unknown = totals.get("legs_taxes_unknown_ids") or []
     if taxes_unknown:
-        console.print(
-            f"[bold yellow]Legs where an award's TAXES are UNKNOWN (NOT $0) - "
-            f"Seats.aero sent no usable figure:[/bold yellow] "
-            f"{', '.join(taxes_unknown)}"
-        )
-
+        lines.append(FooterLine(
+            [("Legs where an award's TAXES are UNKNOWN (NOT $0) - Seats.aero sent "
+              "no usable figure:", "bold yellow"),
+             (f" {', '.join(taxes_unknown)}", "")],
+        ))
     if not totals.get("trip_funding_executable", True):
-        # Non-zero, and a DIFFERENT code from the --require-all-live withholding
-        # below: "the number is not quotable" and "the plan cannot be executed"
-        # are different failures and a script must be able to tell them apart.
-        console.print(
-            f"\n[bold red]THE RECOMMENDATION ABOVE CANNOT BE EXECUTED FROM YOUR "
-            f"BALANCE.[/bold red] [red]{totals.get('trip_funding_note', '')}[/red]"
+        lines.append(FooterLine(
+            [("THE RECOMMENDATION ABOVE CANNOT BE EXECUTED FROM YOUR BALANCE.",
+              "bold red"),
+             (" ", ""),
+             (f"{totals.get('trip_funding_note', '')}", "red")],
+            blank_before=True,
+        ))
+    return lines
+
+
+def print_fixture_report(run: FixtureRun, args, console: Console) -> int:
+    """Everything after the pre-scoring banners, printed from `run`. Returns
+    `run.exit_code`."""
+    from src.formatter import print_live_banner, print_live_leg_detail
+
+    if run.live_opts.live:
+        print_live_banner(run.outcomes, run.live_opts, run.cache, console)
+        for leg_id, row_ver, meta_ver in getattr(run.client, "parser_version_disagreements", []):
+            console.print(
+                f"[bold red]  PARSER VERSION DISAGREEMENT on {leg_id}: the manifest "
+                f"row says {row_ver} but the snapshot itself says it was captured "
+                f"under {meta_ver}; it is being read by "
+                f"{run.client.current_parser_version}. Treat this leg as REPARSED.[/bold red]"
+            )
+
+    results = run.results
+    console.print()
+    print_leg_results(results, console)
+    print_leg_detail(results, console)
+    print_live_leg_detail(results, console)
+    if args.show_alternatives:
+        print_alternatives(results, console)
+
+    console.print()
+    print_trip_totals(run.totals, label=run.fixture.name, console=console)
+    print_residue_report(run.residue, console)
+
+    for line in fixture_footer_lines(results, run.totals):
+        console.print(line.markup())
+    return run.exit_code
+
+
+def run_fixture(args, console: Console, sink=None) -> int:
+    """Score a multi-leg trip fixture: every leg, cash vs points."""
+    run = score_fixture(args, console)
+    if sink is not None:
+        sink.append(run)
+    return print_fixture_report(run, args, console)
+
+
+def unfundable_reason(award) -> str:
+    """Why a returned award cannot be funded from the wallet. Never a claim
+    about award space."""
+    if getattr(award, "indirect_ur_path", ""):
+        return f"reachable only INDIRECTLY - {award.indirect_ur_path}"
+    if not (award.program or "").strip():
+        return "the response named no program it could be attributed to"
+    if award.ur_transferable is False:
+        return "not a transfer partner of any currency you hold"
+    if award.ur_transferable is True:
+        return (
+            "a transfer partner, but no fundable path: the balance "
+            "(or the stranded-points limit) cannot cover it"
         )
-        return 4
-    if withheld:
-        # Non-zero so a script cannot mistake a withheld margin for a quoted one.
-        return 3
-    return 0
+    return "no fundable transfer path from the wallet above"
 
 
-def run_search(args, console: Console) -> int:
-    """Live award search for a single route via Seats.aero."""
-    if not (args.origin and args.destination and args.date):
-        console.print(
-            "[red]Error: --origin, --destination and --date are all required "
-            "for a live search (or use --trip-fixture).[/red]"
-        )
-        return 1
-
+def search_route(args, console: Console):
+    """
+    The single-route search, up to and including the call. Prints the wallet
+    warnings and the key/relocation banners. Returns a SearchRun, or a
+    RunRefusal (already printed) when the key or the optimizer failed.
+    """
     ratios_for_wallet = load_ratio_manager()
     apply_fx_overrides(args, console)
     wallet, wallet_warnings = build_wallet(args, ratios_for_wallet)
@@ -1092,13 +1286,15 @@ def run_search(args, console: Console) -> int:
     try:
         seats_client = SeatsClient(getattr(args, "api_key", None))
     except ValueError as e:
-        console.print(f"[red]Error: {e}[/red]")
-        return 1
+        m = f"[red]Error: {e}[/red]"
+        console.print(m)
+        return RunRefusal(exit_code=1, kind="key", message=_plain(m))
     print_key_banner(console, seats_client.key_resolution)
     print_relocation_banner(console)
 
     ratios = load_ratio_manager()
 
+    before = SeatsClient._budget_remaining()
     try:
         results = optimize(
             trip=trip,
@@ -1110,20 +1306,43 @@ def run_search(args, console: Console) -> int:
             max_stranded_points=args.max_stranded_points,
         )
     except Exception as e:
-        console.print(f"[red]Error during optimization: {e}[/red]")
-        return 1
+        m = f"[red]Error during optimization: {e}[/red]"
+        console.print(m)
+        return RunRefusal(exit_code=1, kind="optimization", message=_plain(m))
+    spent = max(before - SeatsClient._budget_remaining(), 0)
 
+    return SearchRun(
+        args=args,
+        trip=trip,
+        date_range=date_range,
+        wallet=wallet,
+        wallet_warnings=wallet_warnings,
+        strategies=results,
+        awards=list(getattr(seats_client, "last_search_awards", None) or []),
+        last_error=getattr(seats_client, "last_error", None),
+        pagination_note=getattr(seats_client, "last_pagination_note", "") or "",
+        calls_spent=spent,
+        key_source=_key_source(seats_client),
+        exit_code=0,
+        client=seats_client,
+    )
+
+
+def print_search_report(run: SearchRun, args, console: Console) -> int:
+    """Everything the search prints after the call, from `run`."""
+    results = run.strategies
+    date_range = run.date_range
     console.print(f"\nRoute: {args.origin} -> {args.destination}")
     console.print(f"Dates: {date_range.from_date} to {date_range.to_date}")
     console.print(f"Passengers: {args.passengers}")
-    for line in wallet.describe():
+    for line in run.wallet.describe():
         console.print(line)
     print_fx_banner(console)
 
     if not results:
-        if getattr(seats_client, "last_error", None):
+        if run.last_error:
             console.print(
-                f"\n[red]Seats.aero could NOT be reached: {seats_client.last_error}[/red]"
+                f"\n[red]Seats.aero could NOT be reached: {run.last_error}[/red]"
             )
             console.print(
                 "[red]This is an API failure, NOT a finding of no award "
@@ -1139,7 +1358,7 @@ def run_search(args, console: Console) -> int:
             # What optimize() actually saw, recorded by it - NOT a second search:
             # re-asking would reset the client's coverage line ("no API call
             # made") on a run that made one.
-            awards = list(getattr(seats_client, "last_search_awards", None) or [])
+            awards = run.awards
             if not awards:
                 console.print(
                     "\n[yellow]Seats.aero returned no award availability for this "
@@ -1147,29 +1366,12 @@ def run_search(args, console: Console) -> int:
                 )
             else:
                 console.print(
-                    f"\n[yellow]Seats.aero returned {len(awards)} award(s) for this "
-                    f"route and date range, and NONE of them can be funded from the "
-                    f"wallet above. That is a finding about THIS WALLET - its "
-                    f"transfer partners and its balances - NOT about award "
-                    f"space:[/yellow]"
+                    f"\n[yellow]{none_fundable_header(len(awards))}[/yellow]"
                 )
                 for a in awards[:20]:
-                    if getattr(a, "indirect_ur_path", ""):
-                        why = f"reachable only INDIRECTLY - {a.indirect_ur_path}"
-                    elif not (a.program or "").strip():
-                        why = "the response named no program it could be attributed to"
-                    elif a.ur_transferable is False:
-                        why = "not a transfer partner of any currency you hold"
-                    elif a.ur_transferable is True:
-                        why = (
-                            "a transfer partner, but no fundable path: the balance "
-                            "(or the stranded-points limit) cannot cover it"
-                        )
-                    else:
-                        why = "no fundable transfer path from the wallet above"
                     console.print(
                         f"  [dim]{a.program or '(program not named)'} {a.award_type} "
-                        f"{a.cost:,} on {a.date}: {why}[/dim]"
+                        f"{a.cost:,} on {a.date}: {unfundable_reason(a)}[/dim]"
                     )
 
     # Which pagination path the client took, printed on EVERY run, empty result
@@ -1178,7 +1380,7 @@ def run_search(args, console: Console) -> int:
     # page one" and "this is everything" are not yet distinguishable from the
     # outside. Returning page one silently as the whole result set is an
     # undercount that would look exactly like a finding.
-    note = getattr(seats_client, "last_pagination_note", "")
+    note = run.pagination_note
     if note:
         style = "red" if "INCOMPLETE" in note else "dim"
         console.print(f"[{style}]Seats.aero result coverage: {note}[/{style}]")
@@ -1201,49 +1403,81 @@ def run_search(args, console: Console) -> int:
             f"top strategy is named.[/bold yellow]"
         )
         print_strategies(results, args.valuation_cpp, console)
-        return 0
+        return run.exit_code
     print_strategies(results, args.valuation_cpp, console)
     print_summary(results, human_cost=args.human_cost, console=console)
 
     if args.html:
         export_html(results)
-    return 0
+    return run.exit_code
 
 
-def main() -> int:
-    parser = build_parser()
-    args = parser.parse_args()
-    # Fixed width so the tables render identically in a terminal and in a
-    # captured report file. Widened from 170 at v3: the per-leg table gained a
-    # provenance column and 170 no longer fits it.
-    console = Console(width=190)
+def none_fundable_header(n_awards: int) -> str:
+    """The search's none-fundable sentence. Shared by the terminal and the UI."""
+    return (
+        f"Seats.aero returned {n_awards} award(s) for this "
+        f"route and date range, and NONE of them can be funded from the "
+        f"wallet above. That is a finding about THIS WALLET - its "
+        f"transfer partners and its balances - NOT about award "
+        f"space:"
+    )
 
+
+def run_search(args, console: Console, sink=None) -> int:
+    """Live award search for a single route via Seats.aero."""
+    if not (args.origin and args.destination and args.date):
+        _refuse(
+            console, sink, 1, "search_args",
+            "[red]Error: --origin, --destination and --date are all required "
+            "for a live search (or use --trip-fixture).[/red]",
+        )
+        return 1
+
+    run = search_route(args, console)
+    if sink is not None:
+        sink.append(run)
+    if isinstance(run, RunRefusal):
+        return run.exit_code
+    return print_search_report(run, args, console)
+
+
+def dispatch(args, console: Console, sink=None) -> int:
+    """
+    Today's CLI after argument parsing: every flag conflict, refusal and exit
+    code. `sink`, when given, receives exactly one FixtureRun, SearchRun or
+    RunRefusal per invocation that reaches one - the local UI's only view of a
+    run, so the UI never re-implements a rule this function applies.
+    """
     try:
         trips_problems = trips_flag_problems(args)
         if trips_problems:
-            console.print("[red]Error: the operating-airline lookup flags cannot be honoured.[/red]")
-            for problem in trips_problems:
-                console.print(f"[red]  - {problem}[/red]")
+            _refuse(
+                console, sink, 1, "trips_flags",
+                "[red]Error: the operating-airline lookup flags cannot be honoured.[/red]",
+                *[f"[red]  - {problem}[/red]" for problem in trips_problems],
+            )
             return 1
         if getattr(args, "offline", False) and getattr(args, "live", False):
-            console.print(
+            _refuse(
+                console, sink, 1, "conflict",
                 "[red]Error: --offline and --live are mutually exclusive.[/red]\n"
                 "[red]One says score the fixture's own prices with no transport; "
                 "the other says ask Seats.aero. This is a usage error rather "
                 "than a precedence rule, because a precedence rule would mean "
-                "one of the two flags you typed did nothing.[/red]"
+                "one of the two flags you typed did nothing.[/red]",
             )
             return 1
         if getattr(args, "new_trip", None):
             if getattr(args, "from_snapshot", None):
-                console.print(
+                _refuse(
+                    console, sink, 1, "conflict",
                     "[red]Error: --new-trip cannot be combined with "
                     "--from-snapshot.[/red]\n"
                     "[red]A trip built one second ago has no snapshots, and "
                     "replaying somebody else's manifest against it would hash "
                     "the wrong trip - a percentage printed beside a certificate "
                     "for a different itinerary. Build it, then run it --live "
-                    "once to write a manifest of its own.[/red]"
+                    "once to write a manifest of its own.[/red]",
                 )
                 return 1
             code, path = run_new_trip(args, console)
@@ -1255,12 +1489,13 @@ def main() -> int:
             # is handed to the ORDINARY live path by filename, so the scoring
             # half is identical to running --trip-fixture --live by hand.
             args.trip_fixture = str(path)
-            return run_fixture(args, console)
+            return run_fixture(args, console, sink)
         # Checked BEFORE dispatch. Handled inside run_search this would have
         # produced "--origin, --destination and --date are all required", which
         # answers a question the user did not ask and hides the real one.
         if getattr(args, "live", False) and not args.trip_fixture:
-            console.print(
+            _refuse(
+                console, sink, 1, "conflict",
                 "[red]Error: --live requires --trip-fixture.[/red]\n"
                 "[red]Live trip mode swaps each FLIGHT leg's points candidates "
                 "for real Seats.aero awards inside a trip, so there has to be a "
@@ -1268,7 +1503,7 @@ def main() -> int:
                 "[yellow]  For a whole trip:   python -m src.main --trip-fixture "
                 "trip_b_europe.json --live[/yellow]\n"
                 "[yellow]  For one route:      python -m src.main --origin SFO "
-                "--destination MAD --date 2027-01-15[/yellow]"
+                "--destination MAD --date 2027-01-15[/yellow]",
             )
             return 1
         # v5 STEP 3. --from-snapshot NAMES A TRANSPORT, and so do --live and
@@ -1311,28 +1546,29 @@ def main() -> int:
                     "miniature. DROP --flex-days."
                 )
             if conflicts:
-                console.print(
+                _refuse(
+                    console, sink, 1, "conflict",
                     "[red]Error: --from-snapshot cannot be combined with the "
-                    "flags below.[/red]"
+                    "flags below.[/red]",
+                    *[f"[red]  - {c}[/red]" for c in conflicts],
                 )
-                for c in conflicts:
-                    console.print(f"[red]  - {c}[/red]")
                 return 1
             if not args.trip_fixture:
-                console.print(
+                _refuse(
+                    console, sink, 1, "conflict",
                     "[red]Error: --from-snapshot requires --trip-fixture. A "
                     "manifest is replayed AGAINST a trip - the hash is over the "
                     "rows that cover that trip's legs, and without a trip there "
-                    "is nothing to cover.[/red]"
+                    "is nothing to cover.[/red]",
                 )
                 return 1
         if args.trip_fixture:
-            return run_fixture(args, console)
-        return run_search(args, console)
+            return run_fixture(args, console, sink)
+        return run_search(args, console, sink)
     except WalletError as e:
         # A missing or malformed wallet is a hard stop, not a reason to assume
         # one. Exits non-zero so a script cannot mistake it for a run.
-        console.print(f"[red]Wallet error: {e}[/red]")
+        _refuse(console, sink, 2, "wallet", f"[red]Wallet error: {e}[/red]")
         return 2
     except ReplayRefused as e:
         # Its own clause so the message prints as the multi-line refusal it is,
@@ -1344,14 +1580,26 @@ def main() -> int:
         # was wrong with the manifest.
         from rich.markup import escape
 
-        console.print(f"[bold red]{escape(str(e))}[/bold red]")
+        _refuse(
+            console, sink, 1, "replay_refused", f"[bold red]{escape(str(e))}[/bold red]"
+        )
         return 1
     except ValueError as e:
-        console.print(f"[red]Error: {e}[/red]")
+        # The CLI prints every ValueError the same way; the kind only tells the
+        # UI which of its own states to show (no key -> LIVE UNAVAILABLE).
+        kind = "key" if str(e).startswith("No Seats.aero API key found") else "value"
+        _refuse(console, sink, 1, kind, f"[red]Error: {e}[/red]")
         return 1
     except FileNotFoundError as e:
-        console.print(f"[red]Error: {e}[/red]")
+        _refuse(console, sink, 1, "file", f"[red]Error: {e}[/red]")
         return 1
+
+
+def main() -> int:
+    # Fixed width so the tables render identically in a terminal and in a
+    # captured report file. Widened from 170 at v3: the per-leg table gained a
+    # provenance column and 170 no longer fits it.
+    return dispatch(build_parser().parse_args(), Console(width=190))
 
 
 if __name__ == "__main__":

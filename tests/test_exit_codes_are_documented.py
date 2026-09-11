@@ -24,10 +24,15 @@ ROOT = Path(__file__).parent.parent
 MAIN = ROOT / "src" / "main.py"
 README = ROOT / "README.md"
 
-# The functions that produce a process exit status. `main` dispatches to the
-# other three and returns their value, so between them they are every code the
-# tool can exit with.
-EXIT_FUNCTIONS = {"main", "run_fixture", "run_search", "run_new_trip"}
+# The functions that produce a process exit status. `main` returns `dispatch`,
+# which dispatches to the others and returns their value; a scored trip's
+# status is decided in `fixture_exit_code` (split out of `run_fixture` for the
+# local UI, which reads the same run object). Between them they are every code
+# the tool can exit with.
+EXIT_FUNCTIONS = {
+    "main", "dispatch", "run_fixture", "run_search", "run_new_trip",
+    "fixture_exit_code",
+}
 
 
 def _codes_returned_by_the_cli() -> set:
