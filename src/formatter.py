@@ -1156,6 +1156,20 @@ def print_trip_totals(
             f"({', '.join(totals.get('legs_indirect_path_unverified_ids') or [])})"
             f"[/yellow]",
         )
+    if totals.get("legs_metal_lookup_missing"):
+        table.add_row(
+            "[yellow]Legs whose operating airline was NOT LOOKED UP\n"
+            "(or NOT RECORDED) - nothing known about the metal[/yellow]",
+            f"[yellow]{int(totals['legs_metal_lookup_missing'])} "
+            f"({', '.join(totals.get('legs_metal_lookup_missing_ids') or [])})[/yellow]",
+        )
+    if totals.get("legs_metal_unknown"):
+        table.add_row(
+            "[yellow]Legs whose operating airline is NOT KNOWN\n"
+            "(looked up, metal not settled)[/yellow]",
+            f"[yellow]{int(totals['legs_metal_unknown'])} "
+            f"({', '.join(totals.get('legs_metal_unknown_ids') or [])})[/yellow]",
+        )
     if totals.get("legs_taxes_unknown"):
         table.add_row(
             "[red]Legs where the award's TAXES are UNKNOWN\n"
@@ -1302,6 +1316,26 @@ def print_trip_totals(
             # tool's history, not about their trip. The WARNING survives; the
             # changelog does not.
             "the assumption that turns an unknown into a saving that is not there."
+        )
+    missing = list(totals.get("legs_metal_lookup_missing_ids") or [])
+    not_recorded = list(totals.get("legs_metal_not_recorded_ids") or [])
+    not_looked_up = [leg for leg in missing if leg not in not_recorded]
+    if not_looked_up:
+        console.print(
+            f"[yellow]operating airline NOT LOOKED UP on {', '.join(not_looked_up)}: "
+            f"nothing is known about which airline flies the chosen award there; "
+            f"each leg's line says why.[/yellow]"
+        )
+    if not_recorded:
+        console.print(
+            f"[yellow]operating airline NOT RECORDED on {', '.join(not_recorded)}: "
+            f"this replay holds no itinerary lookup for the chosen award there.[/yellow]"
+        )
+    if totals.get("legs_metal_unknown_ids"):
+        console.print(
+            f"[yellow]operating airline NOT KNOWN on "
+            f"{', '.join(totals['legs_metal_unknown_ids'])}: a lookup was made and did "
+            f"not settle one carrier set.[/yellow]"
         )
     if totals.get("legs_verdict_sensitive_ids"):
         console.print(

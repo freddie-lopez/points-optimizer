@@ -1238,7 +1238,13 @@ def evaluate_leg(
                 surcharge.notes
                 or "No surcharge rule matched and none was captured. This is NOT zero.",
             )
-        if not cand.has_known_metal:
+        # Dropped when the itinerary lookup named the metal: "the tool never
+        # guesses metal" beside "operating airline: VS by flight number" would
+        # contradict the line above it. The surcharge stays unresolved either
+        # way unless the source's YQ inclusion is verified - that is
+        # SURCHARGE_UNKNOWN's job, not this reason's.
+        metal = getattr(cand, "metal", None)
+        if not cand.has_known_metal and not (metal is not None and metal.is_known):
             result.add_reason(
                 "CARRIER_UNKNOWN",
                 f"Operating carrier for {cand.label!r} is "
@@ -1564,6 +1570,32 @@ def evaluate_leg(
             )
             if note:
                 result.warnings.append(note)
+
+    # ---- The operating-airline lookup: counted, never scored --------------
+    # For the chosen award only. A lookup that could not change the answer
+    # (a program-wide $0 surcharge, not a direct partner) is not a gap and is
+    # not counted. Literal codes, one per branch: way (10) discovers reason
+    # codes by parsing `add_reason("CODE", ...)`.
+    metal = getattr(result.best_points, "metal", None) if result.best_points else None
+    if metal is not None and metal.is_missing_lookup:
+        result.add_reason(
+            "METAL_LOOKUP_MISSING",
+            f"The operating airline of {result.best_points.label!r} was "
+            f"{metal.status.value.replace('_', ' ').upper()} "
+            f"({metal.reason_code}). Nothing is known about which airline flies "
+            f"it; it is NOT known metal.",
+            status=metal.status.value,
+            reason=metal.reason_code,
+        )
+    elif metal is not None and metal.is_unresolved:
+        result.add_reason(
+            "METAL_UNKNOWN",
+            f"The operating-airline lookup for {result.best_points.label!r} did "
+            f"not settle one carrier set ({metal.status.value}"
+            f"{', ' + metal.reason_code if metal.reason_code else ''}).",
+            status=metal.status.value,
+            reason=metal.reason_code,
+        )
 
     return result
 
@@ -2593,6 +2625,20 @@ def trip_totals(
         "legs_indirect_path_unverified_ids": _legs_with(results, "INDIRECT_PATH_UNVERIFIED"),
         "legs_award_unattributed": len(_legs_with(results, "PROGRAM_UNATTRIBUTED")),
         "legs_award_unattributed_ids": _legs_with(results, "PROGRAM_UNATTRIBUTED"),
+        # The operating-airline lookup, by reason code on the CHOSEN award. Always
+        # present, zero when the lookup was never engaged.
+        "legs_metal_lookup_missing": len(_legs_with(results, "METAL_LOOKUP_MISSING")),
+        "legs_metal_lookup_missing_ids": _legs_with(results, "METAL_LOOKUP_MISSING"),
+        "legs_metal_not_recorded_ids": [
+            r.leg.id
+            for r in results
+            if any(
+                x.code == "METAL_LOOKUP_MISSING" and x.data.get("status") == "not_recorded"
+                for x in r.reasons
+            )
+        ],
+        "legs_metal_unknown": len(_legs_with(results, "METAL_UNKNOWN")),
+        "legs_metal_unknown_ids": _legs_with(results, "METAL_UNKNOWN"),
         "rests_on_placeholder_fx": any(r.rests_on_placeholder_fx for r in results),
     }
     # WAY (10). The declarations in `models.TRIP_LEVEL_ANSWERS` are checked

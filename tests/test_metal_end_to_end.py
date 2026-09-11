@@ -197,7 +197,12 @@ def _numbers(results, totals):
     reasons = {
         r.leg.id: sorted(
             x.code for x in r.reasons
-            if x.code not in ("ALTERNATIVE_UNPRICED", "METAL_LOOKUP_MISSING", "METAL_UNKNOWN")
+            # The metal codes are the lookup's own; CARRIER_UNKNOWN is dropped when
+            # the lookup names the metal (it would contradict the metal line).
+            if x.code not in (
+                "ALTERNATIVE_UNPRICED", "METAL_LOOKUP_MISSING", "METAL_UNKNOWN",
+                "CARRIER_UNKNOWN",
+            )
         )
         for r in results
     }

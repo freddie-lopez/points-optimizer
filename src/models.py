@@ -341,6 +341,13 @@ REASON_CODES = frozenset(
         # v5 Step 7. The leg departs the UK and the amount owed is UNKNOWN -
         # not zero, and not the nearest band.
         "APD_UNKNOWN",
+        # The operating-airline lookup for the chosen award was NOT LOOKED UP
+        # (cap, budget, --trips off, no id, rate-limited) or, on a replay, NOT
+        # RECORDED. Nothing is known about the metal; that is not "known".
+        "METAL_LOOKUP_MISSING",
+        # The lookup was made and did not settle one carrier set (UNKNOWN or
+        # AMBIGUOUS).
+        "METAL_UNKNOWN",
     }
 )
 
@@ -2148,6 +2155,17 @@ TRIP_LEVEL_ANSWERS = {
             "price themselves. It contributes no dollar to either side, so there "
             "is no trip-level number for it to be lost from."
         ),
+    ),
+    # The operating-airline lookup. COUNTED, not widened: neither is itself an
+    # unknown DOLLAR. Wherever metal moves a dollar (a source verified
+    # `excludes_yq`), it does so by leaving the surcharge unresolved, which is
+    # SURCHARGE_UNKNOWN - already widening and already counted. Counting keeps
+    # "not looked up" visible in the trip block, so it cannot read as "known".
+    "METAL_LOOKUP_MISSING": TripTreatment(
+        COUNTED_AT_TRIP_LEVEL, totals_key="legs_metal_lookup_missing"
+    ),
+    "METAL_UNKNOWN": TripTreatment(
+        COUNTED_AT_TRIP_LEVEL, totals_key="legs_metal_unknown"
     ),
     # -- LegResult fields -----------------------------------------------
     "apd_unknown_withheld": TripTreatment(
