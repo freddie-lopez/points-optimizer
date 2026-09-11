@@ -24,6 +24,7 @@ drift (the file IS written; do not flip the label).
 """
 import argparse
 import json
+import re
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -278,6 +279,11 @@ def _resolve_row_by_search(client, args, console) -> Tuple[Dict[str, Any], Dict[
     day = date.fromisoformat(args.date)
     # The runtime cache only: a capture tool never writes the committed corpus.
     cache = ResponseCache(cache_dir=config.CACHE_DIR, snapshot_dir=None)
+    # The prompt promised ONE search call. Pagination is capped at one page on
+    # THIS client, and a search that says there is more is refused below
+    # rather than followed: the row picked from page one might not be the only
+    # match.
+    client.MAX_PAGES = 1
     try:
         raw = client.search_raw(
             args.origin.upper(), args.destination.upper(), DateRange(day, day), cache=cache
@@ -286,6 +292,14 @@ def _resolve_row_by_search(client, args, console) -> Tuple[Dict[str, Any], Dict[
         raise ToolRefusal(f"the search failed ({e}). Nothing was captured.") from None
     if raw.budget_exhausted:
         raise ToolRefusal("the call budget ran out before the search. Nothing was captured.")
+    if raw.incomplete:
+        raise ToolRefusal(
+            f"the search is INCOMPLETE ({raw.incomplete_reason or 'Seats.aero says there is more'}). "
+            f"Following it would spend more calls than the one search promised, and "
+            f"page one alone cannot show the matching row is the only one. No trips "
+            f"call was made and nothing was captured. Narrow the search, or use "
+            f"--availability-id with the row's ID."
+        )
     console.print(
         f"search: {'served from the disk cache' if raw.served_from_cache else 'fetched'} "
         f"({len(_rows_of(raw.pages))} availability row(s))"
@@ -323,7 +337,15 @@ def run_capture(
     id_mode = bool(getattr(args, "availability_id", None))
     console.print(_call_count_line(id_mode))
     if not args.yes:
-        answer = read("Continue? [y/N] ")
+        try:
+            answer = read("Continue? [y/N] ")
+        except (EOFError, KeyboardInterrupt):
+            # Piped or closed stdin, or Ctrl-C at the question: no answer is
+            # not a yes.
+            raise ToolRefusal(
+                "no answer at the prompt (stdin closed or interrupted). No call was "
+                "made and nothing was captured. Pass --yes to run without the question."
+            ) from None
         if str(answer or "").strip().lower() not in ("y", "yes"):
             raise ToolRefusal("declined. No call was made and nothing was captured.")
 
@@ -365,7 +387,14 @@ def run_capture(
     source = _row_source(cap.row) if cap.row else (args.source or "unknown-source")
     o, d = cap.route
     out_dir = Path(args.out_dir) if args.out_dir else DEFAULT_REAL_DIR
-    name = f"{day}_{source}_{o or 'XXX'}{d or 'XXX'}_{cap.availability_id}.json"
+    # Every part but the (already validated) id comes from an API response or
+    # a local row: sanitized exactly as trips snapshot names are, so no string
+    # Seats.aero sends can add a directory or break the write.
+    safe = lambda part: re.sub(r"[^A-Za-z0-9_.-]", "-", str(part))  # noqa: E731
+    name = (
+        f"{safe(day)}_{safe(source)}_{safe(o or 'XXX')}{safe(d or 'XXX')}_"
+        f"{cap.availability_id}.json"
+    )
     envelope = {
         "_meta": {
             "captured_by": CAPTURED_BY,
