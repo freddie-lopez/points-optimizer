@@ -712,3 +712,122 @@ I also removed my canary `~/.config/points-optimizer/.env` (the empty directory 
 as found), stopped the canary proxy, and deleted 55 `/tmp/tmp*` directories my
 scripts left. The real repo has no `.env`, no `data/cache/` and no
 `results.html`, and `git status` shows only the probe and report changes.
+
+---
+
+## Re-test 3: `a0b30b3`
+
+Adversarial pass on `a0b30b3` ("the party guard has no side door, a trip with an
+unpriced party leg withholds its headline"). Same rules: no `src/` edits, no
+network. Every command that could run the CLI ran either under the suite's
+harness (probes) or as a subprocess with all three `POINTS_OPTIMIZER_*`
+variables pointed into the scratchpad before the process started. The Re-test 2
+disclosure cannot recur that way.
+
+**Result: nothing Critical, High or Medium. Three Low.** All eight Re-test 2
+findings are fixed. No party leg produced a quotable percentage, range end,
+floor, points spend or break-even in any mode I tried. The one quotable number
+left is a dollar row that predates the branch (R3-1). Probes:
+`known-failures-probes` now **3 red / 137 green** (all 3 red are in
+`test_kf_retest3.py`).
+
+### Regressions
+
+| Run | Result |
+|---|---|
+| sandbox `pytest -q` | **935 passed, 13 skipped**, same under `-O` |
+| simulated Mac (`git archive a0b30b3` into `points-optimizer-v5`, master-captured corpus, warm cache, key exported / `.env` / `~/.config`, canary proxy) | **944 passed, 4 skipped**, same under `-O` and with the key only in files. Canary hits 0. Checkout unchanged |
+| `v5-probes` | 19 / 79, the same red set as master by id (sandbox and Mac) |
+| `adversarial-probes` | 40 / 38, the same red set as master (sandbox and Mac) |
+| `--offline` on all 5 trip fixtures | **byte-identical to master**, exit 0 on both |
+
+### My probes: two conflicts, both mine, both fixed
+
+- Four `test_kf_retest2.py` probes asserted exit 0 on runs with a party leg. R2-5
+  asked for exactly the change that makes that exit 3, so they now expect 3.
+- `test_R2_4`: I agree with the Coder. A 2-traveller leg whose only awards are
+  Qatar (indirect) and an unnamed program has nothing fundable at ANY party size,
+  so `cash (indirect path not scored)` is the right verdict and the party verdict
+  would be wrong. The probe now asserts that verdict, that both counters are set,
+  and that the leg is not counted as a party leg. The case R2-4 was really about
+  (a party leg mixing a reachable award with indirect, unattributed and
+  non-partner ones) is the new green
+  `test_a_party_leg_mixing_reachable_indirect_and_unattributed_is_party_with_every_count`:
+  party verdict, no floor, and all three counters set.
+
+### Findings (all Low)
+
+**R3-1. Low: a withheld party trip still prints its dollar "saving".**
+`test_kf_retest3.py::test_R3_1_...`. With B1 and B4 for 2 travellers the headline
+reads `WITHHELD`, exit 3, `withheld because flight leg(s) B1, B4 are for 2+
+travellers`. But the three rows above it still read `Optimizer's recommendation
+$...` and `Saving $...`. That is the same claim in dollars that is withheld in
+percent. These rows have printed on every withheld run since v3 (provenance
+withholding does the same), so this is not new. For a party trip, though, it is
+the "could not price reported as zero value" that R2-5 was about. Location:
+`formatter.py:853-855` (printed before the `withheld` branch).
+
+**R3-2. Low: when a trip is withheld for two reasons, only one is named.**
+`::test_R3_2_...`. B2's live query fails and B1 is for 2 travellers. The `withheld
+because` row and the closing `THE TRIP MARGIN IS WITHHELD` message name only the
+party legs, because `margin_withheld_reason` replaces the provenance sentence.
+The provenance row ("THIS MARGIN MIXES PROVENANCES AND MUST NOT BE QUOTED") and
+the "NEVER REACHED" counter still print, so the live failure is visible in the
+trip block, just not as a reason for withholding. Location: `main.py:815-824`,
+`formatter.py:928`, `formatter.py:1152`.
+
+**R3-3. Low: a party leg with nothing reachable to price still withholds the trip.**
+`::test_R3_3_...`. The condition is `elif party_leg and (party_candidates or
+leg.unpriced_partner_programs)`. It reads ALL listed unpriced programs, not the
+reachable ones that the warning just above computes. A 2-traveller leg whose only
+listed program is Delta SkyMiles (no UR path) therefore gets the party verdict and
+`PARTY_PRICING_UNVERIFIED`, and the whole trip exits 3, for a leg where the party
+size changes nothing. The error is on the conservative side. Location:
+`optimizer.py:~1376`.
+
+**Observations (not scored):**
+- On the `--offline` badge path, a party leg that departs the UK still prints
+  `APD ... ADDED to the points-side cash total: GBP 102.00 x 2`, and its duty is
+  counted in `apd_added_usd`, though no points side exists. Every leg with no
+  points path has had this wording since v5.
+- On a party leg whose verdict is indirect, the table cell shows the one-seat
+  Qatar price (`33,000`). It is labelled "indirect, not scored" and the cell has
+  always done this.
+- Exit 4 still takes precedence over exit 3. A party trip that is also unfundable
+  exits 4, whose table row says "a margin was produced". The same holds for
+  provenance withholding, and it predates the branch. I found no CLI input that
+  makes the trip-level funding check fail: the per-leg balance ceiling demotes
+  first.
+
+### What held up
+
+- **No quotable number from a party leg.** Live, `--allow-badge-fallback`,
+  `--offline` and `--from-snapshot` all give `WITHHELD`, exit 3, and no
+  `low end` / `high end` row. The replay prints no `(snapshot mh_...)` hash beside
+  a number. The party leg has no floor, no best points, no break-even (a warning
+  instead, per R2-1) and no balance demand.
+- **Guard order.**
+  - Reachable + indirect + unattributed + non-partner on one leg: the party
+    verdict, with all three other counters set.
+  - Non-partner only: `cash (no points path)`, not withheld.
+  - Indirect + unattributed only: the indirect verdict.
+  - Hotel legs for 2: unaffected.
+- **Loader:** `1`, `2` and `"2"` load. `0`, `-1`, `"two"`, `2.0`, `true`, `null`
+  and `""` are refused with a `TripFixtureError`.
+- **Search:** known and unknown awards dedup separately. United 50,000 + $56 ranks
+  #1, United 30,000 (UNKNOWN) is shown after it, a 31,000 unknown still dedups
+  against the 30,000 one, and the summary names the known award. `--passengers 2
+  --html` now says the export was not written. Search prints the relocation
+  banner, and the key-not-found error marks `[RELOCATED by POINTS_OPTIMIZER_ENV_FILE]`.
+- **README:** the exit-3 row names the party case, and the unconvertible-currency
+  APD exception is stated. `test_exit_codes_are_documented` and
+  `test_verdicts_are_documented` pass.
+
+### Cleanup (re-test 3)
+
+I removed my canary `~/.config/points-optimizer/.env` (the directory is empty, as
+found) and stopped the canary proxy. I deleted the 10 empty `/tmp/tmp*`
+directories that this round's suite runs left, and the scratchpad holds the
+simulated-Mac checkouts. The real repo has no `.env`, no `data/cache/` and no
+`results.html`. `tests/fixtures/seats_aero/live_trip_b/` holds only its committed
+`README.md`, and `git status` shows only the probe and report changes.

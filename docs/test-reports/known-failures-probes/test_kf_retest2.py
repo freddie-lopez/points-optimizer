@@ -135,9 +135,15 @@ def test_R2_4_the_party_guard_does_not_erase_the_indirect_and_unattributed_count
         ]),
         tmp_path, fixture_mutator=_mut("B4", travelers=2),
     )
-    assert res["B4"].verdict == PARTY
+    # RE-TEST 3 (a0b30b3): with only a Qatar (indirect) award and an unnamed one,
+    # NOTHING on this leg is fundable, whatever the party size - so the indirect
+    # verdict is right, not the party one. What this probe was for is that both
+    # counts survive a party leg; they do. The mixed case (a reachable award as
+    # well) is test_kf_retest3.py::test_a_party_leg_mixing_...
+    assert res["B4"].verdict == "cash (indirect path not scored)"
     assert "B4" in totals["legs_indirect_path_unverified_ids"]
     assert "B4" in totals["legs_award_unattributed_ids"]
+    assert "B4" not in totals["legs_party_pricing_unverified_ids"]
 
 
 def test_R2_5_a_trip_whose_flights_were_never_priced_does_not_quote_a_live_margin(tmp_path, capsys, monkeypatch):
@@ -194,7 +200,7 @@ def test_R2_7_search_for_two_says_the_html_export_was_skipped(tmp_path, capsys, 
 def test_a_party_leg_live_is_not_scored_anywhere_and_is_counted(tmp_path, capsys, monkeypatch):
     p = _trip_b_file(tmp_path, B1={"travelers": 2})
     code, raw, text = run_cli(_argv_for(p), only(B1, _rows(UA_B1)), capsys, monkeypatch)
-    assert code == 0
+    assert code == 3  # RE-TEST 3 (a0b30b3): a trip with a party leg withholds its headline (R2-5's fix)
     b1_row = next(l for l in raw.splitlines() if "│ B1" in l)
     assert "PAY CASH (party o" in b1_row and "priced for ONE seat" in b1_row
     assert "Verdict: CASH (MULTI-TRAVELLER POINTS NOT PRICED)" in text
@@ -207,7 +213,7 @@ def test_a_party_leg_live_is_not_scored_anywhere_and_is_counted(tmp_path, capsys
 def test_a_party_leg_on_the_offline_badge_path_is_not_scored(tmp_path, capsys, monkeypatch):
     p = _trip_b_file(tmp_path, B2={"travelers": 3})
     code, raw, _ = run_cli(_argv_for(p, "--offline"), lambda *a: None, capsys, monkeypatch, key=None)
-    assert code == 0
+    assert code == 3  # RE-TEST 3 (a0b30b3): a trip with a party leg withholds its headline (R2-5's fix)
     b2_row = next(l for l in raw.splitlines() if "│ B2" in l)
     assert "PAY CASH (party o" in b2_row and "badge" in b2_row
     assert "This flight leg is for 3 travellers" in flat(raw)
@@ -220,7 +226,7 @@ def test_a_party_leg_on_replay_is_not_scored(tmp_path, capsys, monkeypatch):
     p = _trip_b_file(tmp_path, B3={"travelers": 2})
     code, raw, _ = run_cli(_argv_for(p, "--from-snapshot", str(manifest)),
                            lambda *a: None, capsys, monkeypatch, key=None)
-    assert code == 0
+    assert code == 3  # RE-TEST 3 (a0b30b3): a trip with a party leg withholds its headline (R2-5's fix)
     b3_row = next(l for l in raw.splitlines() if "│ B3" in l)
     assert "PAY CASH (party o" in b3_row and "snapshot" in b3_row
 
@@ -242,7 +248,7 @@ def test_new_trip_with_two_travellers_end_to_end_scores_no_flight_leg(tmp_path, 
     path = trip_builder.write_fixture(fixture, directory=tmp_path)
     code, raw, text = run_cli(_argv_for(path), lambda o, d, i: [row(origin=o, dest=d, iso=i, **UA_B1)],
                               capsys, monkeypatch)
-    assert code == 0
+    assert code == 3  # RE-TEST 3 (a0b30b3): a trip with a party leg withholds its headline (R2-5's fix)
     assert "Legs where points win │ 0" in text
     assert text.count("CASH (MULTI-TRAVELLER POINTS NOT PRICED)") == 2
 
