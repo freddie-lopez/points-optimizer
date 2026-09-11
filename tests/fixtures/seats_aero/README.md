@@ -68,3 +68,15 @@ Capture from a machine that can reach seats.aero, **strip the API key from every
 header, URL and body**, save the raw JSON here one file per response shape, and
 add tests against it. Do not hand-write a fixture: the point of this directory is
 that the parser is tested against shapes the API actually produced.
+
+## The trips endpoint (operating-airline lookup)
+
+`trips_endpoint/` holds fixtures for `GET /partnerapi/trips/{availability_id}`,
+which names the flights behind one availability row. **No real trips response
+has been captured**: `synthetic/` is hand-written from the published schema and
+says so in every file, and `real/` is empty until `python -m src.trips_tools
+capture` is run on a machine that can reach seats.aero. See
+`trips_endpoint/README.md` for what a capture must pass before the parser's
+UNVERIFIED label may be flipped. Live trips snapshots are archived under
+`<snapshot dir>/trips_endpoint/`, never beside the search snapshots, because the
+search parser would read a trips `data` list as unreadable availability rows.

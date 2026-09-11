@@ -895,3 +895,137 @@ def match_award(parsed: ParsedTrips, facts: AwardFacts) -> MetalLookup:
         )
     except Exception as e:  # noqa: BLE001 - the metal pass never raises
         return unknown("UNEXPECTED_ERROR", f"{type(e).__name__}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# What may flip the UNVERIFIED labels
+# ---------------------------------------------------------------------------
+
+REAL_CAPTURE_DIR_PARTS = ("tests", "fixtures", "seats_aero", "trips_endpoint", "real")
+CAPTURED_BY = "src.trips_tools capture"
+
+
+def _load_capture(path) -> Tuple[Optional[Dict[str, Any]], str]:
+    import json
+
+    try:
+        envelope = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        return None, f"{path.name} cannot be read as JSON ({e})"
+    if not isinstance(envelope, dict) or not isinstance(envelope.get("_meta"), dict):
+        return None, f"{path.name} is not a capture envelope"
+    pages = envelope.get("pages")
+    if not isinstance(pages, list) or len(pages) != 1:
+        return None, f"{path.name} does not hold exactly one response page"
+    return envelope, ""
+
+
+def capture_parse(path):
+    """(ParsedTrips, envelope) for a capture file, or (None, problem)."""
+    envelope, problem = _load_capture(path)
+    if envelope is None:
+        return None, problem
+    meta = envelope["_meta"]
+    row = meta.get("availability_row") or {}
+    route = row.get("Route") or {}
+    origin = str(route.get("OriginAirport") or "").upper()
+    destination = str(route.get("DestinationAirport") or "").upper()
+    if not (origin and destination) and isinstance(meta.get("route"), str) and "->" in meta["route"]:
+        origin, _, destination = meta["route"].partition("->")
+    parsed = parse_trips_payload(
+        envelope["pages"][0], str(meta.get("availability_id") or ""), (origin, destination)
+    )
+    return parsed, envelope
+
+
+def schema_verification_problems(name: str, real_dir) -> List[str]:
+    """
+    Every reason `name` cannot be what TRIPS_SCHEMA_VERIFIED_BY names. [] means it can.
+
+    It must be a plain filename in real/ (never synthetic/), written by the
+    capture tool, not synthetic, key-redacted, with a matching content hash and a
+    .raw.txt sibling, parsing to at least one itinerary with none unreadable and
+    no required-field drift.
+    """
+    from pathlib import Path
+
+    from src.response_cache import content_hash
+
+    problems: List[str] = []
+    if not name or "/" in name or "\\" in name or ".." in name:
+        return [f"{name!r} is not a plain filename in real/"]
+    path = Path(real_dir) / name
+    if Path(real_dir).name != "real":
+        problems.append(f"{real_dir} is not the real/ capture directory")
+    if not path.is_file():
+        return problems + [f"{path} does not exist"]
+    envelope, problem = _load_capture(path)
+    if envelope is None:
+        return problems + [problem]
+    meta = envelope["_meta"]
+    if meta.get("synthetic") is not False:
+        problems.append(f"{name}: _meta.synthetic is {meta.get('synthetic')!r}, not False")
+    if meta.get("captured_by") != CAPTURED_BY:
+        problems.append(f"{name}: captured_by is {meta.get('captured_by')!r}")
+    if meta.get("key_redacted") is not True:
+        problems.append(f"{name}: key_redacted is not True")
+    if meta.get("content_hash") != content_hash(envelope["pages"]):
+        problems.append(f"{name}: content_hash does not match the page it holds")
+    if not path.with_suffix(".raw.txt").is_file():
+        problems.append(f"{name}: no .raw.txt sibling with the verbatim body")
+    parsed, _ = capture_parse(path)
+    if parsed is None:
+        return problems + [f"{name}: cannot be parsed"]
+    if parsed.envelope_error:
+        problems.append(f"{name}: {parsed.envelope_error[1]}")
+    if not parsed.trips:
+        problems.append(f"{name}: no itinerary to verify against")
+    if parsed.unreadable:
+        problems.append(f"{name}: {len(parsed.unreadable)} itinerary(ies) unreadable")
+    if parsed.required_drift:
+        problems.append(f"{name}: required-field drift: {parsed.required_drift}")
+    return problems
+
+
+def totaltaxes_unit_problems(unit: str, real_dir) -> List[str]:
+    """
+    Why `unit` may not be TRIPS_TOTALTAXES_UNIT. [] means it may.
+
+    "unverified" always may. "cents" needs a real capture whose recorded
+    availability row shows an itinerary at the row's source, cabin and price
+    with TotalTaxes EQUAL to the row's {X}TotalTaxes (which is cents). "units"
+    has no evidence path this tool can check, so it is refused.
+    """
+    from pathlib import Path
+
+    if unit == "unverified":
+        return []
+    if unit not in TRIPS_TOTALTAXES_UNITS:
+        return [f"{unit!r} is not one of {TRIPS_TOTALTAXES_UNITS}"]
+    if unit == "units":
+        return ["no capture can show whole units against a cents row figure; refused"]
+    for path in sorted(Path(real_dir).glob("*.json")):
+        parsed, envelope = capture_parse(path)
+        if parsed is None:
+            continue
+        row = envelope["_meta"].get("availability_row") or {}
+        source = str((row.get("Route") or {}).get("Source") or "").lower()
+        for letter in ("Y", "W", "J", "F"):
+            if row.get(f"{letter}Available") is not True:
+                continue
+            try:
+                cost = int(str(row.get(f"{letter}MileageCost")).strip())
+            except ValueError:
+                continue
+            row_taxes = row.get(f"{letter}TotalTaxes")
+            for t in parsed.readable:
+                if (
+                    t.source == source and t.cabin == letter and t.mileage_cost == cost
+                    and isinstance(row_taxes, int) and row_taxes > 0
+                    and t.total_taxes_raw == row_taxes
+                ):
+                    return []
+    return [
+        "no real capture shows a matched itinerary whose TotalTaxes equals its "
+        "row's {X}TotalTaxes"
+    ]
