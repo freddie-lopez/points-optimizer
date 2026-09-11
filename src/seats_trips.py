@@ -15,6 +15,7 @@ tests/fixtures/seats_aero/trips_endpoint/real/ and named below.
 """
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.models import (
@@ -1017,6 +1018,8 @@ def schema_verification_problems(name: str, real_dir) -> List[str]:
             f"{meta.get('route_inferred_from_itineraries')!r}, not False; a route read "
             f"from the response is not evidence about the response"
         )
+    problems.extend(_capture_meta_problems(name, meta))
+    problems.extend(_synthetic_page_problems(name, envelope["pages"][0], meta, Path(real_dir)))
     parsed, _ = capture_parse(path)
     if parsed is None:
         return problems + [f"{name}: cannot be parsed"]
@@ -1028,7 +1031,129 @@ def schema_verification_problems(name: str, real_dir) -> List[str]:
         problems.append(f"{name}: {len(parsed.unreadable)} itinerary(ies) unreadable")
     if parsed.required_drift:
         problems.append(f"{name}: required-field drift: {parsed.required_drift}")
+    if isinstance(row, dict) and parsed.trips and not _row_matches(row, parsed):
+        problems.append(
+            f"{name}: no award in the recorded availability row is matched by the "
+            f"response (KNOWN or AMBIGUOUS), so the parser was never checked "
+            f"against the award it was fetched for"
+        )
     return problems
+
+
+# Re-test 2, R2-5. What the checks above can and cannot do.
+#
+# They catch every HONEST mistake found so far and the committed synthetic
+# example under any wrapper. They cannot stop a deliberately hand-built file:
+# nothing here is signed, every _meta field is plain text, and anyone who can
+# write real/ can write a file that passes. Tsuki is the only author of real/;
+# the defence against forgery is reviewing the commit that adds a capture.
+SYNTHETIC_CAPTURE_DIR = (
+    Path(__file__).resolve().parent.parent
+    / "tests" / "fixtures" / "seats_aero" / "trips_endpoint" / "synthetic"
+)
+
+
+def _canonical(value: Any) -> str:
+    """JSON with sorted keys: equal only if the values AND their types are equal."""
+    import json
+
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=True)
+
+
+def _capture_meta_problems(name: str, meta: Dict[str, Any]) -> List[str]:
+    """The fields the capture tool always writes, with the values it writes."""
+    from datetime import datetime, timezone
+
+    problems: List[str] = []
+    aid = str(meta.get("availability_id") or "")
+    expected_request = {
+        "path": f"/partnerapi/trips/{aid}",
+        "params": dict(TRIPS_REQUEST_PARAMS),
+    }
+    if meta.get("request") != expected_request:
+        problems.append(
+            f"{name}: request is {meta.get('request')!r}, not the capture tool's "
+            f"{expected_request!r}"
+        )
+    status = meta.get("http_status")
+    if isinstance(status, bool) or status != 200:
+        problems.append(f"{name}: http_status is {status!r}, not 200")
+    if not str(meta.get("trips_parser_version") or "").strip():
+        problems.append(f"{name}: no trips_parser_version is recorded")
+    stamp = str(meta.get("captured_at") or "")
+    try:
+        when = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        problems.append(f"{name}: captured_at is {stamp!r}, not a UTC time the tool writes")
+    else:
+        if when > datetime.now(timezone.utc):
+            problems.append(f"{name}: captured_at {stamp} is in the future")
+    return problems
+
+
+def _synthetic_page_problems(
+    name: str, page: Any, meta: Dict[str, Any], real_dir: Path
+) -> List[str]:
+    """Refuse the committed synthetic page, or any itinerary or id copied from one."""
+    import json
+
+    ids = set()
+    itineraries = set()
+    pages = set()
+    for directory in {SYNTHETIC_CAPTURE_DIR, real_dir.parent / "synthetic"}:
+        for syn in sorted(Path(directory).glob("*.json")) if Path(directory).is_dir() else []:
+            try:
+                envelope = json.loads(syn.read_text())
+            except (OSError, ValueError):
+                continue
+            syn_pages = envelope.get("pages") if isinstance(envelope, dict) else None
+            for syn_page in syn_pages if isinstance(syn_pages, list) else []:
+                pages.add(_canonical(syn_page))
+                data = syn_page.get("data") if isinstance(syn_page, dict) else None
+                for trip in data if isinstance(data, list) else []:
+                    itineraries.add(_canonical(trip))
+                    if isinstance(trip, dict):
+                        ids.update(
+                            str(trip.get(k)) for k in ("ID", "AvailabilityID") if trip.get(k)
+                        )
+            meta_id = (envelope.get("_meta") or {}).get("availability_id") if isinstance(
+                envelope, dict
+            ) else None
+            if meta_id:
+                ids.add(str(meta_id))
+    if _canonical(page) in pages:
+        return [f"{name}: its page IS a committed synthetic/ page"]
+    problems: List[str] = []
+    data = page.get("data") if isinstance(page, dict) else None
+    copied = [
+        t for t in (data if isinstance(data, list) else []) if _canonical(t) in itineraries
+    ]
+    if copied:
+        problems.append(
+            f"{name}: {len(copied)} itinerary(ies) are copied from a committed "
+            f"synthetic/ page"
+        )
+    if str(meta.get("availability_id") or "") in ids:
+        problems.append(
+            f"{name}: its availability id {meta.get('availability_id')!r} is a "
+            f"synthetic/ placeholder id"
+        )
+    return problems
+
+
+def _row_matches(row: Dict[str, Any], parsed: "ParsedTrips") -> bool:
+    """Whether any award in the recorded row is matched (KNOWN or AMBIGUOUS)."""
+    from src.seats_client import parse_availability_row
+
+    try:
+        awards = parse_availability_row(row)
+    except Exception:  # noqa: BLE001 - an unparseable row matches nothing
+        return False
+    for award in awards:
+        lookup = match_award(parsed, AwardFacts.from_award(award))
+        if lookup.status in (MetalStatus.KNOWN, MetalStatus.AMBIGUOUS):
+            return True
+    return False
 
 
 def _raw_body_problems(name: str, path, page: Any) -> List[str]:
@@ -1048,7 +1173,11 @@ def _raw_body_problems(name: str, path, page: Any) -> List[str]:
         body = json.loads(raw)
     except ValueError:
         return [f"{name}: its .raw.txt is not JSON, so it is not the body of this page"]
-    if body != page:
+    # Compared as canonical JSON, not with ==: Python's == calls 1, 1.0 and
+    # True equal, so a page whose MileageCost is 60000.0 or True would pass
+    # against a body that says 60000. Whitespace, line endings and key order
+    # are not the body's content and still compare equal.
+    if _canonical(body) != _canonical(page):
         return [f"{name}: its .raw.txt is a different body from the page it holds"]
     return []
 

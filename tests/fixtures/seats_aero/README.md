@@ -77,6 +77,8 @@ has been captured**: `synthetic/` is hand-written from the published schema and
 says so in every file, and `real/` is empty until `python -m src.trips_tools
 capture` is run on a machine that can reach seats.aero. See
 `trips_endpoint/README.md` for what a capture must pass before the parser's
-UNVERIFIED label may be flipped. Live trips snapshots are archived under
+UNVERIFIED label may be flipped. Those checks catch honest mistakes and the
+synthetic example, not a deliberately hand-built file: nothing is signed, so a
+commit adding a file to `real/` has to be reviewed. Live trips snapshots are archived under
 `<snapshot dir>/trips_endpoint/`, never beside the search snapshots, because the
 search parser would read a trips `data` list as unreadable availability rows.

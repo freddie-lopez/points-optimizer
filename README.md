@@ -424,11 +424,23 @@ committed under `tests/fixtures/seats_aero/trips_endpoint/real/`, and
 `TRIPS_SCHEMA_VERIFIED_BY` in `src/seats_trips.py` is set to its filename.
 `tests/test_trips_verification_label.py` then checks the file is a real capture
 (never one under `synthetic/`), its content hash matches, its `.raw.txt` sibling
-is non-empty and parses to the same page the capture holds, it records the
-availability row of its own id, its route came from that row (a
-`capture --availability-id` with no local row infers the route from the
-itineraries and **cannot** flip the label), and it parses with at least one
-itinerary, none unreadable and no required-field drift.
+is non-empty and parses to the same page the capture holds (compared as JSON
+with types, so `60000.0` is not `60000`; whitespace and key order do not
+matter), it carries the `_meta` the tool writes (request path and params,
+HTTP 200, parser version, a past `captured_at`), it records the availability row
+of its own id and at least one award in that row is matched by the response,
+its route came from that row (a `capture --availability-id` with no local row
+infers the route from the itineraries and **cannot** flip the label), neither its
+page, any itinerary nor its id is copied from `synthetic/`, and it parses with at
+least one itinerary, none unreadable and no required-field drift. `capture`
+runs this same check and prints the "set `TRIPS_SCHEMA_VERIFIED_BY`" advice
+only when it passes.
+
+**What these checks cannot do:** stop a file built by hand on purpose. Nothing in
+a capture is signed and every `_meta` field is plain text, so anyone who can
+write `real/` can write a file that passes. The checks catch honest mistakes
+and the committed synthetic example. The defence against a forged capture is
+reviewing the commit that adds it; Tsuki is the only author of `real/`.
 
 A trip's own `TotalTaxes` is shown **raw with both unit readings** and used in no
 figure while `TRIPS_TOTALTAXES_UNIT` is `unverified`. It flips to `cents` only on

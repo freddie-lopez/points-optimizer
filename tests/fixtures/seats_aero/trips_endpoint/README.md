@@ -17,13 +17,22 @@ response"). This directory is where that changes.
 
 1. Run `python -m src.trips_tools capture ...` on the Mac. It writes
    `real/<date>_<source>_<O><D>_<id>.json` and `.raw.txt`, and prints a drift
-   report. Exit 5 means the capture showed required-field drift: the parser
-   needs fixing first, and the label must not be flipped.
+   report. Exit 5 means the capture showed required-field drift or the label
+   check refused it (the reasons are printed): the label must not be flipped.
 2. Commit both files.
 3. Set `TRIPS_SCHEMA_VERIFIED_BY` in `src/seats_trips.py` to the `.json` filename.
-   `tests/test_trips_verification_label.py` then checks the file is a real
-   capture (not synthetic), carries a matching content hash and a `.raw.txt`
-   sibling, and parses with no unreadable itinerary and no required-field drift.
+   `tests/test_trips_verification_label.py` then runs
+   `schema_verification_problems`, the same check `capture` ran before it said
+   CAPTURED CLEAN (exit 0; any refusal is exit 5 with the reasons). The file
+   must be a real capture (not synthetic), with a matching content hash, a
+   `.raw.txt` that is the same JSON as the page, the `_meta` the tool writes,
+   the availability row of its own id with an award the response matches, a
+   route from that row rather than inferred, nothing copied from `synthetic/`,
+   and no unreadable itinerary or required-field drift.
+
+**The limit, plainly:** these checks catch honest mistakes and the synthetic
+example. They cannot catch a file built by hand on purpose - nothing is signed,
+and every `_meta` field is plain text. Review the commit that adds a file here.
 
 `TRIPS_TOTALTAXES_UNIT` flips from `unverified` to `cents` the same way, and only
 on a capture whose recorded availability row shows a matched itinerary with the
