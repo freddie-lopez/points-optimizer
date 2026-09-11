@@ -74,14 +74,20 @@ def test_gap1_a_rejected_unknown_tax_alternative_floor_carries_the_owed_uk_apd(t
 
 def test_gap1_the_high_end_overstates_a_points_win_by_the_owed_apd(tmp_path):
     """
-    A scored United win ($250) plus a cheaper KrisFlyer alternative with
-    unreported taxes (10,000 pts). The headline's high end is built on $100 for
-    B4 - no taxes, no APD - and printed as 12.22%. With the duty that is owed on
-    that ticket regardless, the best B4 can be is $238.11.
+    A scored United win plus a cheaper KrisFlyer alternative with unreported
+    taxes (10,000 pts). On a532e89 the headline's high end was built on $100 for
+    B4 - no taxes, no APD. With the duty that is owed on that ticket regardless,
+    the best B4 can be is $238.11.
+
+    RE-TEST (278332e): the scored award's taxes were $50.00 here, which is BELOW
+    the GBP 102 duty owed on an LHR departure - the very figure Finding 3 says
+    must not be believed. The fix now (correctly) distrusts it, so there was no
+    points win left to test. $150.00 is above the duty and keeps the probe
+    about what it was written for.
     """
     res, totals, _ = evaluate(
         only(B4, _rows(
-            dict(source="united", cost="20000", taxes=5000, currency="USD", airlines="UA"),
+            dict(source="united", cost="20000", taxes=15000, currency="USD", airlines="UA"),
             dict(source="singapore", cost="10000", taxes=0, currency="USD", airlines="SQ"),
         )),
         tmp_path,
@@ -203,6 +209,14 @@ def test_a_replay_whose_answer_changed_under_the_parser_says_it_was_reparsed(
         tmp_path, pages_for=pages_for,
         meta_extra=lambda leg: {"parser_version": "2026-09-09.v5"},
     )
+    # RE-TEST (278332e): build_corpus writes the CURRENT parser version into the
+    # MANIFEST ROWS; only _meta got the old one. A corpus really captured under
+    # the old parser carries it in both places, and the banner keys on the row.
+    # The first version of this probe built an inconsistent corpus; the
+    # inconsistency itself is probed separately (Re-test finding R-7).
+    from src.seats_client import PARSER_VERSION
+
+    manifest.write_text(manifest.read_text().replace(PARSER_VERSION, "2026-09-09.v5"))
     code, _, text = run_cli(
         BASE_ARGV + ["--from-snapshot", str(manifest)], lambda *a: None,
         capsys, monkeypatch, key=None,

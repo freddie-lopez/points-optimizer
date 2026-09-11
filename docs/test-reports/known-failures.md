@@ -375,3 +375,183 @@ I removed `~/.config/points-optimizer/.env` (my canary). The empty directory exi
 before this pass and was left as found. The real repo has no `.env` and no
 `data/cache/`, and `git status` shows only this report and the probe directory. I
 stopped the canary proxy. The simulated-Mac checkouts live only in the scratchpad.
+
+---
+
+## Re-test: `278332e`
+
+Re-attacked 2026-09-11 against `278332e` ("Tester round: unknown taxes never
+ranked, never floor-less, never hidden behind a surcharge label"). Same rules as
+before: no `src/` edits, no network, stubbed transport only.
+
+**Result: the 13 findings are fixed on the trip path. Two survive in search mode,
+which the fix only partly reached. Eight new problems, all Medium or Low; none
+High.** Probes: `known-failures-probes` now **7 red / 91 green** (all 7 red are in
+`test_kf_retest.py`; every probe from the first pass is green).
+
+### Regressions
+
+| Run | Result |
+|---|---|
+| sandbox `pytest -q` | 914 passed, 13 skipped (same under `-O`) |
+| simulated Mac (fresh `git archive 278332e` into `points-optimizer-v5`, key exported, canary keys in the checkout's `.env` and the real `~/.config/points-optimizer/.env`, warm cache and corpus, logging canary proxy) | 923 passed, 4 skipped, also under `-O`, also with the key only in files. Canary proxy hits **0**. Checkout and `/root` unchanged before and after |
+| same, with a corpus captured by master (parser `2026-09-09.v5`, qatar at tax 0) | 923 / 4. `--from-snapshot` of it prints `REPARSED UNDER A DIFFERENT PARSER VERSION` and B4 goes to `>= $638.11`, PAY CASH |
+| `--offline` on all 5 trip fixtures | **byte-identical to master** (both regenerated on the same day; the FX "N days old" line changes daily) |
+| `adversarial-probes` | 40 / 38, same red set as master by id |
+| `v5-probes` | 20 / 78. The one addition to master's red set is `test_a_live_leg_states_apd_without_adding_it` (below) |
+
+### The v5 probe that went red is by design, not a regression
+
+`test_v5_held_up.py::test_a_live_leg_states_apd_without_adding_it` replays the
+v5 probes' default corpus. That corpus reuses the real SFO-MAD Aeroplan row on
+every leg, B4 included, so B4 departs LHR carrying CAD 44.60 ($32.36) of taxes.
+That figure is below the GBP 102 ($138.11) duty it would have to contain, so under
+Finding 3's rule it is now UNKNOWN and the duty is ADDED. What the probe guards
+still holds for a figure that could contain the duty: the new
+`test_a_realistic_live_tax_figure_still_states_apd_without_adding_it` replays B4
+with United's real $224.63 and gets `IT IS NOT ADDED HERE` / `NOBODY HAS CHECKED`.
+The v5 probe's fixture is now unrealistic for an LHR departure. Its assertion is
+still right. I did not edit it; it is not mine.
+
+### The three probes the coordinator flagged: all three were my errors, now fixed
+
+- `test_gap1_the_high_end_overstates_a_points_win_by_the_owed_apd`: its "scored"
+  United award had $50.00 of taxes on an LHR departure, the exact kind of figure
+  my own Finding 3 says not to believe. The taxes are now $150 (above the duty),
+  and the probe is green: the high end is 7.80% and the label names only award
+  taxes, which is correct because nothing else on this run is unknown.
+- `test_an_indirect_award_never_enters_the_score_even_when_it_is_cheapest`: it
+  asserted verdict-based counting, which contradicted my own Finding 10. It now
+  asserts `legs_indirect_path_unverified_ids == ["B4"]`. That row is true, and the
+  probe's real point (the award is never scored) is unchanged.
+- `test_a_replay_whose_answer_changed_under_the_parser_says_it_was_reparsed`:
+  `build_corpus` wrote the current parser version into the manifest rows, so the
+  corpus I built was inconsistent. With both the rows and `_meta` at
+  `2026-09-09.v5` (a real old corpus), REPARSED prints. The inconsistency is its
+  own small problem: R-7 below.
+
+### Status of the original findings
+
+| # | Status on 278332e |
+|---|---|
+| 1 search `$0.00` / ranked on it | **Partly fixed.** Sort, cell and summary are fixed. The per-program dedup still ranks on the $0: **R-1** |
+| 2 gap 1 | Fixed: floor carries APD, `TAXES_UNKNOWN` widens the range, label and warning say TAXES |
+| 3 below-APD figure believed | Fixed on the trip path (per passenger, per cabin, all UK airports, promoted off-date awards, replays). **Not applied in search mode: R-2.** Not applied to off-date findings: **R-6** |
+| 4 parser version | Fixed (`2026-09-10.taxes-trust`; REPARSED fires on an old corpus) |
+| 5 stale break-even | Fixed (warnings rewritten too) |
+| 6 negative taxes | Fixed (unusable, APD added, no FX sentence) |
+| 7 search "no award availability" | Fixed. New wording has **R-3** and **R-4** |
+| 8 taxes reported as surcharge | Fixed: `WITHHELD (taxes unknown)`, no double count, caveat names only what is present |
+| 9 replay provenance / loud line | Fixed: `snapshot` cell, `replayed award:` block |
+| 10 unattributed hidden by indirect | Fixed (counted by reason code, row printed) |
+| 11 collection-time key | Fixed for `tests/` and `adversarial-probes`. **Not for `v5-probes`: R-5** |
+| 12 loader | Fixed (all 32 loader probes green) |
+| 13 README verdicts | Fixed, and guarded by `test_verdicts_are_documented.py` |
+
+### New findings (severity-ranked)
+
+**R-1. Medium: search dedup still ranks on a $0 unknown, drops a known-cash award, then misreports it.**
+Repro: `test_kf_retest.py::test_R1_search_dedup_does_not_drop_a_known_cash_award_for_an_unknown_one`.
+SFO-MAD search returning United 50,000 + $56.00 and United 52,000 with no tax
+figure. `optimize()` keeps one strategy per program/date/cabin, the one with the
+lower `total_value`, and the unknown one still counts as $0 there ($520 < $556).
+The known award disappears. The summary then says `no strategy on this search has
+a known cash cost; ranked by points alone`, which is false: one had a known cost
+and needed 2,000 fewer points. Location: `src/optimizer.py:375`
+(`if key not in seen or strategy.total_value < seen[key].total_value`). The fixed
+sort sits below it.
+
+**R-2. Medium: search mode does not apply the below-duty rule.**
+Repro: `::test_R2_search_mode_applies_the_below_uk_duty_rule`. `--origin LHR
+--destination SFO` with United 35,000 + $5.00: ranked #1 as a known `$5.00 /
+$355.00`, and `Top strategy cash cost: $5.00`, while GBP 102 is owed on the
+ticket. `taxes_below_owed_uk_duty` lives in `live_trip.award_to_candidate` (the
+trip path only). `optimize()` reads `award.cash_component_known` directly.
+Location: `src/optimizer.py:~350-356`, `src/live_trip.py:491`.
+
+**R-3. Low: "a finding about your transfer partners" when the cause is the balance.**
+Repro: `::test_R3_...`. United (a UR partner) 50,000 with `UR=1000`: the header
+says `NONE of them can be funded ... That is a finding about your transfer
+partners, NOT about award space`. The per-award line correctly says `no fundable
+transfer path`, but the header makes a partnership claim out of a balance
+shortfall, which is the M-5 shape. Location: `src/main.py:~943-946`.
+
+**R-4. Low: a run that made one API call says "no API call made".**
+Repro: `::test_R4_...`. To list the unfundable awards, `run_search` calls
+`seats_client.search()` a second time. The in-process cache answers it (still one
+HTTP call, verified), but the call resets `last_pagination_note`, so the coverage
+line becomes `served from the IN-PROCESS cache; no API call made`. Location:
+`src/main.py:~933`, `src/seats_client.py:1406-1460`.
+
+**R-5. Low: fix 11 does not cover `v5-probes`.**
+Repro: `::test_R5_...` (a static import-order check). On the simulated Mac (a
+checkout `.env` with a key, not exported) I collected a throwaway module in each
+suite: `config._ENV_INJECTED` was `{'SEATS_AERO_KEY': ('repo .env', <checkout>/.env)}`
+under `docs/test-reports/v5-probes`, and `{}` under `tests/` and
+`adversarial-probes`. The cause: `docs/test-reports/v5-probes/conftest.py`
+imports `src.response_cache` / `src.seats_client` before it imports
+`tests.conftest`, so `load_env()` runs on the real files first. Per-test isolation
+still holds (the suite's red set is stable under the Mac conditions).
+
+**R-6. Low: an off-date finding prints a below-duty figure as a clean price.**
+Repro: `::test_R6_...`. In one response for B4, the promoted Jan-26 award with
+$5.00 is (correctly) UNKNOWN, while the Jan-25 advisory finding renders
+`United MileagePlus Y 30,000 + USD 5.00`. `live_trip._finding` reads the parser's
+view, not the below-duty rule. It is not scored.
+
+**R-7. Low (pre-existing): a manifest row and its snapshot can disagree on the parser version, and nothing notices.**
+Repro: `::test_R7_...`. The banner reads the version from the manifest row, and
+the per-leg replay clause reads it from the snapshot's `_meta`. A row claiming the
+current parser over a snapshot whose `_meta` says `2026-09-09.v5` replays with no
+REPARSED banner, while the same output says `parsed at capture by 2026-09-09.v5`.
+`snapshot_replay.verify` does not compare the two.
+
+**R-8. Low: the new session HOME leaks one temp directory per pytest process.**
+`tests/conftest.py` makes `mkdtemp(prefix="points-optimizer-test-home-")` at
+import and never removes it. After this pass there were 31 in `/tmp` (all empty;
+explore scripts that import the harness make them too). On a Mac they build up
+in `$TMPDIR`. I removed them.
+
+**Observations (not scored):**
+- Two rejected alternatives on one leg: a scored United $350, a KrisFlyer 10,000
+  with tax 0, and a United 12,000 with MXN taxes. The floor candidate is chosen
+  before APD is added, so the leg floor is $238.11 while the MXN alternative's own
+  warning says `cost floor is $120.00`. The real bound is still right (any ticket
+  from LHR costs at least points + APD, so $120 + $138.11 > $238.11), but the prose
+  contradicts itself.
+- LHR-MEX (APD band UNKNOWN): the below-duty rule is off (`charge.is_known` is
+  False), so $5.00 is believed as the whole tax figure. The leg is withheld anyway
+  (`cash (APD unknown)`) and the label says "the departure tax is $0". Both
+  possible bands' reduced rates are at least GBP 102, so the rule could still fire.
+- Replay output still labels candidates `LIVE ...` in warnings
+  (`UNVERIFIED: LIVE Qatar Privilege Club LHR-SFO ...`) on a `snapshot` leg. This
+  predates the branch.
+- The loader now upper-cases `currency`. That is harmless: no committed fixture
+  uses lower case, and the offline output is byte-identical.
+
+### What the fixes did not break
+
+Each of these has a probe:
+- **Below-duty rule, per passenger:** on a two-traveller leg, $150/pax is believed
+  and $100/pax is unknown, with APD x2 added.
+- **J cabin:** $224.63 is unknown against the standard rate (GBP 244, $330.38) and
+  the duty is in the floor. $400 is believed.
+- **GBP boundary:** GBP 102.00 exactly is believed; 101.99 is not.
+- **Other UK airports:** MAN, EDI and LGW all fire.
+- **Off-date and replays:** a promoted off-date award fires against its own date's
+  $470 fare, and replays apply the rule.
+- **Search ordering, mixed known and unknown:** United $56.00 ranks #1, and the
+  unknowns show `UNKNOWN` / `>= $...`, never `$0.00`.
+- **Search with no fundable award:** it lists the Qatar indirect path, with one
+  HTTP call.
+- **Harness:** the conftest-import HOME change broke no test here or on the
+  simulated Mac, and `test_harness_isolation` now checks against the real HOME
+  recorded before the move.
+
+### Cleanup (re-test)
+
+I removed my canary `~/.config/points-optimizer/.env` again (the empty directory
+is as found) and stopped the canary proxy. I removed the 124 `/tmp/tmp*` cache
+directories my scripts left and all `points-optimizer-test-home-*` directories.
+The real repo has no `.env` or `data/cache/`. The simulated-Mac checkouts are in
+the scratchpad only.

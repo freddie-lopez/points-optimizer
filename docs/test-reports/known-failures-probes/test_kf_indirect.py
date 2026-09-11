@@ -98,9 +98,13 @@ def test_an_indirect_award_never_enters_the_score_even_when_it_is_cheapest(tmp_p
     assert b4.best_points.program == "United MileagePlus"
     assert b4.points_floor_usd is None or b4.points_floor_usd > 100
     assert b4.winner_cost_low_usd == b4.cash_total_score_usd  # 504.63 loses to 482
-    assert totals["legs_indirect_path_unverified"] == 0, (
-        "counted by verdict: a leg won by a scored award is not an indirect leg"
-    )
+    # RE-TEST (278332e): this assertion used to demand verdict-based counting
+    # (== 0). Finding 10 argued the opposite - count by reason code, because a
+    # leg can carry an indirect award whatever its verdict - and the fix did
+    # exactly that. B4 DOES carry an award reachable only indirectly, so the
+    # trip row "Legs with an award reachable only INDIRECTLY - NOT scored: 1
+    # (B4)" is true. What this probe is about is that the award is never SCORED.
+    assert totals["legs_indirect_path_unverified_ids"] == ["B4"]
 
 
 def test_an_off_date_qatar_award_is_a_finding_not_a_no_path_claim(tmp_path):
