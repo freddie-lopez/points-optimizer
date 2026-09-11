@@ -665,7 +665,16 @@ class ResponseCache:
             "parser_version": envelope["_meta"].get("parser_version"),
         }
 
-        existing = self._snapshot_with_content(digest)
+        # A trips snapshot is deduplicated only against earlier snapshots OF THE
+        # SAME availability id (Re-test 2, R2-2). Two ids whose responses are
+        # byte-identical - two empty itinerary lists, say - each get a file of
+        # their own, so every trips file names exactly the lookup it records and
+        # the replay can keep refusing a row whose file is about another id.
+        # Search snapshots are deduplicated across requests, as before.
+        owner = (
+            str(request.get("availability_id") or "") if self.endpoint == "trips" else None
+        )
+        existing = self._snapshot_with_content(digest, availability_id=owner)
         if existing is not None:
             self._append_manifest(request, meta, fetched_at, existing, duplicate=True)
             return existing
@@ -682,14 +691,29 @@ class ResponseCache:
         self._append_manifest(request, meta, fetched_at, path, duplicate=False)
         return path
 
-    def _snapshot_with_content(self, digest: str) -> Optional[Path]:
+    def _snapshot_with_content(
+        self, digest: str, availability_id: Optional[str] = None
+    ) -> Optional[Path]:
+        """An archived snapshot with these bytes (and, for trips, this id), or None."""
         for path in sorted(self.snapshot_dir.glob("*.json")):
             try:
                 meta = (json.loads(path.read_text()) or {}).get("_meta") or {}
             except (OSError, ValueError):
                 continue
-            if meta.get("content_hash") == digest:
-                return path
+            if meta.get("content_hash") != digest:
+                continue
+            if availability_id is not None:
+                recorded = {
+                    str(v)
+                    for v in (
+                        meta.get("availability_id"),
+                        (meta.get("request") or {}).get("availability_id"),
+                    )
+                    if v
+                }
+                if recorded != {availability_id}:
+                    continue
+            return path
         return None
 
     def _append_manifest(

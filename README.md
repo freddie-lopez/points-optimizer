@@ -340,7 +340,10 @@ the cap is spent - or after an HTTP 429 on any search or lookup in the run -
 answers already in the disk cache are still read while nothing more is sent. A 2xx response is cached and archived like
 a search response - under `data/cache/seats_aero/trips/` and
 `<snapshot dir>/trips_endpoint/`, with a manifest of its own in the search
-manifest's column layout - whatever its shape. HTTP errors (404 included),
+manifest's column layout - whatever its shape. One difference from search: a
+trips snapshot is shared only by re-fetches of the **same** availability id, so
+two ids that got identical bytes (two empty lists) each have their own file, and
+a replay can refuse any row whose file records another id. HTTP errors (404 included),
 timeouts, transport errors, bad JSON and budget refusals are never cached.
 
 ### What a lookup can say
