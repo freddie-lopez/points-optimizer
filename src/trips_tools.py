@@ -47,6 +47,13 @@ EXIT_DRIFT = 5
 
 CABIN_LETTERS = ("Y", "W", "J", "F")
 
+# The one test that reads every committed capture's required fields: the only
+# test a capture that drifted leaves red until the parser is fixed.
+DRIFT_TEST = (
+    "tests/test_trips_verification_label.py::"
+    "test_every_committed_real_capture_parses_without_required_field_drift"
+)
+
 # The airline each direct-partner source flies itself, for the INCONCLUSIVE
 # warning, and the site a reader compares against.
 OWN_METAL = {
@@ -476,13 +483,31 @@ def run_capture(
     if parsed.incomplete:
         cap.blocking_drift.append(parsed.incomplete_reason)
     if cap.blocking_drift:
+        # MUST-FIX 3. No new capture is needed: the parser is fixed against THIS
+        # file, and once it reads it cleanly the same file passes the label
+        # check with no further call. And exactly one test reads every
+        # committed capture's required fields, so that is the one red test a
+        # drifting capture leaves - expected, not a regression.
         console.print(
             f"[bold red]CAPTURED WITH DRIFT ({len(cap.blocking_drift)} blocking item(s)). "
-            f"The file is written. Do NOT set TRIPS_SCHEMA_VERIFIED_BY to it: fix the "
-            f"parser until it reads this capture cleanly, then capture again.[/bold red]"
+            f"The file is written and is exactly what is needed: send both files "
+            f"back. Do NOT set TRIPS_SCHEMA_VERIFIED_BY to it, and do NOT capture "
+            f"again - the parser is fixed against this file, and the same file then "
+            f"verifies with no new call.[/bold red]"
         )
         for item in cap.blocking_drift:
             console.print(f"[red]  - {escape(item)}[/red]")
+        if parsed.required_drift or parsed.envelope_error:
+            console.print(
+                f"[yellow]Expected: once these files are committed, exactly one test "
+                f"is red until the parser is fixed - {escape(DRIFT_TEST)}. Every "
+                f"other test stays green.[/yellow]"
+            )
+        else:
+            console.print(
+                "[yellow]Committing these files turns no test red; the label simply "
+                "stays unverified.[/yellow]"
+            )
         return EXIT_DRIFT, cap
     # Re-test 2, R2-4. "Clean" is the LABEL CHECK's verdict, not this tool's
     # own: the advice below is only printed for a file the check accepts, so
@@ -492,16 +517,21 @@ def run_capture(
         console.print(
             f"[bold red]CAPTURED, BUT THIS FILE CANNOT FLIP THE UNVERIFIED LABEL "
             f"({len(cap.flip_problems)} reason(s) from the label check). The file is "
-            f"written and is still useful as a drift record. Do NOT set "
-            f"TRIPS_SCHEMA_VERIFIED_BY to it.[/bold red]"
+            f"written and is still useful as a drift record: send both files back. "
+            f"Do NOT set TRIPS_SCHEMA_VERIFIED_BY to it.[/bold red]"
         )
         for item in cap.flip_problems:
             console.print(f"[red]  - {escape(item)}[/red]")
+        console.print(
+            "[yellow]Committing these files turns no test red; the label simply "
+            "stays unverified.[/yellow]"
+        )
         return EXIT_DRIFT, cap
     console.print(
-        f"[green]CAPTURED CLEAN. To flip the UNVERIFIED label, commit both files and "
-        f"set TRIPS_SCHEMA_VERIFIED_BY = {cap.path.name!r} in src/seats_trips.py."
-        f"[/green]"
+        f"[green]CAPTURED CLEAN. Send both files back; do not edit "
+        f"src/seats_trips.py yourself. The Coder commits them and will set "
+        f"TRIPS_SCHEMA_VERIFIED_BY = {cap.path.name!r}, which drops the UNVERIFIED "
+        f"label.[/green]"
     )
     return EXIT_OK, cap
 
@@ -854,9 +884,10 @@ def run_yq_check(args, console: Console, read, today: date) -> int:
         )
         return code
     console.print(
-        "When every ____ is filled, and ONLY if the record's verdict line says "
-        "includes_yq or excludes_yq, add this row to data/yq_inclusion.csv with "
-        "<VERDICT> replaced by that same word:"
+        "Fill every ____ in the record from the site, then send back the record and "
+        "the two capture files. Do not edit data/yq_inclusion.csv yourself. ONLY if "
+        "the record's verdict line says includes_yq or excludes_yq, the Coder adds "
+        "this row, with <VERDICT> replaced by that same word:"
     )
     console.print(
         escape(

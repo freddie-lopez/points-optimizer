@@ -17,10 +17,15 @@ response"). This directory is where that changes.
 
 1. Run `python -m src.trips_tools capture ...` on the Mac. It writes
    `real/<date>_<source>_<O><D>_<id>.json` and `.raw.txt`, and prints a drift
-   report. Exit 5 means the capture showed required-field drift or the label
-   check refused it (the reasons are printed): the label must not be flipped.
-2. Commit both files.
-3. Set `TRIPS_SCHEMA_VERIFIED_BY` in `src/seats_trips.py` to the `.json` filename.
+   report. Exit 5 means the capture showed drift or the label check refused it
+   (the reasons are printed): the label must not be flipped yet. Do **not**
+   capture again after drift: the parser is fixed against that same file, which
+   then verifies with no new call. Until then exactly one test is red once the
+   file is committed (`test_every_committed_real_capture_parses_without_required_field_drift`,
+   for required-field drift) - expected.
+2. Send both files back. Tsuki does not edit `src/seats_trips.py` himself.
+3. The Coder commits them and sets `TRIPS_SCHEMA_VERIFIED_BY` in
+   `src/seats_trips.py` to the `.json` filename.
    `tests/test_trips_verification_label.py` then runs
    `schema_verification_problems`, the same check `capture` ran before it said
    CAPTURED CLEAN (exit 0; any refusal is exit 5 with the reasons). The file

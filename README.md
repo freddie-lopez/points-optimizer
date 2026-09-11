@@ -420,9 +420,14 @@ words other than "business" are assumed, and so is `min_cabin_pct=100`: an
 itinerary with a nonzero `MixedCabinPct` means the server did not honour it,
 and `capture` reports that as blocking drift.
 
-What flips it: a capture written by `python -m src.trips_tools capture` is
-committed under `tests/fixtures/seats_aero/trips_endpoint/real/`, and
-`TRIPS_SCHEMA_VERIFIED_BY` in `src/seats_trips.py` is set to its filename.
+What flips it: a capture written by `python -m src.trips_tools capture` (or by
+`yq-check`, which writes the same capture) is sent back, committed under
+`tests/fixtures/seats_aero/trips_endpoint/real/`, and `TRIPS_SCHEMA_VERIFIED_BY`
+in `src/seats_trips.py` is set to its filename - by the Coder, not by editing
+the source on the Mac. Flipping it (and `TRIPS_TOTALTAXES_UNIT = "cents"`) keeps
+the suite green: every test that describes the unverified state pins both
+constants (`tests/_trips_label_state.py`), and `tests/test_trips_label_flip.py`
+runs the flipped state on a genuine tmp capture.
 `tests/test_trips_verification_label.py` then checks the file is a real capture
 (never one under `synthetic/`), its content hash matches, its `.raw.txt` sibling
 is non-empty and parses to the same page the capture holds (compared as JSON
@@ -435,7 +440,10 @@ infers the route from the itineraries and **cannot** flip the label), neither it
 page, any itinerary nor its id is copied from `synthetic/`, and it parses with at
 least one itinerary, none unreadable and no required-field drift. `capture`
 runs this same check and prints the "set `TRIPS_SCHEMA_VERIFIED_BY`" advice
-only when it passes.
+only when it passes. After drift it says **not** to capture again - the parser
+is fixed against the same file, which then verifies with no new call - and names
+the one test (`test_every_committed_real_capture_parses_without_required_field_drift`)
+that stays red, as expected, until then.
 
 **What these checks cannot do:** stop a file built by hand on purpose. Nothing in
 a capture is signed and every `_meta` field is plain text, so anyone who can

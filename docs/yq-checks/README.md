@@ -8,7 +8,9 @@ source: does its `TotalTaxes` already include the carrier-imposed surcharge
 `python -m src.trips_tools yq-check ...` writes `<date>-<source>.md` here with
 the Seats.aero half filled in and the site half left as `____` blanks. Fill the
 blanks from the program's site (taxes, fees and carrier-imposed charges for ONE
-adult on the SAME flight), then add ONE row to `data/yq_inclusion.csv`:
+adult on the SAME flight), then send the record back with the two capture
+files. Do not edit `data/yq_inclusion.csv` yourself: the Coder adds ONE row,
+from the template yq-check printed:
 
 ```
 source,airline,verdict,verified_on,evidence,notes
