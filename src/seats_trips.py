@@ -123,7 +123,9 @@ STATE_SHAPE_ERROR = "trips_shape_error"
 
 
 def valid_availability_id(value: Any) -> bool:
-    return isinstance(value, str) and bool(AVAILABILITY_ID_RE.match(value))
+    # fullmatch, not match: `$` also matches before a trailing newline, and an
+    # id carrying one would reach a URL, a filename and a manifest cell.
+    return isinstance(value, str) and bool(AVAILABILITY_ID_RE.fullmatch(value))
 
 
 # ---------------------------------------------------------------------------
