@@ -293,11 +293,35 @@ def _resolve_row_by_search(client, args, console) -> Tuple[Dict[str, Any], Dict[
     if raw.budget_exhausted:
         raise ToolRefusal("the call budget ran out before the search. Nothing was captured.")
     if raw.incomplete:
+        # Re-test 2, R2-3. This one-page answer was cut short by the capture's
+        # OWN page cap, under the same key a trip leg uses for this route and
+        # day. Left in the shared runtime cache, the next trip run would be
+        # served page one and never follow the pages it would have fetched.
+        # So the entry this search just wrote is removed. (An incomplete answer
+        # that was already in the cache was not written by this tool: left as
+        # it is.)
+        if raw.served_from_cache:
+            leftover = (
+                " The incomplete search was served from the disk cache, where an "
+                "earlier run left it; it is left as it is."
+            )
+        else:
+            leftover = " The one-page search was not kept in the cache."
+            if raw.cache_path is not None:
+                try:
+                    Path(raw.cache_path).unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    leftover = (
+                        f" The one-page search could NOT be removed from the cache "
+                        f"({raw.cache_path}: {e}); run the trip with --refresh."
+                    )
         raise ToolRefusal(
             f"the search is INCOMPLETE ({raw.incomplete_reason or 'Seats.aero says there is more'}). "
             f"Following it would spend more calls than the one search promised, and "
             f"page one alone cannot show the matching row is the only one. No trips "
-            f"call was made and nothing was captured. Narrow the search, or use "
+            f"call was made and nothing was captured.{leftover} Narrow the search, or use "
             f"--availability-id with the row's ID."
         )
     console.print(
