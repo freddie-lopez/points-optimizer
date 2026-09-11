@@ -13,6 +13,16 @@ label saying the parser is UNVERIFIED until a real capture, written by
 `python -m src.trips_tools capture`, is committed under
 tests/fixtures/seats_aero/trips_endpoint/real/ and named below.
 """
+import re
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
+
+from src.models import (
+    METAL_PROVENANCE_TRIPS,
+    MetalLookup,
+    MetalStatus,
+)
+
 
 # Which parser read a trips response. Stamped into every trips snapshot and its
 # manifest row, separately from the search `PARSER_VERSION`, so a change to this
@@ -49,3 +59,746 @@ def parser_is_verified() -> bool:
 def trips_parser_label() -> str:
     """The label every parse-derived line carries, or "" once verified."""
     return "" if parser_is_verified() else PARSER_UNVERIFIED_LABEL
+
+
+# The request, sent explicitly even though these are the documented defaults,
+# so the cache key and the snapshot record exactly what was asked.
+#   include_filtered=false: the award being matched is a non-Raw price, and
+#     dynamically priced itineraries are a different product.
+#   min_cabin_pct=100: a mixed-cabin itinerary is a different product from a
+#     {cabin} award.
+TRIPS_REQUEST_PARAMS: Dict[str, str] = {
+    "include_filtered": "false",
+    "min_cabin_pct": "100",
+}
+
+# Seats.aero's cabin WORDS to this codebase's cabin LETTERS. Exact, on a
+# lowercased stripped value. "business" is the published example; the other
+# three are the vocabulary of Seats.aero's own cabin parameter and are ASSUMED.
+# Anything else is CABIN_UNMAPPED - an unknown, never a near miss.
+CABIN_FROM_TRIPS: Dict[str, str] = {
+    "economy": "Y",
+    "premium": "W",
+    "business": "J",
+    "first": "F",
+}
+
+# An availability id is checked BEFORE any URL or filename is built from it.
+AVAILABILITY_ID_RE = re.compile(r"^[A-Za-z0-9]{10,64}$")
+
+# The keys the published schema documents. Anything else is DRIFT: listed,
+# never an error.
+DOCUMENTED_TOP_KEYS = frozenset(
+    {"data", "origin_coordinates", "destination_coordinates", "booking_links"}
+)
+DOCUMENTED_TRIP_KEYS = frozenset(
+    {
+        "ID", "RouteID", "AvailabilityID", "AvailabilitySegments", "TotalDuration",
+        "Stops", "Carriers", "RemainingSeats", "MileageCost", "TotalTaxes",
+        "TaxesCurrency", "TaxesCurrencySymbol", "AllianceCost", "FlightNumbers",
+        "DepartsAt", "ArrivesAt", "Cabin", "CreatedAt", "UpdatedAt", "Source",
+        "MixedCabinPct",
+    }
+)
+DOCUMENTED_SEGMENT_KEYS = frozenset(
+    {
+        "ID", "RouteID", "AvailabilityID", "AvailabilityTripID", "FlightNumber",
+        "Distance", "FareClass", "AircraftName", "AircraftCode", "OriginAirport",
+        "DestinationAirport", "DepartsAt", "ArrivesAt", "CreatedAt", "UpdatedAt",
+        "Source", "Order",
+    }
+)
+# Keys that would mean the itinerary list is paginated. None is documented.
+PAGINATION_KEYS = ("hasMore", "has_more", "cursor", "next_cursor", "skip", "count")
+
+# The same plausibility ceiling the search parser uses for a mileage price.
+MAX_PLAUSIBLE_MILEAGE = 5_000_000
+
+# The manifest `state` column for a trips row.
+STATE_READABLE = "trips_readable"
+STATE_UNREADABLE = "trips_unreadable"
+STATE_EMPTY = "trips_empty"
+STATE_INCOMPLETE = "trips_incomplete"
+STATE_SHAPE_ERROR = "trips_shape_error"
+
+
+def valid_availability_id(value: Any) -> bool:
+    return isinstance(value, str) and bool(AVAILABILITY_ID_RE.match(value))
+
+
+# ---------------------------------------------------------------------------
+# Flight numbers
+# ---------------------------------------------------------------------------
+
+_IATA_FLIGHT = re.compile(r"^([A-Z][A-Z0-9]|[0-9][A-Z])([0-9]{1,4})([A-Z]?)$")
+_ICAO_FLIGHT = re.compile(r"^[A-Z]{3}[0-9]{1,4}[A-Z]?$")
+
+
+def normalize_flight_number(value: Any) -> str:
+    """Upper-case, strip, and drop whitespace between the prefix and the digits."""
+    if not isinstance(value, str):
+        return ""
+    text = value.strip().upper()
+    return re.sub(r"^([A-Z0-9]{2,3})\s+(?=[0-9])", r"\1", text)
+
+
+def parse_flight_number(value: Any) -> Tuple[str, str, str]:
+    """
+    (carrier, normalized flight number, why-unparseable). A carrier is returned
+    only for an IATA two-character designator with at least one letter.
+
+    `carriers.csv` membership is NOT required: the row's own carrier list is
+    the authority, and the cross-check against it happens in `match_award`.
+    """
+    if not isinstance(value, str):
+        return "", "", (
+            f"FlightNumber is a {type(value).__name__}, not a string"
+        )
+    text = normalize_flight_number(value)
+    if not text:
+        return "", "", "FlightNumber is empty"
+    m = _IATA_FLIGHT.match(text)
+    if m:
+        return m.group(1), text, ""
+    if _ICAO_FLIGHT.match(text):
+        return "", text, (
+            f"FlightNumber {value!r} looks like an ICAO designator; no "
+            f"ICAO->IATA table is configured, not guessed"
+        )
+    return "", text, f"FlightNumber {value!r} is not an airline designator plus a number"
+
+
+def _split_list(value: str) -> List[str]:
+    return [p.strip() for p in value.split(",") if p.strip()]
+
+
+# ---------------------------------------------------------------------------
+# The parse
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TripSegment:
+    order: int
+    flight_number: str
+    carrier: str
+    origin: str
+    destination: str
+    departs_at: str = ""
+    arrives_at: str = ""
+    aircraft: str = ""
+
+    def describe(self) -> str:
+        times = ""
+        if self.departs_at or self.arrives_at:
+            times = f" {self.departs_at or '?'}"
+        aircraft = f" ({self.aircraft})" if self.aircraft else ""
+        arrive = f" {self.arrives_at}" if self.arrives_at else ""
+        return (
+            f"{self.flight_number} {self.origin}{times} -> {self.destination}"
+            f"{arrive}{aircraft}"
+        )
+
+
+@dataclass
+class TripItinerary:
+    """One itinerary from the response. `unreadable_code` set means unreadable."""
+
+    id: str = ""
+    source: Optional[str] = None  # lowercased, None if unreadable
+    cabin: Optional[str] = None  # a letter, None if unreadable or unmapped
+    cabin_raw: Any = None
+    mileage_cost: Optional[int] = None
+    total_taxes_raw: Any = None
+    taxes_currency: str = ""
+    mixed_cabin_pct: int = 0
+    segments: Tuple[TripSegment, ...] = ()
+    carriers: Tuple[str, ...] = ()
+    unreadable_code: str = ""
+    unreadable_reason: str = ""
+
+    @property
+    def readable(self) -> bool:
+        return not self.unreadable_code
+
+    @property
+    def flight_numbers(self) -> Tuple[str, ...]:
+        return tuple(s.flight_number for s in self.segments)
+
+    @property
+    def key_fully_readable(self) -> bool:
+        return (
+            self.source is not None
+            and self.cabin is not None
+            and self.mileage_cost is not None
+        )
+
+
+@dataclass
+class ParsedTrips:
+    """What the parser made of one trips response. Failures kept apart."""
+
+    trips: List[TripItinerary] = field(default_factory=list)
+    # (reason code, sentence) when the envelope itself is not readable.
+    envelope_error: Optional[Tuple[str, str]] = None
+    incomplete: bool = False
+    incomplete_reason: str = ""
+    # Every deviation from the published schema, as a sentence. Never an error.
+    drift: List[str] = field(default_factory=list)
+    # The subset that blocks flipping the UNVERIFIED label: a required field
+    # missing, of the wrong type, or failing a documented check.
+    required_drift: List[str] = field(default_factory=list)
+    cabins_seen: List[str] = field(default_factory=list)
+    flight_number_shapes: List[str] = field(default_factory=list)
+    pagination_keys: List[str] = field(default_factory=list)
+    mixed_cabin_present: int = 0
+    data_len: Optional[int] = None
+
+    @property
+    def readable(self) -> List[TripItinerary]:
+        return [t for t in self.trips if t.readable]
+
+    @property
+    def unreadable(self) -> List[TripItinerary]:
+        return [t for t in self.trips if not t.readable]
+
+    @property
+    def manifest_state(self) -> str:
+        if self.envelope_error:
+            return STATE_SHAPE_ERROR
+        if self.incomplete:
+            return STATE_INCOMPLETE
+        if not self.trips:
+            return STATE_EMPTY
+        if self.unreadable:
+            return STATE_UNREADABLE
+        return STATE_READABLE
+
+    def note(self, text: str, required: bool = False) -> None:
+        if text not in self.drift:
+            self.drift.append(text)
+        if required and text not in self.required_drift:
+            self.required_drift.append(text)
+
+
+def _flight_shape(text: str) -> str:
+    return re.sub(r"[0-9]", "9", re.sub(r"[A-Z]", "A", text))
+
+
+def trips_coverage(payload: Any) -> Tuple[bool, str]:
+    """
+    (incomplete, why) as a FUNCTION OF THE BYTES, so a cached or replayed
+    response answers the same way as the fetch that wrote it.
+    """
+    if not isinstance(payload, dict):
+        return False, ""
+    reasons = []
+    has_more = payload.get("hasMore", payload.get("has_more"))
+    if has_more is True or (isinstance(has_more, str) and has_more.strip().lower() == "true"):
+        reasons.append("the response says hasMore")
+    cursor = payload.get("cursor") or payload.get("next_cursor")
+    if cursor:
+        reasons.append("the response carries a cursor to a further page")
+    skip = payload.get("skip")
+    if isinstance(skip, int) and not isinstance(skip, bool) and skip > 0:
+        reasons.append(f"the response carries skip={skip}")
+    if reasons:
+        return True, (
+            "; ".join(reasons)
+            + ", and this tool does not page the itinerary list, so it saw only "
+            "part of it"
+        )
+    return False, ""
+
+
+def _str_field(obj: Dict[str, Any], key: str) -> Optional[str]:
+    value = obj.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _parse_trip(
+    raw: Any, index: int, requested_id: str, route: Tuple[str, str], out: ParsedTrips
+) -> TripItinerary:
+    trip = TripItinerary()
+    label = f"itinerary {index + 1}"
+    if not isinstance(raw, dict):
+        trip.unreadable_code = "TRIP_UNREADABLE"
+        trip.unreadable_reason = f"{label} is a {type(raw).__name__}, not an object"
+        out.note(trip.unreadable_reason, required=True)
+        return trip
+
+    for key in sorted(set(raw) - DOCUMENTED_TRIP_KEYS):
+        out.note(f"undocumented itinerary key {key!r}")
+
+    def fail(code: str, reason: str) -> TripItinerary:
+        if not trip.unreadable_code:
+            trip.unreadable_code = code
+            trip.unreadable_reason = f"{label}: {reason}"
+        out.note(f"{label}: {reason}", required=True)
+        return trip
+
+    # -- the three key fields first, so "could this be the award?" can be
+    #    answered even about an itinerary that fails a later check --------
+    source = _str_field(raw, "Source")
+    trip.source = source.lower() if source else None
+    trip.cabin_raw = raw.get("Cabin")
+    if isinstance(trip.cabin_raw, str):
+        if trip.cabin_raw not in out.cabins_seen:
+            out.cabins_seen.append(trip.cabin_raw)
+        trip.cabin = CABIN_FROM_TRIPS.get(trip.cabin_raw.strip().lower())
+    elif trip.cabin_raw is not None:
+        shown = repr(trip.cabin_raw)
+        if shown not in out.cabins_seen:
+            out.cabins_seen.append(shown)
+    cost_raw = raw.get("MileageCost")
+    cost: Optional[int] = None
+    cost_problem = ""
+    if isinstance(cost_raw, bool) or cost_raw is None or isinstance(cost_raw, float):
+        cost_problem = f"MileageCost is {cost_raw!r}, not an integer"
+    elif isinstance(cost_raw, int):
+        cost = cost_raw
+    elif isinstance(cost_raw, str) and cost_raw.strip().isdigit():
+        cost = int(cost_raw.strip())
+        out.note(
+            f"{label}: MileageCost is the string {cost_raw!r}, not an integer "
+            f"(read as {cost:,})",
+            required=True,
+        )
+    else:
+        cost_problem = f"MileageCost is {cost_raw!r}, not an integer"
+    if cost is not None and not (0 < cost <= MAX_PLAUSIBLE_MILEAGE):
+        cost_problem = f"MileageCost {cost:,} is not a bookable price"
+        cost = None
+    trip.mileage_cost = cost
+
+    trip.total_taxes_raw = raw.get("TotalTaxes")
+    if trip.total_taxes_raw is not None and (
+        isinstance(trip.total_taxes_raw, bool) or not isinstance(trip.total_taxes_raw, int)
+    ):
+        out.note(f"{label}: TotalTaxes is {trip.total_taxes_raw!r}, not an integer")
+    currency = raw.get("TaxesCurrency")
+    if currency is not None and not isinstance(currency, str):
+        out.note(f"{label}: TaxesCurrency is {currency!r}, not a string")
+    trip.taxes_currency = currency.strip().upper() if isinstance(currency, str) else ""
+    for key in ("DepartsAt", "ArrivesAt"):
+        if key in raw and raw[key] is not None and not isinstance(raw[key], str):
+            out.note(f"{label}: {key} is {raw[key]!r}, not a string")
+
+    # -- required fields, in a fixed order; the first failure names it --------
+    trip_id = raw.get("ID")
+    if not isinstance(trip_id, str) or not trip_id.strip():
+        fail("TRIP_UNREADABLE", f"ID is {trip_id!r}, not a non-empty string")
+    else:
+        trip.id = trip_id.strip()
+    avail = raw.get("AvailabilityID")
+    if not isinstance(avail, str) or not avail.strip():
+        fail("TRIP_UNREADABLE", f"AvailabilityID is {avail!r}, not a non-empty string")
+    elif avail.strip() != requested_id:
+        fail(
+            "AVAILABILITY_ID_MISMATCH",
+            f"AvailabilityID is {avail.strip()!r} and the lookup asked about "
+            f"{requested_id!r}",
+        )
+    if trip.source is None:
+        fail("TRIP_UNREADABLE", f"Source is {raw.get('Source')!r}, not a non-empty string")
+    if trip.cabin_raw is None:
+        fail("TRIP_UNREADABLE", "Cabin is missing")
+    elif trip.cabin is None:
+        fail(
+            "CABIN_UNMAPPED",
+            f"Cabin is {trip.cabin_raw!r}, which is not one of "
+            f"{sorted(CABIN_FROM_TRIPS)}",
+        )
+    if cost_problem:
+        fail("TRIP_UNREADABLE", cost_problem)
+
+    raw_segments = raw.get("AvailabilitySegments")
+    if not isinstance(raw_segments, list) or not raw_segments:
+        return fail(
+            "TRIP_UNREADABLE",
+            f"AvailabilitySegments is {type(raw_segments).__name__ if raw_segments is not None else 'missing'}"
+            f"{' and empty' if raw_segments == [] else ''}, not a non-empty list",
+        )
+
+    segments: List[TripSegment] = []
+    orders = []
+    for s_index, seg in enumerate(raw_segments):
+        s_label = f"segment {s_index + 1}"
+        if not isinstance(seg, dict):
+            return fail("TRIP_UNREADABLE", f"{s_label} is a {type(seg).__name__}, not an object")
+        for key in sorted(set(seg) - DOCUMENTED_SEGMENT_KEYS):
+            out.note(f"undocumented segment key {key!r}")
+        order = seg.get("Order")
+        if isinstance(order, bool) or not isinstance(order, int):
+            return fail("TRIP_UNREADABLE", f"{s_label} Order is {order!r}, not an integer")
+        orders.append(order)
+        origin = _str_field(seg, "OriginAirport")
+        destination = _str_field(seg, "DestinationAirport")
+        if origin is None or destination is None:
+            return fail(
+                "TRIP_UNREADABLE",
+                f"{s_label} OriginAirport/DestinationAirport is "
+                f"{seg.get('OriginAirport')!r}/{seg.get('DestinationAirport')!r}",
+            )
+        if "FlightNumber" not in seg:
+            return fail("TRIP_UNREADABLE", f"{s_label} FlightNumber is missing")
+        carrier, number, why = parse_flight_number(seg.get("FlightNumber"))
+        if number:
+            shape = _flight_shape(number)
+            if shape not in out.flight_number_shapes:
+                out.flight_number_shapes.append(shape)
+        if why:
+            return fail("FLIGHT_NUMBER_UNPARSEABLE", f"{s_label}: {why}")
+        aircraft = seg.get("AircraftName") or seg.get("AircraftCode") or ""
+        if not isinstance(aircraft, str):
+            out.note(f"{label} {s_label}: aircraft is {aircraft!r}, not a string")
+            aircraft = ""
+        segments.append(
+            TripSegment(
+                order=order,
+                flight_number=number,
+                carrier=carrier,
+                origin=origin.upper(),
+                destination=destination.upper(),
+                departs_at=seg.get("DepartsAt") if isinstance(seg.get("DepartsAt"), str) else "",
+                arrives_at=seg.get("ArrivesAt") if isinstance(seg.get("ArrivesAt"), str) else "",
+                aircraft=aircraft.strip(),
+            )
+        )
+    if len(set(orders)) != len(orders):
+        return fail("TRIP_INCONSISTENT", f"segment Order values repeat ({orders})")
+    segments.sort(key=lambda s: s.order)
+    trip.segments = tuple(segments)
+    carriers: List[str] = []
+    for s in segments:
+        if s.carrier not in carriers:
+            carriers.append(s.carrier)
+    trip.carriers = tuple(carriers)
+
+    # -- documented cross-checks, used only if present -------------------------
+    if "FlightNumbers" in raw:
+        listed = raw.get("FlightNumbers")
+        if not isinstance(listed, str):
+            return fail("TRIP_UNREADABLE", f"FlightNumbers is {listed!r}, not a string")
+        mine = [normalize_flight_number(x) for x in _split_list(listed)]
+        if mine != list(trip.flight_numbers):
+            return fail(
+                "TRIP_INCONSISTENT",
+                f"FlightNumbers says {listed!r} and the segments say "
+                f"{', '.join(trip.flight_numbers)}",
+            )
+    if "Carriers" in raw:
+        listed = raw.get("Carriers")
+        if not isinstance(listed, str):
+            return fail("TRIP_UNREADABLE", f"Carriers is {listed!r}, not a string")
+        named = {c.upper() for c in _split_list(listed)}
+        if named != set(trip.carriers):
+            # One of the two may be the OPERATING carrier and the other the
+            # marketing one. Which is which is not documented, so neither is
+            # believed.
+            return fail(
+                "TRIP_INCONSISTENT",
+                f"Carriers says {listed!r} and the flight numbers name "
+                f"{', '.join(trip.carriers)}; one may be the operating carrier, "
+                f"and which one is not documented",
+            )
+    if "MixedCabinPct" in raw:
+        out.mixed_cabin_present += 1
+        pct = raw.get("MixedCabinPct")
+        if isinstance(pct, bool) or not isinstance(pct, int) or not (0 <= pct <= 100):
+            return fail("TRIP_UNREADABLE", f"MixedCabinPct is {pct!r}, not an integer 1-100")
+        if pct == 0:
+            out.note(f"{label}: MixedCabinPct is 0 (documented as omitted when 0)")
+        trip.mixed_cabin_pct = pct
+
+    # -- the route chain -----------------------------------------------------
+    origin, destination = route
+    if not origin or not destination:
+        return fail(
+            "TRIP_INCONSISTENT",
+            "the award's own route is not known, so the itinerary cannot be "
+            "checked against it",
+        )
+    chain_ok = segments[0].origin == origin and segments[-1].destination == destination
+    for before, after in zip(segments, segments[1:]):
+        if after.origin != before.destination:
+            chain_ok = False
+    if not chain_ok:
+        path = " ".join(f"{s.origin}-{s.destination}" for s in segments)
+        return fail(
+            "TRIP_INCONSISTENT",
+            f"the segments ({path}) do not run {origin}->{destination} in one chain",
+        )
+    return trip
+
+
+def parse_trips_payload(
+    payload: Any, requested_id: str, route: Tuple[str, str]
+) -> ParsedTrips:
+    """
+    Strict on required fields, tolerant of extras. NEVER RAISES.
+
+    An empty `data` list parses to zero trips and `data_len == 0`; what that
+    MEANS is `match_award`'s business, and the answer there is EMPTY_DATA - an
+    unknown, never "no trips".
+    """
+    out = ParsedTrips()
+    try:
+        if not isinstance(payload, dict):
+            out.envelope_error = (
+                "SHAPE_ERROR",
+                f"the response is a {type(payload).__name__}, not a JSON object",
+            )
+            out.note(out.envelope_error[1], required=True)
+            return out
+        for key in sorted(set(payload) - DOCUMENTED_TOP_KEYS):
+            out.note(f"undocumented top-level key {key!r}")
+        out.pagination_keys = [k for k in PAGINATION_KEYS if k in payload]
+        out.incomplete, out.incomplete_reason = trips_coverage(payload)
+        if "data" not in payload:
+            out.envelope_error = ("SHAPE_ERROR", "the response has no 'data' key")
+            out.note(out.envelope_error[1], required=True)
+            return out
+        data = payload.get("data")
+        if not isinstance(data, list):
+            out.envelope_error = (
+                "SHAPE_ERROR",
+                f"'data' is a {type(data).__name__}, not a list of itineraries",
+            )
+            out.note(out.envelope_error[1], required=True)
+            return out
+        out.data_len = len(data)
+        route_key = (str(route[0] or "").upper(), str(route[1] or "").upper())
+        for index, raw in enumerate(data):
+            out.trips.append(_parse_trip(raw, index, requested_id, route_key, out))
+    except Exception as e:  # noqa: BLE001 - a parse must never raise into the run
+        out.envelope_error = (
+            "SHAPE_ERROR",
+            f"the parser failed unexpectedly ({type(e).__name__}: {e})",
+        )
+        out.note(out.envelope_error[1], required=True)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Matching one award
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AwardFacts:
+    """The facts about one award that a trips response is matched against."""
+
+    availability_id: str
+    source_code: str
+    cabin: str
+    cost: int
+    row_carriers: Tuple[str, ...]
+    origin: str
+    destination: str
+
+    @classmethod
+    def from_award(cls, award) -> "AwardFacts":
+        route = str(getattr(award, "route", "") or "")
+        origin, _, destination = route.partition("-")
+        diag = getattr(award, "raw_diagnostics", None) or {}
+        return cls(
+            availability_id=str(diag.get("availability_id") or ""),
+            source_code=str(getattr(award, "program_source_code", "") or "").lower(),
+            cabin=str(getattr(award, "award_type", "") or "").upper(),
+            cost=int(getattr(award, "cost", 0) or 0),
+            row_carriers=tuple(getattr(award, "candidate_carriers", None) or ()),
+            origin=origin.strip().upper(),
+            destination=destination.strip().upper(),
+        )
+
+
+def _could_be_the_award(trip: TripItinerary, facts: AwardFacts) -> bool:
+    """
+    An unreadable itinerary is ruled out ONLY when its source, cabin and cost
+    are all readable and they are not this award's. Anything less and it might
+    be the award, so it blocks KNOWN.
+    """
+    if not trip.key_fully_readable:
+        return True
+    return (
+        trip.source == facts.source_code
+        and trip.cabin == facts.cabin
+        and trip.mileage_cost == facts.cost
+    )
+
+
+def _money_raw(amount: int, currency: str) -> str:
+    return f"{currency or '(no currency)'} {amount:,}"
+
+
+def trip_taxes_display(trip: TripItinerary) -> str:
+    """A trip's own TotalTaxes, shown raw with BOTH unit readings. Never a figure."""
+    raw = trip.total_taxes_raw
+    cur = trip.taxes_currency or "(no currency)"
+    if raw is None:
+        return "no TotalTaxes on this itinerary"
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return f"TotalTaxes {raw!r} is not an integer"
+    return (
+        f"raw {raw} {cur} (unit NOT VERIFIED: {cur} {raw / 100:,.2f} if cents, "
+        f"{cur} {raw:,} if whole units)"
+    )
+
+
+def _describe_counts(costs: List[int]) -> str:
+    counted: Dict[int, int] = {}
+    for c in costs:
+        counted[c] = counted.get(c, 0) + 1
+    return ", ".join(f"{c:,} ({n})" for c, n in sorted(counted.items()))
+
+
+def match_award(parsed: ParsedTrips, facts: AwardFacts) -> MetalLookup:
+    """
+    The MetalLookup for ONE award from one parsed response. NEVER RAISES.
+
+    Only a set of READABLE itineraries that match the award's program, cabin
+    and price, that all name ONE carrier set by flight number, and whose every
+    carrier is in the row's own list, gives KNOWN. Everything else is a named
+    UNKNOWN (or AMBIGUOUS) with the award's possible carriers attached.
+    """
+    domain: Dict[str, Any] = (
+        {"possible_carriers": tuple(facts.row_carriers)}
+        if facts.row_carriers
+        else {"domain_unbounded": True}
+    )
+    common = dict(
+        availability_id=facts.availability_id,
+        row_carriers=tuple(facts.row_carriers),
+        parser_verified=parser_is_verified(),
+    )
+
+    def unknown(code: str, detail: str, **extra) -> MetalLookup:
+        return MetalLookup(
+            status=MetalStatus.UNKNOWN, reason_code=code, detail=detail,
+            **common, **domain, **extra,
+        )
+
+    try:
+        if parsed.envelope_error:
+            return unknown(parsed.envelope_error[0], parsed.envelope_error[1])
+        if parsed.incomplete:
+            return unknown("INCOMPLETE", parsed.incomplete_reason)
+        if not parsed.trips:
+            return unknown("EMPTY_DATA", "data: []")
+
+        blocking = [t for t in parsed.unreadable if _could_be_the_award(t, facts)]
+        if blocking:
+            first = blocking[0]
+            more = (
+                f"; {len(blocking)} itineraries like it"
+                if len(blocking) > 1
+                else ""
+            )
+            return unknown(first.unreadable_code, f"{first.unreadable_reason}{more}")
+
+        same = [
+            t for t in parsed.readable
+            if t.source == facts.source_code and t.cabin == facts.cabin
+        ]
+        matched = [t for t in same if t.mileage_cost == facts.cost]
+        clean = [t for t in matched if t.mixed_cabin_pct == 0]
+        mixed = [t for t in matched if t.mixed_cabin_pct > 0]
+        others = [t.mileage_cost for t in same if t.mileage_cost != facts.cost]
+        other_note = (
+            f"other itineraries in {facts.cabin} at {_describe_counts(others)} - not "
+            f"this award's price"
+            if others
+            else ""
+        )
+        extra = dict(other_price_note=other_note, excluded_mixed=len(mixed))
+
+        if not clean:
+            if mixed:
+                return unknown(
+                    "MIXED_CABIN_ONLY",
+                    f"{len(mixed)} at {facts.cost:,} with MixedCabinPct "
+                    f"{', '.join(str(t.mixed_cabin_pct) for t in mixed)}",
+                    **extra,
+                )
+            seen = (
+                f"costs seen in {facts.cabin} for {facts.source_code}: "
+                f"{_describe_counts(others)}"
+                if others
+                else f"no readable itinerary in {facts.cabin} for "
+                f"{facts.source_code or '(no source)'} among {len(parsed.readable)} "
+                f"read"
+            )
+            return unknown(
+                "NO_MATCH", f"{seen}; this award is {facts.cost:,}", **extra
+            )
+
+        named = []
+        for t in clean:
+            for c in t.carriers:
+                if c not in named:
+                    named.append(c)
+        if not facts.row_carriers:
+            return unknown(
+                "ROW_CARRIERS_ABSENT",
+                f"the flight numbers name {', '.join(named)}",
+                **extra,
+            )
+        outside = [c for c in named if c not in facts.row_carriers]
+        if outside:
+            flights = sorted(
+                {s.flight_number for t in clean for s in t.segments if s.carrier in outside}
+            )
+            return unknown(
+                "CARRIER_NOT_IN_ROW_LIST",
+                f"{', '.join(outside)} (flight {', '.join(flights)}; the row lists "
+                f"{', '.join(facts.row_carriers)})",
+                **extra,
+            )
+
+        sets: List[Tuple[str, ...]] = []
+        for t in clean:
+            if frozenset(t.carriers) not in {frozenset(s) for s in sets}:
+                sets.append(t.carriers)
+        flights: List[str] = []
+        numbers: List[str] = []
+        for i, t in enumerate(clean, start=1):
+            prefix = f"[{i}] " if len(clean) > 1 else ""
+            for s in t.segments:
+                flights.append(prefix + s.describe())
+                if s.flight_number not in numbers:
+                    numbers.append(s.flight_number)
+        taxes = "; ".join(
+            (f"[{i}] " if len(clean) > 1 else "") + trip_taxes_display(t)
+            for i, t in enumerate(clean, start=1)
+        )
+        taxes_note = f"{taxes}; not used in any figure" if taxes else ""
+        found = dict(
+            flights=tuple(flights),
+            flight_numbers=tuple(numbers),
+            matched_trips=len(clean),
+            trip_taxes_note=taxes_note,
+            provenance=METAL_PROVENANCE_TRIPS,
+            **extra,
+        )
+        if len(sets) == 1:
+            return MetalLookup(
+                status=MetalStatus.KNOWN, carriers=tuple(clean[0].carriers),
+                **common, **found,
+            )
+        union = []
+        for s in sets:
+            for c in s:
+                if c not in union:
+                    union.append(c)
+        return MetalLookup(
+            status=MetalStatus.AMBIGUOUS,
+            carrier_sets=tuple(tuple(s) for s in sets),
+            possible_carriers=tuple(union),
+            **common,
+            **found,
+        )
+    except Exception as e:  # noqa: BLE001 - the metal pass never raises
+        return unknown("UNEXPECTED_ERROR", f"{type(e).__name__}: {e}")
