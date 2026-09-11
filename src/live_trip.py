@@ -1141,6 +1141,14 @@ def _why_not_looked_up(
     )
     if est.is_known and est.amount_high == 0.0:
         return ("NOT_NEEDED_POLICY", award.program)
+    from src.seats_client import TAXES_UNREPORTED_SOURCES
+
+    if str(award.program_source_code or "").strip().lower() in TAXES_UNREPORTED_SOURCES:
+        # Seats.aero reports no taxes for this source, so its awards' taxes are
+        # never believed and no YQ verdict can exist for it (the loader refuses
+        # the row): no lookup can move its number. The same reasoning as the
+        # party skip (Manager review, should-fix 1).
+        return ("NOT_NEEDED_TAXES_UNREPORTED", award.program_source_code)
     travelers = int(getattr(leg, "travelers", 1) or 1) if leg is not None else 1
     if travelers > 1:
         # A leg for 2+ travellers is never scored on points (party pricing is

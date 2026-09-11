@@ -327,10 +327,13 @@ then the committed table is empty and every source is unverified.
 
 `--trips auto` (the default) looks up an on-date or promoted live award only when
 its program is a **direct** Chase UR partner, its carrier surcharge is not a
-program-wide $0, **and** its leg is for one traveller (a 2+ traveller leg is
-never scored on points) - today that is Virgin Atlantic, Flying Blue, JetBlue and
-KrisFlyer. United and Aeroplan read `NOT_NEEDED_POLICY`: they levy no carrier
-surcharge whatever the metal, so the metal cannot change the answer.
+program-wide $0, Seats.aero reports taxes for its source, **and** its leg is for
+one traveller (a 2+ traveller leg is never scored on points) - today that is
+Virgin Atlantic, Flying Blue and JetBlue. United and Aeroplan read
+`NOT_NEEDED_POLICY`: they levy no carrier surcharge whatever the metal, so the
+metal cannot change the answer. KrisFlyer (`singapore`) reads
+`NOT_NEEDED_TAXES_UNREPORTED`: its taxes are never believed and no YQ row can
+exist for it, so no lookup can move its number.
 Off-date (flexible-date) findings are never looked up.
 
 Lookups are deduplicated by availability id (one row carries four cabins and one
@@ -385,6 +388,7 @@ a finding about whether the award has flights.
 | `NOT_LOOKED_UP` | `NOT_NEEDED_POLICY` | the program levies no carrier surcharge whatever the metal | not counted - cannot change the answer |
 | `NOT_LOOKED_UP` | `NOT_DIRECT_PARTNER` | not a direct Chase UR partner (`--trips all` looks it up anyway) | not counted - cannot change the answer |
 | `NOT_LOOKED_UP` | `NOT_NEEDED_PARTY` | the flight leg is for 2+ travellers and is never scored on points (`--trips all` looks it up anyway) | not counted - cannot change the answer |
+| `NOT_LOOKED_UP` | `NOT_NEEDED_TAXES_UNREPORTED` | Seats.aero reports no taxes for the award's source (`singapore`, `qatar`, `turkish`), so its taxes are never believed and no YQ row can exist for it; no lookup can move its number (`--trips all` looks it up anyway) | not counted - cannot change the answer |
 | `NOT_RECORDED` | `NO_TRIPS_SNAPSHOT` | a replay, and the live run recorded no lookup for this award | `METAL_LOOKUP_MISSING` |
 
 A lookup made (or read from a recording) for an award that is NOT the chosen

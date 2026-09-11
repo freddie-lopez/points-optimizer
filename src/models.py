@@ -2461,6 +2461,7 @@ METAL_REASONS: Dict["MetalStatus", frozenset] = {
             "NOT_NEEDED_POLICY",
             "NOT_DIRECT_PARTNER",
             "NOT_NEEDED_PARTY",
+            "NOT_NEEDED_TAXES_UNREPORTED",
             "NO_AVAILABILITY_ID",
             "AVAILABILITY_ID_INVALID",
             "TRANSPORT_HAS_NO_TRIPS",
@@ -2491,7 +2492,12 @@ METAL_PARSE_DERIVED_REASONS = frozenset(
 # NOT_LOOKED_UP reasons that say the metal CANNOT change this award's answer.
 # They are not a gap in the run, so they are never counted as a missing lookup.
 METAL_NOT_NEEDED_REASONS = frozenset(
-    {"NOT_NEEDED_POLICY", "NOT_DIRECT_PARTNER", "NOT_NEEDED_PARTY"}
+    {
+        "NOT_NEEDED_POLICY",
+        "NOT_DIRECT_PARTNER",
+        "NOT_NEEDED_PARTY",
+        "NOT_NEEDED_TAXES_UNREPORTED",
+    }
 )
 
 # The provenance string a KNOWN or AMBIGUOUS lookup carries.
@@ -2593,6 +2599,11 @@ _METAL_REASON_PROSE = {
         "more than one traveller is not scored whatever the metal (party pricing "
         "is not modelled), so the metal cannot change this answer (--trips all "
         "looks it up anyway)"
+    ),
+    "NOT_NEEDED_TAXES_UNREPORTED": (
+        "NOT LOOKED UP - Seats.aero reports no taxes for the {detail} source, so "
+        "this award's taxes are never believed and no YQ check can exist for it; "
+        "the metal cannot change this answer (--trips all looks it up anyway)"
     ),
     "NO_AVAILABILITY_ID": (
         "NOT LOOKED UP - the availability row carried no ID to look up ({detail})"
