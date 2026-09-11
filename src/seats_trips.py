@@ -292,18 +292,27 @@ def trips_coverage(payload: Any) -> Tuple[bool, str]:
     (incomplete, why) as a FUNCTION OF THE BYTES, so a cached or replayed
     response answers the same way as the fetch that wrote it.
     """
+    from src.seats_client import _as_int, pagination_signals
+
     if not isinstance(payload, dict):
         return False, ""
     reasons = []
-    has_more = payload.get("hasMore", payload.get("has_more"))
-    if has_more is True or (isinstance(has_more, str) and has_more.strip().lower() == "true"):
+    # THE SAME READERS THE SEARCH TRANSPORT USES, shared rather than copied.
+    has_more, cursor, skip = pagination_signals(payload)
+    if has_more:
         reasons.append("the response says hasMore")
-    cursor = payload.get("cursor") or payload.get("next_cursor")
     if cursor:
         reasons.append("the response carries a cursor to a further page")
-    skip = payload.get("skip")
-    if isinstance(skip, int) and not isinstance(skip, bool) and skip > 0:
+    # This request sent no offset, so any positive one advances past it - the
+    # rule the search transport applies to an offset.
+    if skip is not None and skip > 0:
         reasons.append(f"the response carries skip={skip}")
+    count = _as_int(payload.get("count"))
+    data = payload.get("data")
+    if count is not None and isinstance(data, list) and count > len(data):
+        reasons.append(
+            f"the response says count={count} and carries {len(data)} itinerary(ies)"
+        )
     if reasons:
         return True, (
             "; ".join(reasons)

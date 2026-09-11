@@ -1185,6 +1185,16 @@ def metal_pass(
                 entry.payload, aid, (facts.origin, facts.destination)
             )
             _annotate_trips_row(opts, entry, parsed_cache[pkey])
+            # WAY (9): the transport unioned the coverage it STORED with the one
+            # it recomputed from the bytes. Honour that union here, so a record
+            # that says the list was cut short can never read as whole.
+            parsed = parsed_cache[pkey]
+            if getattr(entry, "incomplete", False) and not parsed.incomplete:
+                parsed.incomplete = True
+                parsed.incomplete_reason = (
+                    str(getattr(entry, "incomplete_reason", "") or "")
+                    or "the stored response is recorded as INCOMPLETE"
+                )
         lookup = seats_trips.match_award(parsed_cache[pkey], facts)
         return dataclasses.replace(
             lookup,

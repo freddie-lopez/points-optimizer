@@ -537,6 +537,23 @@ def _as_bool(value: Any) -> Optional[bool]:
     return None
 
 
+def pagination_signals(payload: Dict[str, Any]) -> Tuple[Optional[bool], Any, Optional[int]]:
+    """
+    (has_more, cursor, skip): the "there is more" signals, read ONE way.
+
+    The search transport's pagination and the trips coverage check both read a
+    page through this, so a signal that marks a search INCOMPLETE can never
+    leave a trips list reading as whole: `hasMore` / `has_more` through
+    `_as_bool` (True for true, 1, "1", "yes"), `cursor` / `next_cursor` when
+    present, and `skip` through `_as_int` (a digit string counts).
+    """
+    has_more = _as_bool(payload.get("hasMore"))
+    if has_more is None:
+        has_more = _as_bool(payload.get("has_more"))
+    cursor = payload.get("cursor") or payload.get("next_cursor")
+    return has_more, cursor, _as_int(payload.get("skip"))
+
+
 def parse_carriers(value: Any) -> List[str]:
     """
     (5) `{X}Airlines` is a COMMA-SEPARATED LIST of possible operating carriers
@@ -1065,11 +1082,7 @@ class SeatsClient:
         is exactly what this method refuses to do. It is now followed only when
         the server's own value MOVES PAST what we last sent.
         """
-        has_more = _as_bool(payload.get("hasMore"))
-        if has_more is None:
-            has_more = _as_bool(payload.get("has_more"))
-        cursor = payload.get("cursor") or payload.get("next_cursor")
-        skip = payload.get("skip")
+        has_more, cursor, next_skip = pagination_signals(payload)
 
         if has_more is False:
             return None, ""
@@ -1079,7 +1092,6 @@ class SeatsClient:
             return None, ""
 
         sent_skip = _as_int((sent or {}).get("skip")) or 0
-        next_skip = _as_int(skip)
         if next_skip is not None and next_skip > sent_skip:
             return {"skip": str(next_skip)}, ""
         if next_skip is not None:
