@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -2326,3 +2326,612 @@ def check_trip_level_answers(results, totals) -> None:
                 f"`points_floor_usd` - or be INERT, the leg paying cash at both "
                 f"ends whatever the unknown turns out to be."
             )
+
+
+# ===========================================================================
+# THE OPERATING-AIRLINE LOOKUP: WHAT IS KNOWN ABOUT WHICH AIRLINE FLIES AN AWARD
+# ===========================================================================
+#
+# Seats.aero's availability row names the carriers that MIGHT fly a cabin
+# ("VS, DL"). Its trips endpoint names the flights behind the row, and a flight
+# number names a MARKETING carrier. This section is the vocabulary for what one
+# lookup established, and its constructor refuses every combination that would
+# let "we could not find out" be printed as a carrier or as "no trips".
+#
+# FIVE STATES, and only KNOWN is a claim:
+#   KNOWN          every itinerary matching the award names ONE carrier set by
+#                  flight number, cross-checked against the row's list.
+#   AMBIGUOUS      several matching itineraries name DIFFERENT carrier sets.
+#   UNKNOWN        we asked (or read a recording) and could not tell.
+#   NOT_LOOKED_UP  we did not ask. Cap, budget, --trips off, no id, and so on.
+#   NOT_RECORDED   a replay, and the live run recorded no lookup for this award.
+#
+# Every state but KNOWN carries its DOMAIN - the carriers it could be - so a
+# reader is never left with a status and no bound (way eleven, for these codes).
+
+
+class MetalStatus(str, Enum):
+    KNOWN = "known"
+    AMBIGUOUS = "ambiguous"
+    UNKNOWN = "unknown"
+    NOT_LOOKED_UP = "not_looked_up"
+    NOT_RECORDED = "not_recorded"
+
+
+# The ONLY legal reason codes per status. The prose for each lives in
+# `MetalLookup._status_sentence` and nowhere else.
+METAL_REASONS: Dict["MetalStatus", frozenset] = {
+    MetalStatus.UNKNOWN: frozenset(
+        {
+            "HTTP_404",
+            "HTTP_429",
+            "HTTP_ERROR",
+            "TIMEOUT",
+            "TRANSPORT_ERROR",
+            "JSON_ERROR",
+            "SHAPE_ERROR",
+            "EMPTY_DATA",
+            "INCOMPLETE",
+            "TRIP_UNREADABLE",
+            "CABIN_UNMAPPED",
+            "FLIGHT_NUMBER_UNPARSEABLE",
+            "TRIP_INCONSISTENT",
+            "AVAILABILITY_ID_MISMATCH",
+            "NO_MATCH",
+            "MIXED_CABIN_ONLY",
+            "CARRIER_NOT_IN_ROW_LIST",
+            "ROW_CARRIERS_ABSENT",
+            "UNEXPECTED_ERROR",
+        }
+    ),
+    MetalStatus.NOT_LOOKED_UP: frozenset(
+        {
+            "TRIPS_OFF",
+            "CAP_REACHED",
+            "BUDGET_EXHAUSTED",
+            "RATE_LIMITED_EARLIER",
+            "NOT_NEEDED_POLICY",
+            "NOT_DIRECT_PARTNER",
+            "NO_AVAILABILITY_ID",
+            "AVAILABILITY_ID_INVALID",
+            "TRANSPORT_HAS_NO_TRIPS",
+        }
+    ),
+    MetalStatus.NOT_RECORDED: frozenset({"NO_TRIPS_SNAPSHOT"}),
+}
+
+# UNKNOWN reasons that come out of READING a response, as opposed to failing to
+# get one. These are the lines the UNVERIFIED parser label rides on.
+METAL_PARSE_DERIVED_REASONS = frozenset(
+    {
+        "SHAPE_ERROR",
+        "EMPTY_DATA",
+        "INCOMPLETE",
+        "TRIP_UNREADABLE",
+        "CABIN_UNMAPPED",
+        "FLIGHT_NUMBER_UNPARSEABLE",
+        "TRIP_INCONSISTENT",
+        "AVAILABILITY_ID_MISMATCH",
+        "NO_MATCH",
+        "MIXED_CABIN_ONLY",
+        "CARRIER_NOT_IN_ROW_LIST",
+        "ROW_CARRIERS_ABSENT",
+    }
+)
+
+# NOT_LOOKED_UP reasons that say the metal CANNOT change this award's answer.
+# They are not a gap in the run, so they are never counted as a missing lookup.
+METAL_NOT_NEEDED_REASONS = frozenset({"NOT_NEEDED_POLICY", "NOT_DIRECT_PARTNER"})
+
+# The provenance string a KNOWN or AMBIGUOUS lookup carries.
+METAL_PROVENANCE_TRIPS = "seats_aero_trips"
+
+# The prose for every reason code. `{detail}` and `{id}` are filled from the
+# lookup. Written so that no line can read as a carrier, as "no trips", or as a
+# finding about whether the award has flights.
+_METAL_REASON_PROSE = {
+    # -- UNKNOWN: we asked, and could not tell ---------------------------
+    "HTTP_404": (
+        "NOT KNOWN (HTTP 404) - Seats.aero has no itinerary record for "
+        "availability {id}. This is NOT a finding about whether the award has "
+        "flights (the row may have been refreshed since the search). {detail}"
+    ),
+    "HTTP_429": (
+        "NOT KNOWN (HTTP 429) - Seats.aero rate-limited this lookup, so no "
+        "itinerary was read; later lookups in this run are not attempted. {detail}"
+    ),
+    "HTTP_ERROR": "NOT KNOWN - the itinerary request failed ({detail})",
+    "TIMEOUT": "NOT KNOWN - the itinerary request timed out ({detail})",
+    "TRANSPORT_ERROR": (
+        "NOT KNOWN - the itinerary request could not be completed ({detail})"
+    ),
+    "JSON_ERROR": "NOT KNOWN - the itinerary response is not JSON ({detail})",
+    "SHAPE_ERROR": (
+        "NOT KNOWN - the itinerary response is not the documented shape ({detail})"
+    ),
+    "EMPTY_DATA": (
+        "NOT KNOWN - Seats.aero returned an EMPTY itinerary list for availability "
+        "{id}. An empty itinerary list is NOT a finding about whether the award "
+        "has flights. {detail}"
+    ),
+    "INCOMPLETE": (
+        "NOT KNOWN - the itinerary list is INCOMPLETE ({detail}), and the part "
+        "that was not seen could name other carriers"
+    ),
+    "TRIP_UNREADABLE": (
+        "NOT KNOWN - an itinerary that could be this award could not be read "
+        "({detail}), so it cannot be ruled out"
+    ),
+    "CABIN_UNMAPPED": (
+        "NOT KNOWN - an itinerary that could be this award carries a cabin value "
+        "this tool does not map ({detail})"
+    ),
+    "FLIGHT_NUMBER_UNPARSEABLE": (
+        "NOT KNOWN - an itinerary that could be this award carries a flight "
+        "number this tool cannot read a carrier from ({detail})"
+    ),
+    "TRIP_INCONSISTENT": (
+        "NOT KNOWN - an itinerary that could be this award contradicts itself "
+        "({detail})"
+    ),
+    "AVAILABILITY_ID_MISMATCH": (
+        "NOT KNOWN - the response carries an itinerary for a different "
+        "availability id than the one asked about ({detail})"
+    ),
+    "NO_MATCH": (
+        "NOT KNOWN - no readable itinerary matches this award's program, cabin "
+        "and price ({detail})"
+    ),
+    "MIXED_CABIN_ONLY": (
+        "NOT KNOWN - the only itineraries at this award's price fly part of the "
+        "distance in a lower cabin ({detail})"
+    ),
+    "CARRIER_NOT_IN_ROW_LIST": (
+        "NOT KNOWN - the flight numbers name {detail}, which the award's own "
+        "carrier list does not contain. Two Seats.aero fields disagree, and "
+        "neither is picked"
+    ),
+    "ROW_CARRIERS_ABSENT": (
+        "NOT KNOWN - the availability row lists no carriers for this cabin, so "
+        "the flight numbers cannot be cross-checked ({detail})"
+    ),
+    "UNEXPECTED_ERROR": (
+        "NOT KNOWN - an unexpected error inside the lookup ({detail})"
+    ),
+    # -- NOT_LOOKED_UP: we did not ask -----------------------------------
+    "TRIPS_OFF": "NOT LOOKED UP ({detail})",
+    "CAP_REACHED": "NOT LOOKED UP - the per-run cap of {detail} lookups was reached",
+    "BUDGET_EXHAUSTED": (
+        "NOT LOOKED UP - the Seats.aero call budget for this run is spent; no "
+        "request was made ({detail})"
+    ),
+    "RATE_LIMITED_EARLIER": (
+        "NOT LOOKED UP (Seats.aero rate-limited an earlier lookup in this run: "
+        "{detail})"
+    ),
+    "NOT_NEEDED_POLICY": (
+        "NOT LOOKED UP - {detail} levies no carrier surcharge whatever the metal, "
+        "so the metal cannot change this answer"
+    ),
+    "NOT_DIRECT_PARTNER": (
+        "NOT LOOKED UP - {detail} is not a direct Chase UR transfer partner, so "
+        "the metal cannot change this answer (--trips all looks it up anyway)"
+    ),
+    "NO_AVAILABILITY_ID": (
+        "NOT LOOKED UP - the availability row carried no ID to look up ({detail})"
+    ),
+    "AVAILABILITY_ID_INVALID": (
+        "NOT LOOKED UP - the availability ID {detail} is not a plain 10-64 "
+        "character letters-and-digits id, so no request was built from it"
+    ),
+    "TRANSPORT_HAS_NO_TRIPS": (
+        "NOT LOOKED UP - this transport has no itinerary lookup ({detail})"
+    ),
+    # -- NOT_RECORDED: a replay with nothing recorded ---------------------
+    "NO_TRIPS_SNAPSHOT": (
+        "NOT RECORDED - this replay holds no recorded trips snapshot for "
+        "availability {id}; nothing was asked of Seats.aero on this run ({detail})"
+    ),
+}
+
+
+def _iso_utc(dt: Optional[datetime]) -> str:
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ") if dt else "at an unrecorded time"
+
+
+@dataclass(frozen=True)
+class MetalLookup:
+    """
+    What one trips lookup established about which airline flies ONE award.
+
+    Every invariant is a ValueError, so it survives `python -O`. The storage
+    classification below is checked at import, the way (9) way: a field an
+    invariant reads is either recomputed from the stored trips bytes, carried by
+    the transport, or local to this run.
+    """
+
+    status: MetalStatus
+    availability_id: str = ""
+    reason_code: str = ""
+    detail: str = ""
+    # KNOWN only, in flight order.
+    carriers: Tuple[str, ...] = ()
+    # AMBIGUOUS only: at least two DISTINCT carrier sets.
+    carrier_sets: Tuple[Tuple[str, ...], ...] = ()
+    # The DOMAIN of every non-KNOWN lookup: the row's {X}Airlines for the cabin,
+    # or the union of the matched sets for AMBIGUOUS.
+    possible_carriers: Tuple[str, ...] = ()
+    # Set instead of `possible_carriers` when the row listed no carriers.
+    domain_unbounded: bool = False
+    # The row's carrier list, for the codeshare clause.
+    row_carriers: Tuple[str, ...] = ()
+    # One entry per matched segment: "VS19 SFO 2027-01-15T16:30 -> LHR ... (787-9)".
+    flights: Tuple[str, ...] = ()
+    # The flight numbers of the matched itineraries, deduplicated, in order.
+    flight_numbers: Tuple[str, ...] = ()
+    matched_trips: int = 0
+    excluded_mixed: int = 0
+    other_price_note: str = ""
+    # Per-trip TotalTaxes as the response gave them. DISPLAY ONLY while the unit
+    # is unverified.
+    trip_taxes_note: str = ""
+    provenance: str = ""
+    parser_verified: bool = False
+    served_from_cache: bool = False
+    fetched_at: Optional[datetime] = None
+    on_replay: bool = False
+    replayed_from_snapshot: bool = False
+    snapshot_name: str = ""
+    snapshot_content_hash: str = ""
+    snapshot_parser_version: str = ""
+
+    def __post_init__(self):
+        if not isinstance(self.status, MetalStatus):
+            raise ValueError(
+                f"MetalLookup status {self.status!r} is not a MetalStatus."
+            )
+        # AN ANSWER OF UNKNOWN AGE IS NOT AN ANSWER ABOUT TODAY.
+        if self.served_from_cache and self.fetched_at is None:
+            raise ValueError(
+                "MetalLookup served_from_cache with no fetched_at: the age of a "
+                "cached itinerary is part of the answer."
+            )
+        if self.replayed_from_snapshot:
+            if not self.snapshot_content_hash:
+                raise ValueError(
+                    "MetalLookup replayed_from_snapshot with no snapshot_content_hash. "
+                    "A replay whose bytes cannot be identified is not reproducible."
+                )
+            if self.served_from_cache:
+                raise ValueError(
+                    "MetalLookup replayed_from_snapshot AND served_from_cache. The "
+                    "bytes came from ONE place and the lookup must say which."
+                )
+            if not self.on_replay:
+                raise ValueError(
+                    "MetalLookup replayed_from_snapshot outside a replay run."
+                )
+
+        if self.status is MetalStatus.KNOWN:
+            if not self.carriers:
+                raise ValueError(
+                    "MetalLookup KNOWN with no carriers. A known metal names it."
+                )
+            if self.matched_trips < 1:
+                raise ValueError(
+                    "MetalLookup KNOWN with no matched itinerary. A carrier with "
+                    "nothing behind it is a guess."
+                )
+            if self.reason_code:
+                raise ValueError(
+                    f"MetalLookup KNOWN carries reason {self.reason_code!r}. A "
+                    f"reason is what a lookup that did NOT establish metal gives."
+                )
+            if not self.provenance:
+                raise ValueError(
+                    "MetalLookup KNOWN with no provenance. Say where the carrier "
+                    "came from."
+                )
+            if self.carrier_sets:
+                raise ValueError(
+                    "MetalLookup KNOWN carries carrier_sets; that is AMBIGUOUS."
+                )
+            return
+
+        if self.status is MetalStatus.AMBIGUOUS:
+            distinct = {frozenset(s) for s in self.carrier_sets}
+            if len(distinct) < 2:
+                raise ValueError(
+                    "MetalLookup AMBIGUOUS needs at least two DISTINCT carrier sets. "
+                    "One set is KNOWN; none is UNKNOWN."
+                )
+            if self.carriers:
+                raise ValueError(
+                    "MetalLookup AMBIGUOUS carries `carriers`. Naming one set of "
+                    "several would be picking the answer."
+                )
+            if self.matched_trips < 2:
+                raise ValueError(
+                    "MetalLookup AMBIGUOUS with fewer than two matched itineraries."
+                )
+            if self.reason_code:
+                raise ValueError(
+                    f"MetalLookup AMBIGUOUS carries reason {self.reason_code!r}."
+                )
+            if not self.provenance:
+                raise ValueError("MetalLookup AMBIGUOUS with no provenance.")
+            if self.domain_unbounded or not self.possible_carriers:
+                raise ValueError(
+                    "MetalLookup AMBIGUOUS must name its domain: the union of the "
+                    "matched carrier sets."
+                )
+            union = set().union(*distinct)
+            if not union <= set(self.possible_carriers):
+                raise ValueError(
+                    f"MetalLookup AMBIGUOUS domain {self.possible_carriers} leaves "
+                    f"out {sorted(union - set(self.possible_carriers))}."
+                )
+            return
+
+        # UNKNOWN, NOT_LOOKED_UP, NOT_RECORDED: a status that names no carrier.
+        legal = METAL_REASONS.get(self.status, frozenset())
+        if self.reason_code not in legal:
+            raise ValueError(
+                f"MetalLookup {self.status.value} with reason {self.reason_code!r}, "
+                f"which is not one of {sorted(legal)}. A lookup that did not "
+                f"establish metal must say which of the known ways it failed."
+            )
+        if not (self.detail or "").strip():
+            raise ValueError(
+                f"MetalLookup {self.status.value}/{self.reason_code} with no detail. "
+                f"A reason the reader cannot audit is a shrug."
+            )
+        if self.carriers or self.carrier_sets:
+            raise ValueError(
+                f"MetalLookup {self.status.value} names carriers "
+                f"{self.carriers or self.carrier_sets}. Only KNOWN and AMBIGUOUS "
+                f"may, or a failure reads as a carrier."
+            )
+        if bool(self.possible_carriers) == bool(self.domain_unbounded):
+            raise ValueError(
+                f"MetalLookup {self.status.value} must carry EXACTLY ONE of "
+                f"possible_carriers or domain_unbounded (the row listed no "
+                f"carriers). An unknown with no domain is way eleven."
+            )
+        if self.status is MetalStatus.NOT_LOOKED_UP:
+            if (
+                self.served_from_cache
+                or self.fetched_at is not None
+                or self.replayed_from_snapshot
+                or self.matched_trips
+            ):
+                raise ValueError(
+                    "MetalLookup NOT_LOOKED_UP carries fetched bytes. Nothing was "
+                    "asked, so nothing can have been read."
+                )
+        if self.status is MetalStatus.NOT_RECORDED:
+            if not self.on_replay:
+                raise ValueError(
+                    "MetalLookup NOT_RECORDED outside a replay. A live run that did "
+                    "not ask is NOT_LOOKED_UP."
+                )
+            if self.served_from_cache or self.replayed_from_snapshot:
+                raise ValueError(
+                    "MetalLookup NOT_RECORDED carries bytes it says do not exist."
+                )
+
+    # -- predicates --------------------------------------------------------
+
+    @property
+    def is_known(self) -> bool:
+        return self.status is MetalStatus.KNOWN
+
+    @property
+    def is_missing_lookup(self) -> bool:
+        """Not looked up or not recorded, for a reason that leaves a gap."""
+        return (
+            self.status is MetalStatus.NOT_RECORDED
+            or (
+                self.status is MetalStatus.NOT_LOOKED_UP
+                and self.reason_code not in METAL_NOT_NEEDED_REASONS
+            )
+        )
+
+    @property
+    def is_unresolved(self) -> bool:
+        """We looked (or read a recording) and could not settle one carrier set."""
+        return self.status in (MetalStatus.UNKNOWN, MetalStatus.AMBIGUOUS)
+
+    @property
+    def all_carriers(self) -> Tuple[str, ...]:
+        """KNOWN: its carriers. AMBIGUOUS: the union of the sets, in order. Else ()."""
+        if self.status is MetalStatus.KNOWN:
+            return tuple(self.carriers)
+        if self.status is MetalStatus.AMBIGUOUS:
+            out: List[str] = []
+            for s in self.carrier_sets:
+                for c in s:
+                    if c not in out:
+                        out.append(c)
+            return tuple(out)
+        return ()
+
+    # -- prose ----------------------------------------------------------------
+
+    def render(self) -> str:
+        """
+        The one line a reader sees. Clauses appended unconditionally, the
+        LiveLegOutcome way, so no branch can forget one.
+        """
+        return (
+            self._status_sentence()
+            + self._domain_clause()
+            + self._codeshare_clause()
+            + self._parser_clause()
+            + self._replay_clause()
+        )
+
+    def _status_sentence(self) -> str:
+        marketing = (
+            " Seats.aero reports the MARKETING carrier; it does not report who "
+            "operates the flight."
+        )
+        if self.status is MetalStatus.KNOWN:
+            numbers = ", ".join(self.flight_numbers) or "flight numbers not listed"
+            several = (
+                f"; {self.matched_trips} itineraries at this price"
+                if self.matched_trips > 1
+                else ""
+            )
+            return (
+                f"operating airline: {', '.join(self.carriers)} by flight number "
+                f"({numbers}{several})." + marketing
+            )
+        if self.status is MetalStatus.AMBIGUOUS:
+            sets = " | ".join(", ".join(s) for s in self.carrier_sets)
+            return (
+                f"operating airline: NOT KNOWN - {self.matched_trips} itineraries "
+                f"match this award's program, cabin and price and their flight "
+                f"numbers name different carriers ({sets})." + marketing
+            )
+        template = _METAL_REASON_PROSE.get(self.reason_code, "NOT KNOWN ({detail})")
+        text = template.format(
+            detail=self.detail.strip(), id=self.availability_id or "(no id)"
+        ).strip()
+        if not text.endswith("."):
+            text += "."
+        return f"operating airline: {text}"
+
+    def _domain_clause(self) -> str:
+        if self.status is MetalStatus.KNOWN:
+            return ""
+        if self.domain_unbounded:
+            return (
+                " Nothing is known about which airline flies it, and the award's "
+                "carrier list for this cabin is EMPTY, so the possible carriers "
+                "are not bounded by anything this tool has."
+            )
+        listed = ", ".join(self.possible_carriers)
+        if self.status is MetalStatus.AMBIGUOUS:
+            return (
+                f" Which of these itineraries you would be booked on is not "
+                f"knowable from this award; the possible carriers are {listed}."
+            )
+        return (
+            f" Nothing is known about which airline flies it; the possible "
+            f"carriers are {listed}."
+        )
+
+    def _codeshare_clause(self) -> str:
+        if self.status is not MetalStatus.KNOWN or len(self.row_carriers) < 2:
+            return ""
+        return (
+            f" A codeshare operated by another airline in this award's list "
+            f"({', '.join(self.row_carriers)}) cannot be detected."
+        )
+
+    def _parser_clause(self) -> str:
+        parse_derived = self.status in (
+            MetalStatus.KNOWN,
+            MetalStatus.AMBIGUOUS,
+        ) or (
+            self.status is MetalStatus.UNKNOWN
+            and self.reason_code in METAL_PARSE_DERIVED_REASONS
+        )
+        if not parse_derived:
+            return ""
+        from src import seats_trips
+
+        # Verified only when BOTH the lookup was built under a verified parser
+        # and the module still says so. A lookup cannot vouch for itself.
+        if self.parser_verified and seats_trips.parser_is_verified():
+            return ""
+        return " " + seats_trips.PARSER_UNVERIFIED_LABEL
+
+    def _replay_clause(self) -> str:
+        if self.replayed_from_snapshot:
+            from src import seats_trips
+
+            text = (
+                f" REPLAYED FROM A COMMITTED TRIPS SNAPSHOT: nothing was asked of "
+                f"Seats.aero on this run ({self.snapshot_name or '(unnamed file)'}, "
+                f"content hash {self.snapshot_content_hash[:16]}, parsed at capture "
+                f"by {self.snapshot_parser_version or 'an unrecorded parser version'})."
+            )
+            if self.snapshot_parser_version != seats_trips.TRIPS_PARSER_VERSION:
+                text += (
+                    f" REPARSED: these bytes were captured under "
+                    f"{self.snapshot_parser_version or 'an unrecorded parser version'} "
+                    f"and are read by {seats_trips.TRIPS_PARSER_VERSION} now."
+                )
+            return text
+        if self.served_from_cache:
+            return (
+                f" Served from the disk cache (fetched {_iso_utc(self.fetched_at)}); "
+                f"no request was made for it on this run."
+            )
+        return ""
+
+
+# WAY (9) FOR MetalLookup. The lookup itself is never persisted - only the raw
+# trips bytes are - but the same rule applies: every field an invariant reads
+# must say how it survives a second read.
+METAL_RECOMPUTED_FROM_BYTES = frozenset(
+    {
+        "status",
+        "carriers",
+        "carrier_sets",
+        "matched_trips",
+        "possible_carriers",
+        "domain_unbounded",
+        "reason_code",
+        "detail",
+    }
+)
+# Local to this run. Inheriting any of these from another run would be a lie
+# about THIS run: whether it read a cache, whether it is a replay, which file
+# it read, and what this run derived the carrier from.
+METAL_LOCAL_TO_THIS_RUN = frozenset(
+    {
+        "served_from_cache",
+        "on_replay",
+        "replayed_from_snapshot",
+        "snapshot_content_hash",
+        "provenance",
+    }
+)
+# Carried by the transport, which `ResponseCache.put` already persists.
+METAL_CARRIED_BY_THE_TRANSPORT = {"fetched_at": "fetched_at"}
+
+METAL_INVARIANT_FIELDS = _fields_read_by_invariants(MetalLookup)
+
+
+def _check_metal_classification() -> None:
+    """Every field MetalLookup's invariants read is classified exactly once."""
+    recomputed = set(METAL_RECOMPUTED_FROM_BYTES)
+    carried = set(METAL_CARRIED_BY_THE_TRANSPORT)
+    local = set(METAL_LOCAL_TO_THIS_RUN)
+    overlap = (recomputed & carried) | (recomputed & local) | (carried & local)
+    if overlap:
+        raise ValueError(
+            f"MetalLookup: {sorted(overlap)} is classified twice. A field is "
+            f"recomputed from the bytes, carried by the transport, or local to "
+            f"this run - exactly one of the three."
+        )
+    known = {f.name for f in dataclasses.fields(MetalLookup)}
+    invented = (recomputed | carried | local) - known
+    if invented:
+        raise ValueError(
+            f"MetalLookup: {sorted(invented)} is classified but is not a field."
+        )
+    unclassified = (METAL_INVARIANT_FIELDS & known) - (recomputed | carried | local)
+    if unclassified:
+        raise ValueError(
+            f"MetalLookup: the invariants read {sorted(unclassified)}, which no "
+            f"storage classification covers. Say whether each is recomputed from "
+            f"the stored trips bytes, carried by the transport, or local to this "
+            f"run - an unclassified field answers differently on the second read."
+        )
+
+
+_check_metal_classification()
