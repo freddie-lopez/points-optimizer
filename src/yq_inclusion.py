@@ -19,6 +19,7 @@ The table is validated at load and RAISES on anything malformed. A wrong row
 here moves scores, so a mistake must stop the run rather than score quietly.
 """
 import csv
+import re
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -31,6 +32,19 @@ RECORD_MARKER = "yq-check record"
 BLANK = "____"
 COLUMNS = ("source", "verdict", "verified_on", "evidence", "notes")
 VERDICTS = ("includes_yq", "excludes_yq")
+
+# The record's own statements, as `yq-check` writes them. A row is backed only
+# by a record that names THE SAME SOURCE in its title (and on its program line,
+# if it has one) and whose ONE verdict line says THE SAME VERDICT. Two
+# independent statements that must agree: a row copied from another source's
+# record, or a verdict typed differently from the one written after reading the
+# airline's site, is refused rather than scored.
+RECORD_TITLE_RE = re.compile(r"^#\s*yq-check record:\s*([A-Za-z0-9_]+)\s*,", re.M)
+RECORD_SOURCE_RE = re.compile(r"\(source\s+([A-Za-z0-9_]+)\)")
+RECORD_VERDICT_RE = re.compile(
+    r"^\s*-\s*verdict\s*\(includes_yq / excludes_yq / inconclusive\)\s*:[ \t]*(.*?)[ \t]*$",
+    re.M,
+)
 
 
 class YqInclusionError(ValueError):
@@ -54,7 +68,9 @@ class YqVerdict:
         return self.verdict == "excludes_yq"
 
 
-def _check_evidence(evidence: str, root: Path, line: int) -> None:
+def _check_evidence(
+    evidence: str, root: Path, line: int, source: str = "", verdict: str = ""
+) -> None:
     text = (evidence or "").strip()
     if not text:
         raise YqInclusionError(f"yq_inclusion.csv line {line}: no evidence path.")
@@ -84,6 +100,48 @@ def _check_evidence(evidence: str, root: Path, line: int) -> None:
         raise YqInclusionError(
             f"yq_inclusion.csv line {line}: {text!r} still has {BLANK} blanks. "
             f"Fill in the site half of the record before recording a verdict."
+        )
+    _check_record_statements(body, text, line, source, verdict)
+
+
+def _check_record_statements(body: str, text: str, line: int, source: str, verdict: str) -> None:
+    """The record must be FOR this source and must SAY this verdict."""
+    where = f"yq_inclusion.csv line {line}: {text!r}"
+    titles = RECORD_TITLE_RE.findall(body)
+    if len(titles) != 1:
+        raise YqInclusionError(
+            f"{where} does not name exactly one source in a '# yq-check record: "
+            f"<source>, <date>' title, so it cannot be told which source it is "
+            f"evidence for."
+        )
+    named = {titles[0].lower()} | {s.lower() for s in RECORD_SOURCE_RE.findall(body)}
+    if named != {source}:
+        raise YqInclusionError(
+            f"{where} is a record for {', '.join(sorted(named))}, not for "
+            f"{source!r}. One check settles one source; a verdict is not copied "
+            f"to another program."
+        )
+    said = RECORD_VERDICT_RE.findall(body)
+    if len(said) != 1:
+        raise YqInclusionError(
+            f"{where} has {len(said)} verdict lines; it needs exactly one "
+            f"'- verdict (includes_yq / excludes_yq / inconclusive): <verdict>'."
+        )
+    value = said[0].strip().lower()
+    if value == "inconclusive":
+        raise YqInclusionError(
+            f"{where} says the check was INCONCLUSIVE. An inconclusive check "
+            f"backs no verdict: record nothing for {source!r}."
+        )
+    if value not in VERDICTS:
+        raise YqInclusionError(
+            f"{where} has verdict line {said[0]!r}, which is not one of "
+            f"{', '.join(VERDICTS)}."
+        )
+    if value != verdict:
+        raise YqInclusionError(
+            f"{where} says {value} and the row says {verdict}. The row must "
+            f"repeat the verdict written in its record; neither is picked."
         )
 
 
@@ -146,7 +204,7 @@ def load(
                     f"one verdict."
                 )
             evidence = (row.get("evidence") or "").strip()
-            _check_evidence(evidence, root, line)
+            _check_evidence(evidence, root, line, source=source, verdict=verdict)
             out[source] = YqVerdict(
                 source=source,
                 verdict=verdict,

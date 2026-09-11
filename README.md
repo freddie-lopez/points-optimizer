@@ -426,7 +426,12 @@ row means unverified; a row can never say "unverified".** The loader refuses a
 source it does not map, a source whose taxes Seats.aero does not report, a
 verdict other than `includes_yq` / `excludes_yq`, a future date, a duplicate, and
 evidence that is missing, outside `docs/yq-checks/`, lacks the `yq-check record`
-marker or still has `____` blanks.
+marker or still has `____` blanks. The record must also be **for the row's
+source** (its title and program line name it) and its **one verdict line must say
+the row's verdict**; a record that says `inconclusive` backs nothing. Two
+independent statements that must agree, so a verdict copied from another
+source's record, or typed differently from the one written after reading the
+airline's site, is refused rather than scored.
 
 | Source verdict | Scored cash side of a live award (trusted taxes only) |
 |---|---|
@@ -440,7 +445,9 @@ are unscoreable under every verdict, exactly as before.
 `python -m src.trips_tools yq-check` produces the evidence: run it on an award
 **on the program's own metal** (for example a `virginatlantic` J award on VS
 metal), compare the block it prints against the program's own site, and fill in
-the record it writes. It warns "likely INCONCLUSIVE" when the flight-number
+the record it writes. It prints the CSV row with `<VERDICT>` in place of the
+verdict - never a row with a verdict already in it - so the only verdict that can
+be typed is the one on the record's own verdict line. It warns "likely INCONCLUSIVE" when the flight-number
 carrier is not known or has no nonzero surcharge row.
 
 ### Replay

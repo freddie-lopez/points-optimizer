@@ -20,6 +20,11 @@ virginatlantic,includes_yq,2026-09-12,docs/yq-checks/2026-09-12-virginatlantic.m
 - Anything else is inconclusive: record nothing. No row means unverified.
 
 `src/yq_inclusion.py` refuses to load a row whose evidence is missing, outside
-this directory, lacks the `yq-check record` marker, or still has `____` in it.
+this directory, lacks the `yq-check record` marker, or still has `____` in it. It
+also refuses a record that is for another source (its `# yq-check record:
+<source>, <date>` title and `(source <code>)` program line), and a row whose
+verdict is not the word on the record's one verdict line - including a record
+that says `inconclusive`. yq-check prints the row with `<VERDICT>` in it, never a
+verdict, for exactly that reason.
 A verdict is per SOURCE and rests on one flight; it may not carry over to other
 metal or other routes in the same program.

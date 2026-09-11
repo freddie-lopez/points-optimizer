@@ -263,7 +263,12 @@ def test_untrusted_taxes_stay_unscoreable_under_both_verdicts(rm, which, cents):
 # The validator
 # ---------------------------------------------------------------------------
 
-GOOD_RECORD = "# yq-check record\n\nsite figure: GBP 450.00\n"
+GOOD_RECORD = (
+    "# yq-check record: virginatlantic, 2026-09-10\n\n## Seats.aero\n\n"
+    "- program: Virgin Atlantic Flying Club (source virginatlantic)\n\n"
+    "## virginatlantic.com\n\n- taxes, fees and carrier-imposed charges for ONE adult: "
+    "GBP 450.00\n- verdict (includes_yq / excludes_yq / inconclusive): includes_yq\n"
+)
 
 
 def _root(tmp_path, record=GOOD_RECORD, name="2026-09-10-virginatlantic.md"):
@@ -320,13 +325,13 @@ def test_the_validator_refuses_a_duplicate_source(tmp_path):
 
 
 def test_the_validator_refuses_a_record_without_the_marker(tmp_path):
-    _root(tmp_path, record="# notes\n\nsite figure: GBP 450.00\n")
+    _root(tmp_path, record=GOOD_RECORD.replace("yq-check record", "notes"))
     with pytest.raises(YqInclusionError, match="marker"):
         _load(tmp_path, f"virginatlantic,includes_yq,2026-09-10,{EVIDENCE},")
 
 
 def test_the_validator_refuses_a_record_with_blanks(tmp_path):
-    _root(tmp_path, record="# yq-check record\n\nsite figure: ____\n")
+    _root(tmp_path, record=GOOD_RECORD.replace("GBP 450.00", "____"))
     with pytest.raises(YqInclusionError, match="blanks"):
         _load(tmp_path, f"virginatlantic,includes_yq,2026-09-10,{EVIDENCE},")
 

@@ -316,7 +316,8 @@ def test_yq_check_prints_every_field_and_writes_a_record_with_blanks(tmp_path):
     text = record.read_text()
     assert "yq-check record" in text
     assert "____" in text
-    assert f"virginatlantic,includes_yq,2026-09-11,{record}," in out
+    assert f"virginatlantic,<VERDICT>,2026-09-11,{record}," in out
+    assert "virginatlantic,includes_yq" not in out and "virginatlantic,excludes_yq" not in out
     assert "likely INCONCLUSIVE" not in out
 
 
@@ -331,7 +332,10 @@ def test_the_record_it_writes_is_refused_until_the_blanks_are_filled(tmp_path):
     table.write_text(f"source,verdict,verified_on,evidence,notes\nvirginatlantic,includes_yq,2026-09-11,{rel},\n")
     with pytest.raises(YqInclusionError, match="blanks"):
         load(table, today=TODAY, root=tmp_path)
-    (tmp_path / rel).write_text((tmp_path / rel).read_text().replace("____", "GBP 450.00"))
+    text = (tmp_path / rel).read_text().replace(
+        "inconclusive): ____", "inconclusive): includes_yq"
+    ).replace("____", "GBP 450.00")
+    (tmp_path / rel).write_text(text)
     assert load(table, today=TODAY, root=tmp_path)["virginatlantic"].includes
 
 

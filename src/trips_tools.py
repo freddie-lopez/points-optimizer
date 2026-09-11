@@ -648,14 +648,28 @@ def run_yq_check(args, console: Console, read, today: date) -> int:
         evidence = record.resolve().relative_to(ROOT.resolve()).as_posix()
     except ValueError:
         evidence = str(record)
-    console.print("Then add EXACTLY ONE of these rows to data/yq_inclusion.csv:")
-    for verdict in ("includes_yq", "excludes_yq"):
-        console.print(
-            f"  {source},{verdict},{today.isoformat()},{evidence},"
+    # NO ROW WITH A VERDICT IN IT IS PRINTED. The verdict is decided on the
+    # airline's site, after this tool has exited, and is written on the
+    # record's verdict line. The row below leaves it for the reader to copy
+    # from there, and the loader refuses a row whose verdict differs from its
+    # record's (or a record that says inconclusive) - so a pre-filled row that
+    # is one line off can never be pasted in and scored.
+    console.print(
+        "When every ____ is filled, and ONLY if the record's verdict line says "
+        "includes_yq or excludes_yq, add this row to data/yq_inclusion.csv with "
+        "<VERDICT> replaced by that same word:"
+    )
+    console.print(
+        escape(
+            f"  {source},<VERDICT>,{today.isoformat()},{evidence},"
             f"{args.origin.upper()}-{args.destination.upper()} {args.cabin.upper()} "
             f"{args.date}"
         )
-    console.print("If the site figure matches neither, record nothing.")
+    )
+    console.print(
+        "An inconclusive check records nothing. The loader refuses a row whose "
+        "verdict is not the one written in its record."
+    )
     return code
 
 
