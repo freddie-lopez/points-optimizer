@@ -182,6 +182,7 @@ def find_same_metal_alternatives(
                 break_even_points=break_even,
                 note=note,
                 partnership_assumed=True,
+                metal_label=seats_trips.trips_parser_label() if from_trips else "",
             )
         )
 

@@ -89,6 +89,18 @@ def metal_lines(cand) -> List[str]:
     return lines
 
 
+def _trips_metal_label(carrier_source: str) -> str:
+    """The escaped parser label for a metal line whose metal came from the trips
+    parse, while the parser is unverified; "" otherwise (Re-test 2, R2-7)."""
+    from src import seats_trips
+    from src.models import METAL_PROVENANCE_TRIPS
+
+    if carrier_source != METAL_PROVENANCE_TRIPS:
+        return ""
+    label = seats_trips.trips_parser_label()
+    return f" {escape(label)}" if label else ""
+
+
 def _money(x: float) -> str:
     if x == float("inf"):
         return "n/a"
@@ -187,6 +199,7 @@ def print_alternatives(results: List[LegResult], console: Console = None) -> Non
                     if alt.cash_saved_vs_best_usd
                     else ""
                 )
+                + (f" {escape(alt.metal_label)}" if alt.metal_label else "")
             )
             if alt.break_even_points is not None:
                 console.print(
@@ -520,6 +533,7 @@ def print_leg_detail(results: List[LegResult], console: Console = None) -> None:
                     f"        metal: {r.best_points.operating_carrier} "
                     f"(source: {r.best_points.carrier_source}), "
                     f"cabin {r.best_points.cabin}"
+                    + _trips_metal_label(r.best_points.carrier_source)
                 )
             for line in metal_lines(r.best_points):
                 console.print(f"        {escape(line)}")
@@ -529,11 +543,18 @@ def print_leg_detail(results: List[LegResult], console: Console = None) -> None:
                     f"  Surcharge: {r.surcharge.render()} "
                     f"[{r.surcharge.confidence}]"
                     + (f" via {r.surcharge.matched_rule}" if r.surcharge.matched_rule else "")
+                    # The rule is keyed by the looked-up metal when that is where
+                    # the metal came from (R2-7).
+                    + (
+                        _trips_metal_label(r.best_points.carrier_source)
+                        if r.best_points is not None
+                        else ""
+                    )
                 )
                 if r.surcharge.source:
                     console.print(f"        source: {r.surcharge.source}")
                 if r.surcharge.notes:
-                    console.print(f"        [yellow]{r.surcharge.notes}[/yellow]")
+                    console.print(f"        [yellow]{escape(r.surcharge.notes)}[/yellow]")
             else:
                 console.print(
                     "  [bold red]Surcharge: UNKNOWN - this is NOT $0.[/bold red]"
@@ -545,7 +566,7 @@ def print_leg_detail(results: List[LegResult], console: Console = None) -> None:
                         f"{_money(r.break_even_surcharge_usd)}.[/red]"
                     )
                 if r.surcharge.notes:
-                    console.print(f"        [dim]{r.surcharge.notes}[/dim]")
+                    console.print(f"        [dim]{escape(r.surcharge.notes)}[/dim]")
         if r.verdict == "points" or r.verdict.startswith("cash"):
             if r.has_points_path:
                 if r.verdict == "points":
@@ -559,9 +580,9 @@ def print_leg_detail(results: List[LegResult], console: Console = None) -> None:
                         f"({r.margin_pct:.1f}% worse)"
                     )
         for note in r.leg.notes:
-            console.print(f"  [dim]note: {note}[/dim]")
+            console.print(f"  [dim]note: {escape(note)}[/dim]")
         for flag in r.leg.data_flags:
-            console.print(f"  [yellow]FLAG: {flag}[/yellow]")
+            console.print(f"  [yellow]FLAG: {escape(flag)}[/yellow]")
         # v5 STEP 7. The APD line gets its own prefix, not "UNVERIFIED:".
         # An ADDED government tax is not an unverified claim - it is a rate read
         # off gov.uk and applied - and printing it under the same word as an
@@ -570,9 +591,9 @@ def print_leg_detail(results: List[LegResult], console: Console = None) -> None:
         for w in r.warnings:
             if w.startswith("UK AIR PASSENGER DUTY on "):
                 style = "yellow" if "IT IS NOT ADDED HERE" in w or "UNKNOWN" in w else "cyan"
-                console.print(f"  [{style}]APD: {w}[/{style}]")
+                console.print(f"  [{style}]APD: {escape(w)}[/{style}]")
                 continue
-            console.print(f"  [red]UNVERIFIED: {w}[/red]")
+            console.print(f"  [red]UNVERIFIED: {escape(w)}[/red]")
 
 
 def print_live_banner(
@@ -857,7 +878,7 @@ def _print_live_scoring_block(r: LegResult, console: Console) -> None:
             )
         console.print(
             f"     [bold red]surcharge UNKNOWN - this is NOT $0.[/bold red] "
-            f"{r.surcharge.notes}"
+            f"{escape(r.surcharge.notes)}"
         )
         if r.surcharge_cannot_change_verdict:
             console.print(
@@ -867,7 +888,7 @@ def _print_live_scoring_block(r: LegResult, console: Console) -> None:
             )
     # THE HONESTY INVARIANT: a live price never renders without its timestamp.
     if cand.source == LIVE_SOURCE:
-        console.print(f"     [dim]provenance: {cand.source} - {cand.source_note}[/dim]")
+        console.print(f"     [dim]provenance: {cand.source} - {escape(cand.source_note)}[/dim]")
 
 
 def _print_other_lookups(r: LegResult, console: Console) -> None:

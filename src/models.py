@@ -1818,6 +1818,9 @@ class Alternative:
     break_even_points: Optional[int] = None
     note: str = ""
     partnership_assumed: bool = False
+    # The trips parser label when the metal came from the itinerary lookup and
+    # the parser is unverified; printed on the headline line (Re-test 2, R2-7).
+    metal_label: str = ""
 
     @property
     def is_priced(self) -> bool:

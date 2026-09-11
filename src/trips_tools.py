@@ -649,10 +649,12 @@ def _inconclusive_warning(cap: "Capture", args) -> str:
         is_round_trip=False,
     )
     if not est.is_known or est.amount_high <= 0:
+        label = seats_trips.trips_parser_label()
         return (
             f"likely INCONCLUSIVE - pick a flight on {own} metal ({program} on "
             f"{', '.join(lookup.carriers)} metal has no nonzero surcharge row, so "
             f"including and excluding it look the same)"
+            + (f" {label}" if label else "")
         )
     return ""
 

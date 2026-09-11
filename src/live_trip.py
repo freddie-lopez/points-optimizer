@@ -517,7 +517,7 @@ def _taxes_are_the_whole_carrier_cash_figure(
                 f"({', '.join(metal.all_carriers)}, by flight number) is ADDED to "
                 f"the API's taxes. Seats.aero names the MARKETING carrier; a "
                 f"codeshare between carriers in the award's own list cannot be "
-                f"detected."
+                f"detected." + _parser_tail()
             )
         # CASE D. The surcharge must be added and the metal that keys it is not
         # known, so the cash side is unknown.
@@ -825,6 +825,14 @@ def award_to_candidate(
     )
 
 
+def _parser_tail() -> str:
+    """ " <trips parser label>" while the parser is unverified, else "" (R2-7)."""
+    from src import seats_trips
+
+    label = seats_trips.trips_parser_label()
+    return f" {label}" if label else ""
+
+
 def _metal_band_note(leg, award, surcharges, metal, yq_verdict, policy_zero) -> str:
     """
     The modelled surcharge for the metal the lookup found, when it is NOT
@@ -851,17 +859,20 @@ def _metal_band_note(leg, award, surcharges, metal, yq_verdict, policy_zero) -> 
     )
     carriers = ", ".join(metal.all_carriers)
     source = award.program_source_code or "(no source)"
+    # The metal named here came from the trips parser, so the line carries its
+    # label while the parser is unverified (Re-test 2, R2-7).
+    tail = _parser_tail()
     if not est.is_known:
         return (
             f"modelled carrier surcharge for {carriers} metal under {award.program}: "
             f"NONE MODELLED - the table does not resolve it for this metal. Nothing "
-            f"is added either way."
+            f"is added either way.{tail}"
         )
     return (
         f"modelled carrier surcharge for {carriers} metal under {award.program}: "
         f"{est.render()} one-way - NOT ADDED: whether Seats.aero's taxes for "
         f"{source!r} already include it is UNVERIFIED (data/yq_inclusion.csv has "
-        f"no row for {source!r}), so adding it could double count."
+        f"no row for {source!r}), so adding it could double count.{tail}"
     )
 
 

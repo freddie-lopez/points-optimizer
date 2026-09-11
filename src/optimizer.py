@@ -654,11 +654,15 @@ def resolve_leg_surcharge(
             today=today,
         )
         if not est.is_known:
+            from src import seats_trips
+
+            label = seats_trips.trips_parser_label()
             est.notes = (
                 f"Cannot model a surcharge for {cand.label!r} on the metal its "
                 f"itinerary lookup found ({', '.join(metal.all_carriers)})"
                 + (f": {why_not}" if region is None else "")
                 + f". {est.notes}"
+                + (f" {label}" if label else "")
             ).strip()
         return est
     est = surcharges.resolve(
@@ -676,12 +680,18 @@ def resolve_leg_surcharge(
     ):
         # The lookup DID name metal; it is deliberately not used here, and the
         # note must say that rather than "no operating carrier is recorded".
+        # The metal came from the trips parser: its label goes on the note
+        # while the parser is unverified (Re-test 2, R2-7).
+        from src import seats_trips
+
+        label = seats_trips.trips_parser_label()
         est.notes = (
             f"Cannot model a surcharge for {cand.label!r}: the itinerary lookup "
             f"names {', '.join(metal.all_carriers)} by flight number, and that "
             f"metal is NOT used for a surcharge because whether Seats.aero's taxes "
             f"for this source already include one is not verified. The band for "
             f"that metal is stated on the operating-airline line and is NOT ADDED."
+            + (f" {label}" if label else "")
         )
         return est
     if not est.is_known:
