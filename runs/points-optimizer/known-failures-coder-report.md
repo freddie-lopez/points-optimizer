@@ -82,3 +82,31 @@ live run (`simulate_mac_full.py`, scratch). The same ten tests, by name.
    the Group C fix is proven on a synthetic envelope and the simulated Mac only.
 6. `legs_award_unattributed` exists in the totals but is not printed at trip
    level (pre-existing; the new indirect counter is printed).
+
+---
+
+## Fix rounds after the Tester (commits 278332e, e64c32a)
+
+Tester pass 1 (`524e459`): 3 High, 4 Medium, 6 Low. All 13 fixed in `278332e`;
+Tester re-test (`0cf558e`) confirmed them and found 2 Medium + 6 Low new, all in
+single-route search or harness edges; fixed in `e64c32a`. Every finding has a
+regression test in `tests/test_known_failures_tester_round.py` that fails on the
+commit before its fix (verified by running the file against that commit).
+
+Behaviour changes a reader will notice:
+- A UK-departure tax figure BELOW the per-passenger APD for the award's cabin is
+  treated as incomplete (unknown), on the trip path, in search, and in off-date
+  findings. Real LHR rows ($224.63 etc.) are unaffected.
+- New reason code `TAXES_UNKNOWN` (way ten: widens the range, `legs_taxes_unknown`);
+  table cell `WITHHELD (taxes unknown)`; a rejected unknown-tax alternative's floor
+  carries owed APD.
+- `PARSER_VERSION` is now `2026-09-10.taxes-trust`: replays of the Mac's corpus
+  will print REPARSED, by design.
+- Search: unknown-cash strategies rank after known ones and print UNKNOWN.
+
+Probe suites: adversarial-probes 40/38, identical red set to master. v5-probes
+20/78: `test_a_live_leg_states_apd_without_adding_it` flipped BY DESIGN (its
+corpus puts $32.36 of taxes on LHR, below the GBP 102 duty; the Tester agrees and
+added a $224.63 variant that still passes). Tester probes: 98/98 green.
+
+Final state: sandbox 919 passed / 13 skipped (same under `-O`); simulated Mac (v5 folder name, exported key, warm cache, qatar tax-0 corpus) 928 passed / 4 skipped.
