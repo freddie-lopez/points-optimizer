@@ -715,6 +715,14 @@ class TripsReplaySet:
 
 TRIPS_TABLE_HEADER = "| fetched_at (UTC) | leg | route | dates |"
 
+# Manager review, should-fix 6. Deleting a trips row (or the trips manifest) is
+# the documented remedy for a bad trips snapshot, and it changes what the replay
+# hash covers: the hash is over the rows that are replayed.
+HASH_CHANGE_NOTE = (
+    "Deleting a trips row CHANGES THE REPLAY'S MANIFEST HASH: a number quoted "
+    "against the old hash will not reproduce against the edited manifest."
+)
+
 
 def _recorded_id(path: Path) -> Tuple[Optional[str], str]:
     """(the availability id a trips envelope records, problem)."""
@@ -770,7 +778,7 @@ def load_trips_replay_set(
                     f"{manifest} has no manifest table header, so it is not a "
                     f"trips manifest. It is NOT being read as 'no lookups "
                     f"recorded'. Restore it, or delete the file to replay with "
-                    f"no lookups.",
+                    f"no lookups. {HASH_CHANGE_NOTE}",
                 )
             )
             return out
@@ -831,7 +839,8 @@ def load_trips_replay_set(
                     row,
                     f"availability {aid} is recorded twice with DIFFERENT bytes "
                     f"({earlier.describe()} and this row). There is no rule that "
-                    f"picks one; delete the row that should not be replayed.",
+                    f"picks one; delete the row that should not be replayed. "
+                    f"{HASH_CHANGE_NOTE}",
                 )
             )
         seen.setdefault(aid, row)

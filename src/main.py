@@ -729,6 +729,8 @@ def build_replay(args, console: Console, fixture):
             "A trips snapshot that is missing, tampered with or empty refuses the "
             "whole replay too. Re-fetch that lookup live, or delete its row from "
             "trips_endpoint/MANIFEST.md - the lookup then replays as NOT RECORDED. "
+            + snapshot_replay.HASH_CHANGE_NOTE
+            + " "
             if trips.problems
             else ""
         )
