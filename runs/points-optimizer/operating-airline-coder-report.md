@@ -100,30 +100,45 @@ Sandbox:
 .venv/bin/python -O -m pytest -q -p no:cacheprovider
 ```
 
-On Tsuki's Mac (key from `~/.zshrc`), from the repo root:
+On Tsuki's Mac (key from `~/.zshrc`), in `~/Downloads/points-optimizer-git`.
+**Corrected in fix round 3** (Manager review, must-fix 3): no Trip B run - he
+does not want more example trips scored; `.venv/bin/python`, not bare `python`;
+ONE `yq-check` run, which writes the capture too (2 calls, not 4); and he edits
+neither `src/seats_trips.py` nor `data/yq_inclusion.csv` - he sends the files
+back and the Coder does both.
 
 ```bash
-# A live trip run now also looks up the operating airline (auto, cap 10).
-python -m src.main --trip-fixture trip_b_europe.json \
-    --balance UR=160000 --card "Chase Sapphire Preferred" --transfer-date 2026-09-15
+# 1. Get the branch from the bundle you were sent.
+git fetch <bundle> feature/operating-airline:feature/operating-airline
+git checkout feature/operating-airline
 
-# A1 - capture one real trips response (at most 2 calls: 1 search + 1 trips).
-# Use a date with Virgin Atlantic space on SFO-LHR. Paste the output; commit
-# tests/fixtures/seats_aero/trips_endpoint/real/<file>.json and .raw.txt.
-python -m src.trips_tools capture --origin SFO --destination LHR \
-    --date <YYYY-MM-DD with VS space> --source virginatlantic
+# 2. The suite. No API calls. Expect 1578 passed / 13 skipped (the sandbox
+#    figure; unverified on the Mac).
+.venv/bin/python -m pytest -q -p no:cacheprovider
 
-# A2 - the YQ check, on a Virgin Atlantic award ON VS METAL, then compare the
-# printed block with virginatlantic.com and fill in docs/yq-checks/<date>-virginatlantic.md.
-python -m src.trips_tools yq-check --origin JFK --destination LHR \
-    --date <YYYY-MM-DD with VS space> --source virginatlantic --cabin J
+# 3. On seats.aero (the website, free), find a date with Virgin Atlantic Upper
+#    Class space JFK -> LHR on a flight Virgin Atlantic operates itself. Then
+#    ONE run - it asks before spending anything, at most 2 calls (1 search + 1
+#    trips), and writes both the capture and the record to fill in:
+.venv/bin/python -m src.trips_tools yq-check --origin JFK --destination LHR \
+    --date YYYY-MM-DD --source virginatlantic --cabin J
+#    (add --refresh if you ran it earlier today and want a fresh search row)
 ```
 
-Both tools print the call count and ask `Continue? [y/N]` (skip with `--yes`).
-`capture` exit 0 = clean; only then set `TRIPS_SCHEMA_VERIFIED_BY` in
-`src/seats_trips.py` to the file name. Exit 5 = file written but the parser must
-be fixed first. After filling the yq-check record, add ONE row to
-`data/yq_inclusion.csv`; the loader refuses a record that still has `____`.
+4. On virginatlantic.com, find the same flight for one adult. First confirm it
+   is operated by Virgin Atlantic itself, not Delta. Then compare the site's
+   TOTAL of taxes, fees and carrier-imposed charges with the two figures the
+   block printed: about the row figure is `includes_yq`; about the row figure
+   plus the band ($200-$350 one way for VS J) is `excludes_yq`; anything else is
+   inconclusive. Fill the five blanks in `docs/yq-checks/<today>-virginatlantic.md`.
+5. Send back the terminal output, that record, and the two files under
+   `tests/fixtures/seats_aero/trips_endpoint/real/`. **Do not edit
+   `src/seats_trips.py` or `data/yq_inclusion.csv`** - the Coder sets the
+   label and adds the row.
+6. Exit 5 is fine: the file is what has value. Do not run the capture again. If
+   it was required-field drift, exactly one test is red once the files are
+   committed (`test_every_committed_real_capture_parses_without_required_field_drift`)
+   until the parser is fixed against that same file - expected.
 
 ## Known gaps
 
@@ -133,6 +148,8 @@ be fixed first. After filling the yq-check record, add ONE row to
 - **The cap is checked before the cache.** Once the cap is reached, a lookup a
   disk-cache hit would have served free still reads CAP_REACHED. Cache hits do
   not use up the cap. Same after a 429: every later lookup is skipped, cached or not.
+  *(Fixed in fix round 1, `db2e5ca`: cached answers are now read after the cap or
+  a 429.)*
 - **The budget counter is per process** (as the plan says); it cannot see other
   runs. The banner's "calls spent" is this process only.
 - **Replay does not flag trips rows for legs the trip does not contain**, and if
