@@ -616,11 +616,11 @@ COUNTED, not WIDENS, and nothing touches `margin_withheld`, so the headline carr
 no qualifier. For comparison, an API failure withholds the margin (exit 3), and an
 unknown surcharge widens it to a range. This is Tsuki's main case (flying as a
 couple). Location: `models.py` `TRIP_LEVEL_ANSWERS["PARTY_PRICING_UNVERIFIED"]`,
-`main.py:~785` (`withheld` looks only at provenance).
+`main.py:811` (`withheld` looks only at provenance).
 
 **R2-3. Medium: search dedup now hides the cheaper award (e64c32a overshot the R-1 fix).**
 Repro: `::test_R2_3_...`. SFO-MAD returns United 50,000 + $56 and United 30,000
-with no tax figure. Dedup (`optimizer.py:~380`) now uses the ranking rule, so the
+with no tax figure. Dedup (`optimizer.py:411`) now uses the ranking rule, so the
 known award always beats the unknown one for the same program, date and cabin.
 The unknown one is **deleted**, not ranked after. A 30,000-point award, 20,000
 fewer points than the one shown, never appears. The ranking already sorts unknowns
