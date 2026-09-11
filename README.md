@@ -412,7 +412,9 @@ No real trips response has been captured. The parser is built from the published
 OpenAPI document only, so every `KNOWN`, `AMBIGUOUS` and parse-derived `UNKNOWN`
 line - and the live banner - ends with **"[trips parser UNVERIFIED against a
 real Seats.aero response - built from the published schema only]"**. The cabin
-words other than "business" are assumed, and so is `min_cabin_pct=100`.
+words other than "business" are assumed, and so is `min_cabin_pct=100`: an
+itinerary with a nonzero `MixedCabinPct` means the server did not honour it,
+and `capture` reports that as blocking drift.
 
 What flips it: a capture written by `python -m src.trips_tools capture` is
 committed under `tests/fixtures/seats_aero/trips_endpoint/real/`, and

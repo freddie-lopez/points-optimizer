@@ -522,6 +522,17 @@ def _parse_trip(
             return fail("TRIP_UNREADABLE", f"MixedCabinPct is {pct!r}, not an integer 1-100")
         if pct == 0:
             out.note(f"{label}: MixedCabinPct is 0 (documented as omitted when 0)")
+        else:
+            # D16: under min_cabin_pct=100 a mixed-cabin itinerary should not be
+            # in the list at all. Its presence says the server did not honour
+            # the request parameter the parser assumes, which is exactly what a
+            # first capture must flag: required, so it blocks the label flip.
+            # (The matcher still excludes it from the carrier answer.)
+            out.note(
+                f"{label}: MixedCabinPct is {pct}, but the request sent "
+                f"min_cabin_pct=100, so the server did not honour min_cabin_pct=100",
+                required=True,
+            )
         trip.mixed_cabin_pct = pct
 
     # -- the route chain -----------------------------------------------------
