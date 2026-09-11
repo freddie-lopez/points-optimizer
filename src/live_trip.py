@@ -136,6 +136,12 @@ def _query_spec(leg: Leg, flex_days: int) -> LiveQuerySpec:
     )
 
 
+def leg_search_window(leg: Leg, flex_days: int) -> DateRange:
+    """The date range `query_leg` asks Seats.aero for on this leg."""
+    spec = _query_spec(leg, flex_days)
+    return DateRange(spec.start_date, spec.end_date)
+
+
 def _not_queried(leg: Leg, why: str) -> LiveLegOutcome:
     return LiveLegOutcome(
         leg_id=leg.id,
@@ -189,7 +195,7 @@ def query_leg(
         awards = client.search(
             spec.origin,
             spec.destination,
-            DateRange(spec.start_date, spec.end_date),
+            leg_search_window(leg, opts.flex_days),
             cache=opts.cache,
             cache_ttl=opts.cache_ttl,
             refresh=opts.refresh,

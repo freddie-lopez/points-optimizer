@@ -954,6 +954,22 @@ def parse_availability_row(row: Dict[str, Any]) -> List[Award]:
     return awards
 
 
+def search_request(origin: str, destination: str, date_range: DateRange) -> Dict[str, str]:
+    """The search request exactly as `search_raw` sends and caches it."""
+    return {
+        "origin_airport": origin,
+        "destination_airport": destination,
+        "start_date": str(date_range.from_date),
+        "end_date": str(date_range.to_date),
+    }
+
+
+def search_request_key(origin: str, destination: str, date_range: DateRange) -> str:
+    """The disk-cache key `search_raw` files this search under. One function, so
+    a caller predicting a cache hit asks the same question the client does."""
+    return response_cache.request_key("search", search_request(origin, destination, date_range))
+
+
 class SeatsClient:
     """Thin wrapper around the Seats.aero Partner API."""
 
@@ -1139,13 +1155,8 @@ class SeatsClient:
 
         Raises SeatsAeroError if the API cannot be reached.
         """
-        request = {
-            "origin_airport": origin,
-            "destination_airport": destination,
-            "start_date": str(date_range.from_date),
-            "end_date": str(date_range.to_date),
-        }
-        key = response_cache.request_key("search", request)
+        request = search_request(origin, destination, date_range)
+        key = search_request_key(origin, destination, date_range)
 
         if cache is not None and not refresh:
             hit = cache.get(key, ttl=cache_ttl)

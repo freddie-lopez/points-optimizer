@@ -489,6 +489,31 @@ class Engine:
         except OSError:
             return None
 
+    def _cache_answerable(self, fx, opts: Dict[str, Any]) -> Optional[int]:
+        """How many of this trip's searches the disk cache can answer right now,
+        asked with the client's own key and the leg's own window. None when it
+        cannot be said (then the confirm states the maximum only)."""
+        from src.live_trip import leg_search_window
+        from src.response_cache import ResponseCache
+        from src.seats_client import search_request_key
+
+        if opts.get("refresh"):
+            return 0  # --refresh ignores the cache by definition
+        try:
+            probe = ResponseCache(cache_dir=Path(config.CACHE_DIR), snapshot_dir=None,
+                                  ttl_seconds=config.CACHE_TTL_SECONDS)
+            hits = 0
+            for leg in fx.legs:
+                if leg.kind != "flight" or not leg.origin or not leg.destination:
+                    continue
+                key = search_request_key(leg.origin, leg.destination,
+                                         leg_search_window(leg, opts.get("flex_days", 0)))
+                if probe.get(key) is not None:
+                    hits += 1
+            return hits
+        except Exception:  # noqa: BLE001 - a prediction must never block a run
+            return None
+
     def trip_preflight(self, trip_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
         from src.trip_loader import load_trip_fixture
 
@@ -525,6 +550,7 @@ class Engine:
             "lookup_cap": lookup_cap,
         }
         out["archive_dir"] = display_path(Path(config.SNAPSHOT_DIR))
+        out["cache_answerable"] = self._cache_answerable(fx, opts)
         if out["blocked"] is None:
             out["confirm_id"] = self.issue_confirm(self._trip_digest(trip_id, path, opts))
         return out

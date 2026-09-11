@@ -651,3 +651,33 @@ def test_a_bad_wallet_is_refused_in_the_wallet_codes_words(client, body, start):
     assert r["error"] == "wallet" and r["message"].startswith(start), r
     # ...and the session keeps the wallet it had.
     assert client.get("/api/state").json()["wallet"]["balances"] == {"UR": 160000}
+
+
+# ------------------------------------------------------ cache-aware preflight
+
+
+def test_the_preflight_predicts_exactly_the_searches_the_disk_cache_answers(live_client):
+    pf = live_client.post("/api/trips/trip_b_europe/preflight", LIVE).json()
+    assert pf["cache_answerable"] == 0
+    live_client.post("/api/trips/trip_b_europe/run", dict(LIVE, confirm_id=pf["confirm_id"]))
+    pf2 = live_client.post("/api/trips/trip_b_europe/preflight", LIVE).json()
+    run2 = live_client.post("/api/trips/trip_b_europe/run", dict(LIVE, confirm_id=pf2["confirm_id"])).json()
+    served = [l["id"] for l in run2["legs"] if l["live"] and l["live"]["served_from_cache"]]
+    assert pf2["cache_answerable"] == len(served) == 4
+    refresh = {"mode": "live", "options": {**LIVE["options"], "refresh": True}}
+    assert live_client.post("/api/trips/trip_b_europe/preflight", refresh).json()["cache_answerable"] == 0
+    flex = {"mode": "live", "options": {**LIVE["options"], "flex_days": 2}}
+    assert live_client.post("/api/trips/trip_b_europe/preflight", flex).json()["cache_answerable"] == 0
+
+
+def test_the_search_key_is_the_one_search_raw_files_under(tmp_path):
+    from datetime import date
+
+    from src.models import DateRange
+    from src.response_cache import request_key
+    from src.seats_client import search_request_key
+
+    dr = DateRange(date(2027, 1, 15), date(2027, 1, 15))
+    assert search_request_key("SFO", "MAD", dr) == request_key("search", {
+        "origin_airport": "SFO", "destination_airport": "MAD",
+        "start_date": "2027-01-15", "end_date": "2027-01-15"})
