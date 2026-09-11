@@ -546,7 +546,8 @@ def _taxes_are_the_whole_carrier_cash_figure(
         f"{'a nonzero modeled band' if est.is_known else 'UNKNOWN'}, and it has "
         f"never been observed whether the API's 'total taxes' already includes "
         f"it. Adding them could double count; ignoring the surcharge would "
-        f"undercount, which is the v0 bug. Reported as a floor plus a break-even "
+        f"undercount and turn an unknown charge into a saving that is not there. "
+        f"Reported as a floor plus a break-even "
         f"instead of as a number the tool cannot defend."
         + (f" {yq_scope_note}" if yq_scope_note else "")
     )
