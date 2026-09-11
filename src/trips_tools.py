@@ -614,40 +614,90 @@ def _yq_block(cap: "Capture", args, console: Console) -> Dict[str, str]:
         "seats": f"{row.get(f'{letter}RemainingSeats')!r}",
         "per-itinerary TotalTaxes": per_trip,
     }
+    # MUST-FIX 2 (Manager review). The decision is made by the site's TOTAL, so
+    # the block prints both totals it can be compared with: the row figure, and
+    # the row figure plus the modelled band for the airline the lookup names.
+    status, airline = _checked_airline(cap, args)
+    band_text, with_band = "none - the lookup did not name one KNOWN airline", ""
+    if airline:
+        _, est = _modelled_band(args, [airline])
+        if est.is_known and est.amount_high > 0:
+            band_text = f"{est.render()} one way ({airline} metal, cabin {letter})"
+            if known:
+                with_band = (
+                    f"${usd + est.amount_low:,.2f}-${usd + est.amount_high:,.2f} "
+                    f"(row ${usd:,.2f} + band)"
+                )
+        else:
+            band_text = (
+                f"NONE MODELLED for {airline} metal, so the site total cannot tell "
+                f"includes from excludes"
+            )
+    fields["modelled carrier surcharge band"] = band_text
+    fields["row figure + band"] = with_band or "n/a"
     console.print("")
     console.print("YQ CHECK - compare against the program's own site")
     for key, value in fields.items():
         console.print(f"  {key}: {escape(str(value))}")
-    site = PROGRAM_SITE.get(source, "the program's own site")
-    console.print(
-        f"  On {site}, read 'taxes, fees and carrier-imposed charges' for ONE adult "
-        f"on the same flight; about equal to the row figure means includes_yq; about "
-        f"the row figure plus a separate carrier-charge line means excludes_yq; "
-        f"anything else is inconclusive, record nothing."
-    )
+    for line in _decision_rule(source, airline, known and usd, with_band):
+        console.print(f"  {escape(line)}")
     return fields
 
 
-def _inconclusive_warning(cap: "Capture", args) -> str:
+OWN_AIRLINE_NAME = {
+    "virginatlantic": "Virgin Atlantic",
+    "flyingblue": "Air France or KLM",
+    "jetblue": "JetBlue",
+    "singapore": "Singapore Airlines",
+    "united": "United",
+    "aeroplan": "Air Canada",
+}
+
+
+def _decision_rule(source: str, airline: str, row_usd, with_band: str) -> List[str]:
+    """The rule, stated by the TOTAL the site shows for ONE adult on the same flight."""
+    site = PROGRAM_SITE.get(source, "the program's own site")
+    own = OWN_AIRLINE_NAME.get(source, "the program's own airline")
+    row = f"${row_usd:,.2f}" if row_usd else "the row figure"
+    return [
+        f"On {site}, find the SAME flight for ONE adult.",
+        f"1. Confirm the site shows it OPERATED BY {airline or 'the airline above'} "
+        f"itself ({own} for this program), not by a partner such as Delta. If it is "
+        f"operated by anyone else, the check is inconclusive: record nothing.",
+        "2. Read the site's TOTAL of taxes, fees and carrier-imposed charges - one "
+        "combined figure, or its lines added up - converted to US dollars if needed.",
+        f"3. Site total about equal to the row figure ({row}): includes_yq.",
+        f"4. Site total about equal to the row figure plus the band "
+        f"({with_band or 'no band: this check cannot show excludes_yq'}): excludes_yq.",
+        "5. Anything else is inconclusive: record nothing.",
+    ]
+
+
+def _modelled_band(args, carriers):
+    """The one-way modelled surcharge band for these carriers under the source's program."""
     from src import regions
     from src.seats_client import SEATS_AERO_SOURCES
     from src.surcharge import default_table
 
     source = args.source.strip().lower()
-    own = OWN_METAL.get(source, "the program's own airline")
-    lookup = cap.lookups.get(args.cabin.upper())
-    if lookup is None or lookup.status is not MetalStatus.KNOWN:
-        return f"likely INCONCLUSIVE - pick a flight on {own} metal (the flight-number carrier is not known)"
     program = SEATS_AERO_SOURCES[source].program if source in SEATS_AERO_SOURCES else source
     try:
         region = regions.classify(args.origin.upper(), args.destination.upper())
         country = regions.departure_country(args.origin.upper())
     except Exception:  # noqa: BLE001 - an unknown airport just means no band
         region, country = "", ""
-    est = default_table().resolve_ambiguous_metal(
-        program, list(lookup.carriers), region, args.cabin.upper(), country,
-        is_round_trip=False,
+    return program, default_table().resolve_ambiguous_metal(
+        program, list(carriers), region, args.cabin.upper(), country, is_round_trip=False,
     )
+
+
+def _inconclusive_warning(cap: "Capture", args) -> str:
+    source = args.source.strip().lower()
+    own = OWN_METAL.get(source, "the program's own airline")
+    lookup = cap.lookups.get(args.cabin.upper())
+    if lookup is None or lookup.status is not MetalStatus.KNOWN:
+        return f"likely INCONCLUSIVE - pick a flight on {own} metal (the flight-number carrier is not known)"
+    program, est = _modelled_band(args, lookup.carriers)
     if not est.is_known or est.amount_high <= 0:
         label = seats_trips.trips_parser_label()
         return (
@@ -707,10 +757,17 @@ def _write_record(cap: "Capture", args, fields: Dict[str, str], today: date, war
         "",
         f"## {PROGRAM_SITE.get(source, 'The program site')}",
         "",
+        "The rule, by the site's TOTAL for ONE adult on the same flight: about the "
+        "row figure is includes_yq; about the row figure plus the modelled band "
+        "(both above) is excludes_yq; anything else, or a flight operated by another "
+        "airline, is inconclusive and records nothing.",
+        "",
         "- date checked: ____",
         "- flight(s) shown: ____",
-        "- taxes, fees and carrier-imposed charges for ONE adult: ____",
-        "- separate carrier-imposed charge line (if any): ____",
+        f"- the site shows this flight operated by {airline or 'NONE'} itself, not a "
+        f"codeshare partner (yes / no): ____",
+        "- total taxes, fees and carrier-imposed charges for ONE adult, as the site "
+        "shows it (one combined figure, or its lines added up): ____",
         "- verdict (includes_yq / excludes_yq / inconclusive): ____",
         "",
     ]

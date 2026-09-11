@@ -15,9 +15,20 @@ source,airline,verdict,verified_on,evidence,notes
 virginatlantic,VS,includes_yq,2026-09-12,docs/yq-checks/2026-09-12-virginatlantic.md,JFK-LHR J on VS metal
 ```
 
-- About equal to the row figure: `includes_yq`.
-- About the row figure plus a separate carrier-charge line: `excludes_yq`.
+The rule is stated by the site's **total** of taxes, fees and carrier-imposed
+charges for ONE adult on the same flight (one combined figure, or its lines
+added up). yq-check prints the row figure, the modelled band for the airline the
+lookup names, and their sum:
+
+- First confirm on the site that the flight is **operated by** that airline
+  itself (for `virginatlantic`: Virgin Atlantic, not Delta). If not: record
+  nothing.
+- Site total about equal to the row figure: `includes_yq`.
+- Site total about equal to the row figure plus the modelled band: `excludes_yq`.
 - Anything else is inconclusive: record nothing. No row means unverified.
+
+The record asks "the site shows this flight operated by <airline> itself (yes /
+no)"; the loader refuses any answer but `yes`.
 
 `src/yq_inclusion.py` refuses to load a row whose evidence is missing, outside
 this directory, lacks the `yq-check record` marker, or still has `____` in it. It

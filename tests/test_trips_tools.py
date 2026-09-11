@@ -311,10 +311,16 @@ def test_yq_check_prints_every_field_and_writes_a_record_with_blanks(tmp_path):
         "flight-number carrier: VS",
         "seats: 2",
         "per-itinerary TotalTaxes: raw 45000 GBP (unit NOT VERIFIED",
-        "read 'taxes, fees and carrier-imposed charges' for ONE adult on the same flight",
-        "about equal to the row figure means includes_yq",
-        "about the row figure plus a separate carrier-charge line means excludes_yq",
-        "anything else is inconclusive, record nothing",
+        "modelled carrier surcharge band: $200-$350 (pt $275) one way (VS metal, cabin J)",
+        "row figure + band: $809.30-$959.30 (row $609.30 + band)",
+        "find the SAME flight for ONE adult",
+        "Confirm the site shows it OPERATED BY VS itself (Virgin Atlantic for this "
+        "program), not by a partner such as Delta",
+        "Read the site's TOTAL of taxes, fees and carrier-imposed charges",
+        "Site total about equal to the row figure ($609.30): includes_yq",
+        "Site total about equal to the row figure plus the band ($809.30-$959.30 (row "
+        "$609.30 + band)): excludes_yq",
+        "Anything else is inconclusive: record nothing",
         "virginatlantic.com",
     ):
         assert needle in out, needle
@@ -344,10 +350,8 @@ def test_the_record_it_writes_is_refused_until_the_blanks_are_filled(tmp_path):
     fills = {
         "- date checked: ____": "- date checked: 2026-09-12",
         "- flight(s) shown: ____": "- flight(s) shown: VS19 LHR-SFO",
-        "- taxes, fees and carrier-imposed charges for ONE adult: ____":
-            "- taxes, fees and carrier-imposed charges for ONE adult: GBP 450.00",
-        "- separate carrier-imposed charge line (if any): ____":
-            "- separate carrier-imposed charge line (if any): none shown",
+        "- the site shows this flight operated by VS itself, not a codeshare partner (yes / no): ____": "- the site shows this flight operated by VS itself, not a codeshare partner (yes / no): yes",
+        "- total taxes, fees and carrier-imposed charges for ONE adult, as the site shows it (one combined figure, or its lines added up): ____": "- total taxes, fees and carrier-imposed charges for ONE adult, as the site shows it (one combined figure, or its lines added up): GBP 450.00",
         "- verdict (includes_yq / excludes_yq / inconclusive): ____":
             "- verdict (includes_yq / excludes_yq / inconclusive): includes_yq",
     }

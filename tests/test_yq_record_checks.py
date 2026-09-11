@@ -30,6 +30,7 @@ def record(source="virginatlantic", verdict_line=VERDICT.format(v="includes_yq")
         f"- program: Some Program (source {program_source})\n"
         f"- itinerary lookup status: KNOWN\n"
         f"- checked airline (the award's KNOWN flight-number carrier): VS\n\n## site\n\n"
+        f"- the site shows this flight operated by VS itself, not a codeshare partner (yes / no): yes\n"
         f"- taxes, fees and carrier-imposed charges for ONE adult: GBP 450.00\n"
         f"{verdict_line}\n"
     )
@@ -126,6 +127,7 @@ def test_the_printed_template_pasted_unchanged_is_refused(tmp_path):
     run_yq(tmp_path)
     rec = next((tmp_path / "records").glob("*.md"))
     text = rec.read_text().replace("inconclusive): ____", "inconclusive): excludes_yq")
+    text = text.replace("(yes / no): ____", "(yes / no): yes")
     text = text.replace("____", "filled")
     d = tmp_path / "docs" / "yq-checks"
     d.mkdir(parents=True)

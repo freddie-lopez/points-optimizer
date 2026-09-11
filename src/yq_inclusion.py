@@ -64,6 +64,14 @@ RECORD_AIRLINE_RE = re.compile(
 RECORD_LOOKUP_RE = re.compile(
     r"^\s*-\s*itinerary lookup status\s*:[ \t]*(.*?)[ \t]*$", re.M
 )
+# Must-fix 2. The site half confirms the flight is OPERATED by that airline: a
+# flight number names the marketing carrier, and only the airline's own site
+# says who flies it. Anything but "yes" backs nothing.
+RECORD_OPERATED_RE = re.compile(
+    r"^\s*-\s*the site shows this flight operated by (\S+) itself, not a codeshare "
+    r"partner \(yes / no\)\s*:[ \t]*(.*?)[ \t]*$",
+    re.M,
+)
 
 
 class YqInclusionError(ValueError):
@@ -194,6 +202,25 @@ def _check_record_airline(body: str, where: str, airline: str) -> None:
         raise YqInclusionError(
             f"{where} was run on {named[0].strip() or '(blank)'} metal and the row "
             f"says {airline}. A verdict covers only the airline it was checked on."
+        )
+    operated = RECORD_OPERATED_RE.findall(body)
+    if len(operated) != 1:
+        raise YqInclusionError(
+            f"{where} has {len(operated)} 'the site shows this flight operated by' "
+            f"lines; it needs exactly one, filled in from the airline's site."
+        )
+    code, answer = operated[0]
+    if code.strip().upper() != airline:
+        raise YqInclusionError(
+            f"{where} asks whether the flight is operated by {code}, and the row "
+            f"says {airline}."
+        )
+    if answer.strip().lower() != "yes":
+        raise YqInclusionError(
+            f"{where} does not confirm that the site shows the flight operated by "
+            f"{airline} itself (it says {answer.strip() or '(blank)'!r}). A flight "
+            f"number names the marketing carrier; without the site's word on who "
+            f"operates it, the check is inconclusive: record nothing."
         )
 
 

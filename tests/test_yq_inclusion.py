@@ -315,7 +315,9 @@ GOOD_RECORD = (
     "- program: Virgin Atlantic Flying Club (source virginatlantic)\n"
     "- itinerary lookup status: KNOWN\n"
     "- checked airline (the award's KNOWN flight-number carrier): VS\n\n"
-    "## virginatlantic.com\n\n- taxes, fees and carrier-imposed charges for ONE adult: "
+    "## virginatlantic.com\n\n"
+    "- the site shows this flight operated by VS itself, not a codeshare partner (yes / no): yes\n"
+    "- taxes, fees and carrier-imposed charges for ONE adult: "
     "GBP 450.00\n- verdict (includes_yq / excludes_yq / inconclusive): includes_yq\n"
 )
 

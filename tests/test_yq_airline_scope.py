@@ -32,6 +32,8 @@ def body(status="KNOWN", airline="VS", verdict="includes_yq", extra=""):
         f"- itinerary lookup status: {status}\n"
         f"- checked airline (the award's KNOWN flight-number carrier): {airline}\n{extra}\n"
         "## virginatlantic.com\n\n"
+        f"- the site shows this flight operated by {airline[:2]} itself, not a codeshare "
+        "partner (yes / no): yes\n"
         "- taxes, fees and carrier-imposed charges for ONE adult: GBP 450.00\n"
         f"- verdict (includes_yq / excludes_yq / inconclusive): {verdict}\n"
     )

@@ -494,7 +494,12 @@ are unscoreable under every verdict, exactly as before.
 `python -m src.trips_tools yq-check` produces the evidence: run it on an award
 **on the program's own metal** (for example a `virginatlantic` J award on VS
 metal), compare the block it prints against the program's own site, and fill in
-the record it writes. It prints the CSV row with `<VERDICT>` in place of the
+the record it writes. The rule is by the site's **total** for one adult on the
+same flight: about the row figure is `includes_yq`; about the row figure plus
+the modelled band (the block prints both, e.g. VS J one way $200-$350) is
+`excludes_yq`; anything else is inconclusive and records nothing. Confirm on the
+site first that the flight is operated by that airline itself (Virgin Atlantic,
+not Delta); the record asks, and the loader refuses anything but "yes". It prints the CSV row with `<VERDICT>` in place of the
 verdict - never a row with a verdict already in it - so the only verdict that can
 be typed is the one on the record's own verdict line. It warns "likely INCONCLUSIVE" when the flight-number
 carrier is not known or has no nonzero surcharge row.
