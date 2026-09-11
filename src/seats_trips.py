@@ -635,17 +635,104 @@ def _money_raw(amount: int, currency: str) -> str:
 
 
 def trip_taxes_display(trip: TripItinerary) -> str:
-    """A trip's own TotalTaxes, shown raw with BOTH unit readings. Never a figure."""
+    """
+    A trip's own TotalTaxes as text. While the unit is unverified it is shown raw
+    with BOTH readings and is never a figure.
+    """
     raw = trip.total_taxes_raw
     cur = trip.taxes_currency or "(no currency)"
     if raw is None:
         return "no TotalTaxes on this itinerary"
     if isinstance(raw, bool) or not isinstance(raw, int):
         return f"TotalTaxes {raw!r} is not an integer"
+    if TRIPS_TOTALTAXES_UNIT == "cents":
+        return f"raw {raw} {cur} = {cur} {raw / 100:,.2f} (unit verified as cents)"
+    if TRIPS_TOTALTAXES_UNIT == "units":
+        return f"raw {raw} {cur} = {cur} {raw:,} (unit verified as whole units)"
     return (
         f"raw {raw} {cur} (unit NOT VERIFIED: {cur} {raw / 100:,.2f} if cents, "
         f"{cur} {raw:,} if whole units)"
     )
+
+
+def _one_trip_usd(raw: Any, currency: str, source_code: str, award, below_duty):
+    """(usd or None, why-unknown) for ONE matched itinerary's TotalTaxes."""
+    from src import seats_client
+
+    if source_code in seats_client.TAXES_UNREPORTED_SOURCES:
+        return None, f"Seats.aero reports no taxes for {source_code!r}"
+    if raw is None or isinstance(raw, bool) or not isinstance(raw, int):
+        return None, f"TotalTaxes {raw!r} is not an integer"
+    if raw == 0:
+        return None, "TotalTaxes 0, which means not reported"
+    if raw < 0:
+        return None, f"TotalTaxes {raw} is negative, which is corrupt"
+    cents = raw if TRIPS_TOTALTAXES_UNIT == "cents" else raw * 100
+    known, _, _, usd, note = seats_client.convert_taxes(cents, currency)
+    if not known:
+        return None, note
+    if below_duty is not None:
+        import dataclasses as _dc
+
+        why = below_duty(
+            _dc.replace(award, cash_component=usd, cash_component_known=True)
+        )
+        if why:
+            return None, f"${usd:,.2f} is below the UK duty owed on it"
+    return usd, ""
+
+
+def trip_taxes_view(metal: MetalLookup, award, row_usd: float, below_duty=None):
+    """
+    What the matched itineraries' own TotalTaxes do to the award's taxes.
+
+    Returns (taxes_unknown_now, note). While `TRIPS_TOTALTAXES_UNIT` is
+    "unverified" this ALWAYS returns (False, ""): per-trip taxes are display
+    only and cannot move any number, whatever they say.
+
+    Once the unit is verified, each matched itinerary's figure goes through the
+    same trust rules as the row's. If any is UNKNOWN, or above the row's figure
+    by more than max($1, 1%), which itinerary you book decides the cash - so the
+    award's taxes become UNKNOWN. A LOWER figure is disclosed and never used.
+    """
+    if TRIPS_TOTALTAXES_UNIT not in ("cents", "units"):
+        return False, ""
+    if metal is None or metal.status not in (MetalStatus.KNOWN, MetalStatus.AMBIGUOUS):
+        return False, ""
+    if not metal.matched_trip_taxes:
+        return False, ""
+    source = str(getattr(award, "program_source_code", "") or "").lower()
+    unknown: List[str] = []
+    higher: List[float] = []
+    lower: List[float] = []
+    tolerance = max(1.0, 0.01 * row_usd)
+    for i, (raw, currency) in enumerate(metal.matched_trip_taxes, start=1):
+        usd, why = _one_trip_usd(raw, currency, source, award, below_duty)
+        if usd is None:
+            unknown.append(f"itinerary {i}: {why}")
+        elif usd > row_usd + tolerance:
+            higher.append(usd)
+        elif usd < row_usd - tolerance:
+            lower.append(usd)
+    if unknown:
+        return True, (
+            f"which itinerary you book decides the taxes, and one itinerary's own "
+            f"figure is UNKNOWN ({'; '.join(unknown)}). The row says ${row_usd:,.2f}; "
+            f"the taxes on this award are UNKNOWN - not ${row_usd:,.2f}."
+        )
+    if higher:
+        return True, (
+            f"which itinerary you book decides the taxes; between ${row_usd:,.2f} "
+            f"and ${max(higher):,.2f} across the {metal.matched_trips} matched "
+            f"itineraries. The taxes on this award are UNKNOWN - not ${row_usd:,.2f}."
+        )
+    if lower:
+        return False, (
+            f"an itinerary at this price shows lower taxes (${min(lower):,.2f}) than "
+            f"the row's ${row_usd:,.2f}; the row figure is used and the lower one "
+            f"is disclosed only"
+        )
+    return False, ""
 
 
 def _describe_counts(costs: List[int]) -> str:
@@ -774,12 +861,18 @@ def match_award(parsed: ParsedTrips, facts: AwardFacts) -> MetalLookup:
             (f"[{i}] " if len(clean) > 1 else "") + trip_taxes_display(t)
             for i, t in enumerate(clean, start=1)
         )
-        taxes_note = f"{taxes}; not used in any figure" if taxes else ""
+        if not taxes:
+            taxes_note = ""
+        elif TRIPS_TOTALTAXES_UNIT in ("cents", "units"):
+            taxes_note = f"{taxes}; checked against the row's figure"
+        else:
+            taxes_note = f"{taxes}; not used in any figure"
         found = dict(
             flights=tuple(flights),
             flight_numbers=tuple(numbers),
             matched_trips=len(clean),
             trip_taxes_note=taxes_note,
+            matched_trip_taxes=tuple((t.total_taxes_raw, t.taxes_currency) for t in clean),
             provenance=METAL_PROVENANCE_TRIPS,
             **extra,
         )

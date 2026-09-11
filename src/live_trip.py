@@ -668,6 +668,23 @@ def award_to_candidate(
         # Nothing USABLE: the figure is known to be incomplete, which is not the
         # same as "exists in a currency we cannot price".
         taxes_reported_amount = None
+    # PER-ITINERARY TAXES. Inert while their unit is unverified; once verified,
+    # an itinerary whose own figure is unknown or higher than the row's makes
+    # the award's taxes UNKNOWN, because which one you book decides the cash.
+    if taxes_known:
+        widen, trip_note = seats_trips.trip_taxes_view(
+            metal, award, float(award.cash_component),
+            below_duty=lambda a: taxes_below_owed_uk_duty(leg, a),
+        )
+        if widen:
+            taxes_known = False
+            taxes_note = trip_note
+            taxes_reported_amount = None
+        elif trip_note and metal is not None:
+            metal = dataclasses.replace(
+                metal,
+                trip_taxes_note="; ".join(p for p in (metal.trip_taxes_note, trip_note) if p),
+            )
 
     # FINDING C-2. THE PROGRAM-POLICY $0 IS A STATEMENT ABOUT THE CARRIER
     # SURCHARGE. IT SAYS NOTHING ABOUT TAXES.

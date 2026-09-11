@@ -85,6 +85,10 @@ class FBStub(Stub):
 
 
 def scored(rm, table, trips_mode="auto", stub=None):
+    # The in-process award cache is keyed by route, so a second run in one test
+    # would otherwise re-use the first run's search results.
+    SeatsClient.CACHE.clear()
+    SeatsClient.CACHE_META.clear()
     fixture = load_trip_fixture(TRIP_B)
     opts = LiveOptions(
         live=True, cache=None, trip_id=fixture.id, trips_mode=trips_mode, yq_table=table

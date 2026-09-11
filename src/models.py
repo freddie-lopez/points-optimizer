@@ -2623,6 +2623,9 @@ class MetalLookup:
     # Per-trip TotalTaxes as the response gave them. DISPLAY ONLY while the unit
     # is unverified.
     trip_taxes_note: str = ""
+    # (raw TotalTaxes, TaxesCurrency) for each matched itinerary, in order - the
+    # input to the per-trip taxes rule once the unit is verified as cents.
+    matched_trip_taxes: Tuple[Tuple[object, str], ...] = ()
     provenance: str = ""
     parser_verified: bool = False
     served_from_cache: bool = False
