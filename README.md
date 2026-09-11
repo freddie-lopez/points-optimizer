@@ -489,7 +489,7 @@ above stays the whole contract of `python -m src.main`.
 | Code | Meaning |
 |---|---|
 | 0 | captured and clean |
-| 1 | nothing captured: usage error, no key, declined at the prompt, HTTP or network error, key material detected, or refused input (an unreported source, a 0 tax figure) |
+| 1 | nothing captured: usage error, no key, declined at the prompt, HTTP or network error, key material detected, or refused input (an unreported source; a tax figure scoring does not believe - 0, negative, unconvertible, or below the UK APD owed; a search that says there is more) |
 | 5 | captured WITH drift: the file is written; do not flip the label |
 
 Both subcommands resolve the key the way `python -m src.main` does, print the

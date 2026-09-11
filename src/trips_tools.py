@@ -675,6 +675,33 @@ def run_yq_check(args, console: Console, read, today: date) -> int:
                 f"the row's {letter}TotalTaxes is {row.get(f'{letter}TotalTaxes')!r}: a "
                 f"0 means not reported and cannot settle anything. No trips call was made."
             )
+        # The check settles what the figure CONTAINS, so it compares only a
+        # figure scoring would use. The same two tests scoring applies: the
+        # parser's (negative, unconvertible, unreported) and the UK duty floor.
+        awards = _awards_of(row, letter)
+        award = awards[0] if awards else None
+        if award is None or not award.cash_component_known:
+            raise ToolRefusal(
+                f"the row's {letter}TotalTaxes is {row.get(f'{letter}TotalTaxes')!r}, "
+                f"which scoring does not believe as a tax figure (negative, "
+                f"unconvertible or unreported). A figure the tool does not trust "
+                f"cannot settle what it contains. No trips call was made."
+            )
+        from src.live_trip import taxes_below_owed_uk_duty
+        from src.models import Leg
+
+        origin, destination = _row_route(row)
+        leg = Leg(
+            id="yq-check", kind="flight", description="yq-check",
+            date=award.date or date.fromisoformat(args.date),
+            origin=origin, destination=destination, cabin=letter,
+        )
+        below = taxes_below_owed_uk_duty(leg, award)
+        if below:
+            raise ToolRefusal(
+                f"{below} A figure the tool does not trust cannot settle what it "
+                f"contains. No trips call was made."
+            )
 
     code, cap = run_capture(args, console, read, command="yq-check", before_trips=check_row)
     fields = _yq_block(cap, args, console)
