@@ -79,8 +79,9 @@ def find_same_metal_alternatives(
     additional Seats.aero calls - the 1,000/day rate limit must not be spent on
     counterfactuals.
     """
-    metal = (winning_candidate.operating_carrier or "").upper()
-    if not metal or not winning_candidate.has_known_metal:
+    # Known metal, or a KNOWN single-carrier itinerary lookup (by flight number).
+    metal = winning_candidate.metal_for_alternatives
+    if not metal:
         # No metal, no alternatives. Guessing which aeroplane it is in order to
         # suggest a cheaper program would be the same error the surcharge model
         # refuses to make.

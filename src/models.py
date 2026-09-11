@@ -715,6 +715,23 @@ class PointsCandidate:
             "captured",
         )
 
+    @property
+    def metal_for_alternatives(self) -> str:
+        """
+        The ONE carrier a same-metal alternative may be built on, or "".
+
+        Known metal as the scorer sees it, or a KNOWN single-carrier itinerary
+        lookup. An alternative is never scored, so metal that does not (yet) key
+        a surcharge may still point at another program - unpriced, and marked as
+        an assumed partnership. AMBIGUOUS, UNKNOWN and not-looked-up give "".
+        """
+        if self.has_known_metal:
+            return (self.operating_carrier or "").upper()
+        metal = self.metal
+        if metal is not None and metal.status is MetalStatus.KNOWN and len(metal.carriers) == 1:
+            return metal.carriers[0].upper()
+        return ""
+
 
 # ---------------------------------------------------------------------------
 # v3: live trip mode. The anti-collapse types.
