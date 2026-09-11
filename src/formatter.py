@@ -199,7 +199,7 @@ def print_alternatives(results: List[LegResult], console: Console = None) -> Non
                     "    [dim]Bookability inferred from alliance membership, not "
                     "from a verified partnership. Confirm before relying on it.[/dim]"
                 )
-            console.print(f"    [dim]{alt.note}[/dim]")
+            console.print(f"    [dim]{escape(alt.note)}[/dim]")
     if not any_shown:
         console.print(
             "\n[dim]No same-metal alternatives were found. An alternative requires a "

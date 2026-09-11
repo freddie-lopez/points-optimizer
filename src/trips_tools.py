@@ -519,6 +519,16 @@ def _yq_block(cap: "Capture", args, console: Console) -> Dict[str, str]:
         else "NOT KNOWN"
     )
     per_trip = lookup.trip_taxes_note if lookup is not None and lookup.trip_taxes_note else "none"
+    # Both lines come from the trips parse: they carry what every other line
+    # derived from it carries - what a flight number is, and the parser label.
+    label = seats_trips.trips_parser_label()
+    tail = f" {label}" if label else ""
+    if lookup is not None and lookup.flights:
+        flights += tail
+    carrier += (
+        " (the MARKETING carrier by flight number; Seats.aero does not report who "
+        "operates the flight)" if carrier != "NOT KNOWN" else ""
+    ) + tail
     fields = {
         "program": f"{program} (source {source})",
         "route": f"{args.origin.upper()}->{args.destination.upper()} on {args.date}, cabin {letter}",
