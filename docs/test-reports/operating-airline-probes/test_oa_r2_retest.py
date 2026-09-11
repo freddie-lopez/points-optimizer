@@ -292,22 +292,55 @@ def _replay(snap, capsys, monkeypatch):
 
 def test_two_lookups_that_returned_identical_bytes_still_replay(tmp_path, capsys, monkeypatch):
     """
-    NEW (from the L13 fix). The archive deduplicates snapshots by CONTENT, across
-    requests: when two different availability ids get byte-identical responses
-    (two awards on one route whose itinerary lists are both empty), the second
-    manifest row points at the FIRST id's file. The new id check then reads that
-    file's `_meta.availability_id`, finds the other id, and refuses the WHOLE
-    replay as "trips_snapshot_is_another_lookup" - for a corpus the tool wrote
-    itself from one honest live run.
+    R2-2 (Re-test 2). Two different availability ids that got byte-identical
+    responses (two awards on one route whose itinerary lists are both empty)
+    must replay honestly: each id's EMPTY_DATA line, exit not 1.
+
+    REVISED IN RE-TEST 3 (Tester ruling on the Coder's dispute). The round-2
+    version also asserted, as a precondition, that the second manifest row read
+    "(re-fetch, identical)" - i.e. that the archive SHARED one file across the
+    two ids. That pinned an implementation, not the behaviour: a shared file is
+    byte-for-byte the round-1 L13 attack (a row pointed at another id's file),
+    so no id rule can accept one and refuse the other. The precondition is
+    replaced by the behaviour itself: each id has a file of its own that names
+    it, the corpus replays, and (next test) a row pointed at another id's
+    identical file is still refused.
     """
     empty = tp.payload([])
     snap, live = _corpus(tmp_path, {B3_FB: empty, B4_VS: empty})
     assert live["B4"].best_points.metal.reason_code == "EMPTY_DATA"
-    rows = [l for l in (snap / "trips_endpoint" / "MANIFEST.md").read_text().splitlines() if "| trips:" in l]
-    assert len(rows) == 2 and "(re-fetch, identical)" in rows[1], "precondition: the archive deduplicated"
+    tdir = snap / "trips_endpoint"
+    rows = [l for l in (tdir / "MANIFEST.md").read_text().splitlines() if "| trips:" in l]
+    assert len(rows) == 2
+    owners = {}
+    for f in tdir.glob("*.json"):
+        meta = json.loads(f.read_text())["_meta"]
+        owners.setdefault(meta["availability_id"], []).append(f.name)
+    assert set(owners) == {B3_FB, B4_VS}, owners
     code, fl = _replay(snap, capsys, monkeypatch)
     assert code != 1, fl[:900]
     assert "EMPTY itinerary list for availability " + B4_VS in fl
+    assert "EMPTY itinerary list for availability " + B3_FB in fl
+
+
+def test_a_row_pointed_at_another_ids_identical_file_is_still_refused(tmp_path, capsys, monkeypatch):
+    """The other half of the ruling: identical bytes do not license a row to use another id's file."""
+    empty = tp.payload([])
+    snap, _ = _corpus(tmp_path, {B3_FB: empty, B4_VS: empty})
+    tdir = snap / "trips_endpoint"
+    b3_file = next(f.name for f in tdir.glob("*.json")
+                   if json.loads(f.read_text())["_meta"]["availability_id"] == B3_FB)
+    man = tdir / "MANIFEST.md"
+    lines = []
+    for l in man.read_text().splitlines():
+        if l.startswith("|") and "| trips:" + B4_VS in l:
+            cells = [c.strip() for c in l.strip().strip("|").split("|")]
+            cells[7] = b3_file
+            l = "| " + " | ".join(cells) + " |"
+        lines.append(l)
+    man.write_text("\n".join(lines) + "\n")
+    code, fl = _replay(snap, capsys, monkeypatch)
+    assert code == 1 and "trips_snapshot_is_another_lookup" in fl
 
 
 def test_one_id_recorded_for_two_legs_with_the_same_bytes_is_not_a_conflict(tmp_path):

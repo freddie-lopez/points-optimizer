@@ -706,3 +706,156 @@ Beyond the class checks above:
 - The new replay refusals let an old corpus, and a same-bytes duplicate, through.
 - A genuine capture flips despite harmless byte changes.
 - Every invariant in the table at the top of this section holds.
+
+---
+
+# Re-test 3 (fixes `b9d7db2..347e6d7`, fix report `918cf83`)
+
+Tester pass, 2026-09-11. As before, I changed no application code and no
+existing test, and every probe runs behind the socket canary. It recorded zero
+connection attempts in both modes.
+
+New probes are in `test_oa_r3_retest.py` (53 tests), plus a render helper,
+`_r3_cli_render.py`, which is not collected as a test. One round-2 probe was
+revised and a companion was added; see the ruling below.
+
+Recorded state: **0 red / 431 green**, the same under `python -O`.
+
+## Ruling on the disputed probe: the Coder is right, and I revised the probe
+
+`test_two_lookups_that_returned_identical_bytes_still_replay` asserted, as a
+precondition, that the second manifest row read "(re-fetch, identical)". In
+other words, it required the archive to **share one file across two ids**. That
+pinned an implementation, not the behaviour I meant to protect.
+
+A shared file is byte-for-byte the round-1 L13 attack (a row pointed at another
+id's file). The only difference is a typed note in an unhashed manifest cell. So
+no id rule can accept one and refuse the other, and R2-2 and L13 could not both
+pass under that precondition.
+
+The revised probe asserts the behaviour:
+- each id has a snapshot file of its own that names it;
+- the corpus replays (not exit 1);
+- both B3 and B4 print their own EMPTY_DATA line.
+
+A new companion, `test_a_row_pointed_at_another_ids_identical_file_is_still_refused`,
+asserts the other half: a B4 row pointed at B3's identical-bytes file is still
+refused (`trips_snapshot_is_another_lookup`, exit 1).
+
+The round-2 intent (R2-2: an honest corpus with identical bytes replays) is
+unchanged. Only the precondition went. Both tests are green.
+
+## Invariants, re-verified
+
+| Check | Result |
+|---|---|
+| `pytest -q` / `python -O -m pytest -q` | **1513 passed, 13 skipped** in both (the Coder's claim holds) |
+| Tree after the full suite | clean |
+| v5 / adversarial / known-failures red sets | 19 / 40 / 0, identical by id to the saved baselines |
+| Nothing moves with the header-only `yq_inclusion.csv` | holds (the 36 equivalence probes); exit code and headline are identical to `--trips off` |
+| Couple trip | WITHHELD, exit 3 |
+| `-O` structural guards | hold (all 3 import-time edits refuse) |
+| Keys / network | no key in any file or in stdout (env, `.env`, `--api-key`); 0 connection attempts |
+| Output with lookups off (D29) | still byte-identical to master `a17497d` |
+| Search path | pagination grid identical to master; old-corpus replay hash equals master's own `manifest_hash` |
+| **R2-7 escaping** | full `main()` output at 3000 columns, HEAD vs `9bf7c90`, same stub, 6 scenarios (KNOWN, 404, `--trips off`, `--trips all` with cap 1, a one-carrier row, AF alternative): **identical line for line** once the parser label and the R2-6 wording are removed. No text was lost or changed beyond the label (`test_the_full_cli_output_is_the_round_2_output_plus_the_label_and_nothing_else[...]`). No string in `src/` or in the trip fixtures contains lowercase-led `[...]` text, the only kind rich would treat as markup, so the new `escape()` calls cannot remove anything |
+
+## The Coder's two edits to `tests/test_trips_tools.py`
+
+- **The fill step (R2-1).** It now fills only the five field lines and asserts
+  each appears exactly once. That is stricter than before, and it no longer hides
+  a record that cannot load. Good.
+- **`test_a_capture_writes_the_envelope_and_the_raw_body_with_no_key`.** Its
+  stub's raw body (`{"data": "verbatim"}`) is deliberately not the page, so under
+  R2-4 the expected exit is now 5 plus the "CANNOT FLIP" line. The envelope, the
+  file-name and the no-key assertions are unchanged. A clean capture exiting 0 is
+  still pinned elsewhere (`test_trips_flip_evidence.py::test_a_genuine_capture_still_flips_both`
+  and my `test_an_honest_capture_flips_...`). This follows the intended change
+  and weakens nothing.
+
+## New behaviour, attacked (all held up)
+
+- **One trips snapshot file per id (R2-2).**
+  - A same-id re-fetch with the same bytes still adds no file (3 runs give 1 file
+    and 3 rows).
+  - Search snapshots are still de-duplicated across requests.
+  - Disk growth is one small file per distinct id; nothing else changes.
+  - A corpus written by the *round-2* code, with a cross-id shared file, is
+    refused by name (`trips_snapshot_is_another_lookup`; the companion probe is
+    exactly that shape). No such corpus exists: the branch has never run live
+    outside this sandbox, and Tsuki's corpus has no `trips_endpoint/`.
+- **A refused capture deletes its own cache entry (R2-3).**
+  - A capture served a fresh, complete, two-page entry a trip run wrote reads it
+    with 0 calls and leaves it in place.
+  - A refused capture deletes only its own key; every other leg's entry survives.
+  - A complete one-page capture search stays cached.
+
+  Two cases I could not turn into a defect:
+  - An entry *expired* under the 6-hour default is overwritten by the capture's
+    fetch and then removed. A trip run with a longer `--cache-ttl` would have
+    reused it, so it re-fetches (costs a call, never wrong data).
+  - A concurrent run writing the same key between the capture's write and its
+    unlink loses that entry to a re-fetch in the same way.
+- **capture ends with the label check (R2-4) and the R2-5 checks: false refusals.**
+  An honest capture flips (exit 0, CAPTURED CLEAN) whatever form its body arrives
+  in:
+  - compact;
+  - CRLF and pretty-printed;
+  - with a trailing newline;
+  - `\u`-escaped Unicode (a "Zürich" aircraft name);
+  - exponent floats (`5e3`);
+  - server-sorted keys.
+
+  The canonical comparison parses both sides the same way, so int and float
+  formatting cannot diverge on a real capture. Key material is refused before
+  anything is written, never redacted, so redaction cannot change the bytes.
+  `--cabin W` on a row where only J matches still flips (the check accepts a
+  match in any cabin of the row). A capture outside a `real/` directory says so
+  (exit 5).
+- **R2-6, whole class.** Every NOT_LOOKED_UP code (all 10) on a one-carrier row
+  says "No lookup was made on this run". Every UNKNOWN code (all 19) keeps "This
+  lookup established nothing further".
+- **R2-7, whole class.** Four scenarios, rendered unwrapped:
+  - `excludes_yq` with KNOWN VS (case C);
+  - `excludes_yq` with AMBIGUOUS VS|DL;
+  - the AF alternative;
+  - a paid lookup on a non-chosen award.
+
+  No line naming looked-up metal lacks the label. In case C the `Surcharge:`
+  rule line carries it. (A surcharge rule's own citation from `surcharges.csv`,
+  "CONFIRMED BY SOURCE: ... Upper Class on VS metal", describes the table row
+  and is correctly left alone.)
+
+## Observations (not findings)
+
+- **An honest capture whose recorded row has no matching itinerary cannot flip
+  the label** (R2-5's `_row_matches`). For example, the row's price is not among
+  the itineraries because `min_cabin_pct=100` filtered the one behind it, which
+  is plan risk 3. The capture exits 5 and names the reason
+  (`test_an_honest_capture_whose_row_price_has_no_itinerary_is_refused_with_its_reason`).
+  This is stricter than D14 and may cost Tsuki an extra capture, but flipping on
+  such a capture would verify a parser whose matcher never matches.
+- **The flip check now runs the search parser** (`parse_availability_row`) on the
+  recorded row. A later, unrelated search-parser change could make a committed
+  capture stop verifying. That would be loud (the label test goes red), never
+  silent.
+
+## New findings
+
+**None.** No Critical, High, Medium or Low.
+
+## Every earlier finding: closure
+
+- **Round 1: all 22 closed.** All 296 round-1 probes are green, plus the round-2
+  class checks.
+- **Round 2: all 7 closed.**
+
+| # | Finding | Closed? | Evidence |
+|---|---|---|---|
+| R2-1 | A filled record cannot load | **Closed** | `test_the_whole_verdict_flow_a_record_the_tool_wrote_filled_by_hand_loads` (fields only, prose untouched) is green |
+| R2-2 | Identical bytes make a corpus unreplayable | **Closed** | the revised probe and its companion are green |
+| R2-3 | Truncated capture search left in the cache | **Closed** | round-2 probe green, plus 3 new cache probes |
+| R2-4 | capture's "clean" disagrees with the flip check | **Closed** | round-2 probe green, plus honest-flip and outside-`real/` probes |
+| R2-5 | Synthetic page re-wrapped flips | **Closed for the cheap paths**; deliberate hand-built forgery remains, as stated in the README and fixtures READMEs | round-2 probe green; 8 honest-capture probes show no false refusal |
+| R2-6 | "This lookup" where none was made | **Closed** | all 10 NOT_LOOKED_UP codes plus NOT_RECORDED |
+| R2-7 | Metal lines without the label | **Closed** | 4 scenarios; escaping changed nothing but the label |
