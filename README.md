@@ -419,13 +419,17 @@ committed under `tests/fixtures/seats_aero/trips_endpoint/real/`, and
 `TRIPS_SCHEMA_VERIFIED_BY` in `src/seats_trips.py` is set to its filename.
 `tests/test_trips_verification_label.py` then checks the file is a real capture
 (never one under `synthetic/`), its content hash matches, its `.raw.txt` sibling
-exists, and it parses with at least one itinerary, none unreadable and no
-required-field drift.
+is non-empty and parses to the same page the capture holds, it records the
+availability row of its own id, its route came from that row (a
+`capture --availability-id` with no local row infers the route from the
+itineraries and **cannot** flip the label), and it parses with at least one
+itinerary, none unreadable and no required-field drift.
 
 A trip's own `TotalTaxes` is shown **raw with both unit readings** and used in no
 figure while `TRIPS_TOTALTAXES_UNIT` is `unverified`. It flips to `cents` only on
-a real capture whose recorded availability row shows a matched itinerary with
-the same `TotalTaxes` as the row's `{X}TotalTaxes`. After that, an itinerary
+a real capture that passes every check above and whose recorded availability
+row shows a matched itinerary with the same `TotalTaxes` as the row's
+`{X}TotalTaxes`. After that, an itinerary
 whose own figure is unknown, or above the row's by more than max($1, 1%), makes
 the award's taxes UNKNOWN; a lower one is disclosed only.
 

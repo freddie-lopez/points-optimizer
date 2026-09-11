@@ -955,8 +955,10 @@ def schema_verification_problems(name: str, real_dir) -> List[str]:
 
     It must be a plain filename in real/ (never synthetic/), written by the
     capture tool, not synthetic, key-redacted, with a matching content hash and a
-    .raw.txt sibling, parsing to at least one itinerary with none unreadable and
-    no required-field drift.
+    .raw.txt sibling that parses to the same page, recorded against the
+    availability row of its own id with the route taken from that row (never
+    inferred from the itineraries), parsing to at least one itinerary with none
+    unreadable and no required-field drift.
     """
     from pathlib import Path
 
@@ -982,8 +984,28 @@ def schema_verification_problems(name: str, real_dir) -> List[str]:
         problems.append(f"{name}: key_redacted is not True")
     if meta.get("content_hash") != content_hash(envelope["pages"]):
         problems.append(f"{name}: content_hash does not match the page it holds")
-    if not path.with_suffix(".raw.txt").is_file():
-        problems.append(f"{name}: no .raw.txt sibling with the verbatim body")
+    problems.extend(_raw_body_problems(name, path, envelope["pages"][0]))
+    # A capture the label may rest on is one the MATCHER ran against: the
+    # availability row it was looked up for is recorded, it is the row of this
+    # id, and the route came from that row. A capture with the route inferred
+    # from its own itineraries checked the parser against itself.
+    row = meta.get("availability_row")
+    if not isinstance(row, dict):
+        problems.append(
+            f"{name}: no availability row is recorded, so no award was matched "
+            f"against this response"
+        )
+    elif str(row.get("ID") or "") != str(meta.get("availability_id") or ""):
+        problems.append(
+            f"{name}: the recorded availability row is {row.get('ID')!r}, not the "
+            f"captured id {meta.get('availability_id')!r}"
+        )
+    if meta.get("route_inferred_from_itineraries") is not False:
+        problems.append(
+            f"{name}: route_inferred_from_itineraries is "
+            f"{meta.get('route_inferred_from_itineraries')!r}, not False; a route read "
+            f"from the response is not evidence about the response"
+        )
     parsed, _ = capture_parse(path)
     if parsed is None:
         return problems + [f"{name}: cannot be parsed"]
@@ -998,11 +1020,34 @@ def schema_verification_problems(name: str, real_dir) -> List[str]:
     return problems
 
 
+def _raw_body_problems(name: str, path, page: Any) -> List[str]:
+    """The .raw.txt sibling must be the verbatim body OF THIS PAGE, not merely exist."""
+    import json
+
+    raw_path = path.with_suffix(".raw.txt")
+    if not raw_path.is_file():
+        return [f"{name}: no .raw.txt sibling with the verbatim body"]
+    try:
+        raw = raw_path.read_text()
+    except OSError as e:
+        return [f"{name}: its .raw.txt cannot be read ({e})"]
+    if not raw.strip():
+        return [f"{name}: its .raw.txt is empty, so nothing vouches for the page"]
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        return [f"{name}: its .raw.txt is not JSON, so it is not the body of this page"]
+    if body != page:
+        return [f"{name}: its .raw.txt is a different body from the page it holds"]
+    return []
+
+
 def totaltaxes_unit_problems(unit: str, real_dir) -> List[str]:
     """
     Why `unit` may not be TRIPS_TOTALTAXES_UNIT. [] means it may.
 
-    "unverified" always may. "cents" needs a real capture whose recorded
+    "unverified" always may. "cents" needs a real capture that passes
+    `schema_verification_problems` and whose recorded
     availability row shows an itinerary at the row's source, cabin and price
     with TotalTaxes EQUAL to the row's {X}TotalTaxes (which is cents). "units"
     has no evidence path this tool can check, so it is refused.
@@ -1016,6 +1061,10 @@ def totaltaxes_unit_problems(unit: str, real_dir) -> List[str]:
     if unit == "units":
         return ["no capture can show whole units against a cents row figure; refused"]
     for path in sorted(Path(real_dir).glob("*.json")):
+        # Only a capture that could flip the parser label may flip the unit: a
+        # hand-written file in real/ is not evidence of anything.
+        if schema_verification_problems(path.name, real_dir):
+            continue
         parsed, envelope = capture_parse(path)
         if parsed is None:
             continue
