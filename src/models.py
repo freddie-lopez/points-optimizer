@@ -2892,11 +2892,17 @@ class MetalLookup:
         if self.status is not MetalStatus.AMBIGUOUS and len(self.possible_carriers) == 1:
             # One carrier on the row's own list. "Nothing is known" would
             # contradict a scorer that already treats a single-carrier row as
-            # known metal; what is true is that THIS lookup added nothing.
+            # known metal. What is true depends on whether a lookup happened:
+            # an UNKNOWN lookup added nothing; NOT LOOKED UP and NOT RECORDED
+            # made (or replayed) no lookup at all (Re-test 2, R2-6).
+            opening = (
+                "This lookup established nothing further"
+                if self.status is MetalStatus.UNKNOWN
+                else "No lookup was made on this run"
+            )
             return (
-                f" This lookup established nothing further; the award's own "
-                f"carrier list names one carrier, so the possible carriers are "
-                f"{listed}."
+                f" {opening}; the award's own carrier list names one carrier, so "
+                f"the possible carriers are {listed}."
             )
         if self.status is MetalStatus.AMBIGUOUS:
             return (

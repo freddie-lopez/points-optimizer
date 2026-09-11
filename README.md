@@ -390,9 +390,10 @@ a finding about whether the award has flights.
 A lookup made (or read from a recording) for an award that is NOT the chosen
 one is printed under its leg as "other live award ...", so every call the run
 spent shows up somewhere. When the row's own list names ONE carrier, a non-KNOWN
-line says "This lookup established nothing further; the award's own carrier
-list names one carrier" instead of "Nothing is known", and the per-leg
-`metal:` line the scorer uses is kept.
+line says "the award's own carrier list names one carrier" instead of "Nothing
+is known" - opening "This lookup established nothing further" on an `UNKNOWN`
+lookup and "No lookup was made on this run" on `NOT LOOKED UP` and
+`NOT RECORDED` - and the per-leg `metal:` line the scorer uses is kept.
 
 `METAL_LOOKUP_MISSING` and `METAL_UNKNOWN` are counted in the trip block for the
 chosen award on each leg, and the block names the legs ("operating airline NOT
