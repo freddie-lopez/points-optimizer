@@ -339,6 +339,11 @@ def test_no_body_log_or_transcript_ever_carries_the_key_or_its_mask(tmp_path, mo
                          {"mode": "offline", "options": {}},
                          {"mode": "live", "options": {"trips": "all"}, "confirm_id": "x"}):
                 bodies.append(c.post("/api/trips/trip_b_europe/run", body))
+            search = {"origin": "SFO", "destination": "MAD", "date": "2099-01-15"}
+            spf = c.post("/api/search/preflight", search)
+            bodies.append(spf)
+            bodies.append(c.post("/api/search/run", dict(search, confirm_id=spf.json()["confirm_id"])))
+            bodies.append(c.post("/api/search/run", dict(search, confirm_id="forged")))
             bodies.append(c.post("/api/wallet", {"balances": {"XX": "1"}, "cards": []}))
             bodies.append(c.get("/api/state"))
             bodies.append(c.get("/api/trips"))

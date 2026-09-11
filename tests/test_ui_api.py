@@ -23,7 +23,12 @@ def pinned(monkeypatch):
     launched app has."""
     from src import response_cache, seats_client, seats_trips
 
+    from src import trip_builder
+
     seats_client.SeatsClient.reset_call_budget()
+    # The builder refuses past dates against today; the goldens' dates stay
+    # in the future on any machine this way.
+    monkeypatch.setattr(trip_builder, "date", g._PinnedDate)
 
     monkeypatch.setattr(config, "date", g._PinnedDate)
     monkeypatch.setattr(response_cache, "_utcnow", lambda: g.PINNED_NOW)
@@ -336,3 +341,136 @@ def test_live_with_no_key_is_blocked_before_any_confirm(tmp_path, pinned):
         assert pf["confirm_id"] is None
         assert pf["blocked"]["kind"] == "key"
         assert pf["blocked"]["message"].startswith("No Seats.aero API key found.")
+
+
+
+# ------------------------------------------------------------------- search
+
+SEARCH = {"origin": "SFO", "destination": "MAD", "date": "2027-01-15", "date_to": ""}
+
+
+def _search(c, body=SEARCH):
+    pf = c.post("/api/search/preflight", body)
+    assert pf.status == 200, pf.text
+    pf = pf.json()
+    return pf, c.post("/api/search/run", dict(body, confirm_id=pf["confirm_id"])).json()
+
+
+@pytest.fixture
+def search_client(tmp_path, pinned, monkeypatch):
+    monkeypatch.setenv(config.KEY_ENV_VAR, g.FAKE_KEY)
+    with running_server(wallet_path=write_wallet(tmp_path / "wallet.json")) as c:
+        yield c
+
+
+def test_search_preflight_states_the_ceiling_and_the_window(search_client):
+    with patch("src.seats_client.requests.get", side_effect=g.Stub()) as get:
+        pf = search_client.post("/api/search/preflight", SEARCH).json()
+    assert get.call_count == 0
+    assert pf["max_calls"] == 25
+    assert pf["window"] == {"from": "2027-01-15", "to": "2027-02-14"}
+    assert pf["argv_display"].startswith(
+        ".venv/bin/python -m src.main --origin SFO --destination MAD --date 2027-01-15 "
+        "--max-results 200 --wallet ")
+
+
+def test_search_without_a_confirm_spends_nothing(search_client):
+    stub = g.Stub()
+    with patch("src.seats_client.requests.get", side_effect=stub):
+        r = search_client.post("/api/search/run", SEARCH)
+    assert r.status == 409 and stub.calls == []
+
+
+@pytest.mark.parametrize("body,field,start", [
+    (dict(SEARCH, origin="ZZZ"), "origin", "From: 'ZZZ' is not an airport this tool knows."),
+    (dict(SEARCH, destination="MA"), "destination", "To: 'MA' is not a 3-letter IATA airport code"),
+    (dict(SEARCH, date="2027-02-30"), "date", "Date: '2027-02-30' is not an ISO date"),
+    (dict(SEARCH, date="2020-01-01"), "date", "Date: 2020-01-01 is in the past."),
+    (dict(SEARCH, date_to="2027-01-01"), "date_to", "To date: 2027-01-01 is before the date"),
+])
+def test_a_typo_is_refused_in_the_builders_words_before_any_call(search_client, body, field, start):
+    stub = g.Stub()
+    with patch("src.seats_client.requests.get", side_effect=stub):
+        r = search_client.post("/api/search/preflight", body)
+        r2 = search_client.post("/api/search/run", dict(body, confirm_id="x"))
+    assert r.status == 400 and r2.status == 400
+    errs = {e["field"]: e["message"] for e in r.json()["errors"]}
+    assert errs[field].startswith(start), errs
+    if field == "origin":
+        assert "No correction is being suggested" in errs[field]
+    assert stub.calls == []
+
+
+def test_g9_search_row_is_the_real_aeroplan_capture(search_client):
+    stub = g.Stub()
+    with patch("src.seats_client.requests.get", side_effect=stub):
+        _, run = _search(search_client)
+    assert run["state"] == "ok" and run["exit_code"] == 0
+    assert run["calls"]["this_run"]["search"] == len(stub.calls) == 1
+    (row,) = run["rows"]
+    assert (row["date"], row["program"], row["source_code"]) == ("2027-01-15", "Air Canada Aeroplan", "aeroplan")
+    y = row["cabins"]["Y"]
+    assert (y["cost"], y["seats"], y["taxes"]["text"], y["fundable"], y["rank"]) == (50000, 9, "$32.36", True, 1)
+    assert y["taxes"]["source_text"] == "CAD 44.60" and y["taxes"]["confirm"] is True
+    assert row["cabins"]["W"] is None and row["cabins"]["J"] is None
+    assert run["trips_footer"].startswith("operating airline: NOT LOOKED UP")
+    assert "Seats.aero key: (masked key not sent to the browser)" in run["transcript"]
+
+
+def test_g10_an_api_error_is_not_a_finding(search_client):
+    with patch("src.seats_client.requests.get", side_effect=g.Refused()):
+        _, run = _search(search_client)
+    assert run["state"] == "api_error" and run["rows"] == []
+    assert run["api_error"].startswith("Seats.aero API error:")
+
+
+def test_g11_none_fundable_names_every_award_and_why(search_client):
+    r = search_client.post("/api/wallet", {"balances": {"MR": "100000"}, "cards": []})
+    assert r.status == 200 and r.json()["source"] == "entered in this session (not saved)"
+    with patch("src.seats_client.requests.get", side_effect=g.Stub()):
+        pf, run = _search(search_client)
+    assert "--balance MR=100000" in pf["argv_display"]
+    assert run["state"] == "none_fundable"
+    assert run["header_line"].startswith("Seats.aero returned 1 award(s) for this route")
+    y = run["rows"][0]["cabins"]["Y"]
+    assert y["fundable"] is False and y["rank"] is None and y["total"] is None
+    assert y["why_not"] in " ".join(run["transcript"].split())
+    assert y["why_not"].startswith("a transfer partner, but no fundable path")
+
+
+def test_every_search_cells_taxes_come_from_search_award_cash(search_client, monkeypatch):
+    """Including the unknown case: a KrisFlyer J row whose taxes Seats.aero does
+    not report. The cell carries no number and the rule's own note."""
+    import copy
+
+    from src import optimizer
+
+    seen = []
+    real = optimizer.search_award_cash
+
+    def spy(trip, award):
+        seen.append(award.program)
+        return real(trip, award)
+
+    monkeypatch.setattr(optimizer, "search_award_cash", spy)
+
+    def rows(route, params):
+        a = copy.deepcopy(g.REAL["data"][0])
+        a["Date"], a["ParsedDate"] = "2027-01-15", "2027-01-15T00:00:00Z"
+        b = copy.deepcopy(g.REAL["data"][0])
+        b.update(ID="krisrow", Date="2027-01-16", ParsedDate="2027-01-16T00:00:00Z",
+                 YAvailable=False, JAvailable=True, JMileageCost="88000", JTotalTaxes=0,
+                 JRemainingSeats=2, JAirlines="SQ")
+        b["Route"] = dict(b["Route"], Source="singapore")
+        return {"data": [a, b]}
+
+    with patch("src.seats_client.requests.get", side_effect=g.Stub(search_override=rows)):
+        _, run = _search(search_client)
+    assert "Singapore Airlines KrisFlyer" in seen and "Air Canada Aeroplan" in seen
+    kris = next(r for r in run["rows"] if r["source_code"] == "singapore")["cabins"]["J"]
+    assert kris["taxes"]["known"] is False
+    assert kris["taxes"]["usd"] is None and kris["taxes"]["text"] is None
+    assert "singapore" in kris["taxes"]["note"].lower() or "not" in kris["taxes"]["note"].lower()
+    if kris["fundable"]:
+        assert kris["total_is_floor"] is True and kris["total_text"].startswith(">= ")
+    assert run["unknown_cash_line"] is None or "UNKNOWN (NOT $0)" in run["unknown_cash_line"]

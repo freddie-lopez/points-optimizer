@@ -1991,14 +1991,22 @@ def print_strategies(
     console.print(table)
     unknown = [s for s in strategies if not s.cash_cost_known]
     if unknown:
-        console.print(
-            f"[red]{len(unknown)} strateg{'y' if len(unknown) == 1 else 'ies'} "
-            f"above carr{'ies' if len(unknown) == 1 else 'y'} cash that is UNKNOWN "
-            f"(NOT $0) and cannot be ranked on it: shown after every strategy whose "
-            f"cash is known, with its total as a FLOOR (>=).[/red]"
-        )
+        console.print(f"[red]{unknown_cash_line(strategies)}[/red]")
         for s in unknown:
             console.print(f"  [dim]{s.award.program}: {s.cash_cost_note}[/dim]")
+
+
+def unknown_cash_line(strategies: List[Strategy]) -> str:
+    """The sentence under the strategies table when some cash is UNKNOWN, or ""."""
+    unknown = [s for s in strategies if not s.cash_cost_known]
+    if not unknown:
+        return ""
+    return (
+        f"{len(unknown)} strateg{'y' if len(unknown) == 1 else 'ies'} "
+        f"above carr{'ies' if len(unknown) == 1 else 'y'} cash that is UNKNOWN "
+        f"(NOT $0) and cannot be ranked on it: shown after every strategy whose "
+        f"cash is known, with its total as a FLOOR (>=)."
+    )
 
 
 def print_summary(

@@ -568,3 +568,156 @@ def leg_json(r) -> Dict[str, Any]:
         "data_flags": list(leg.data_flags),
         "cli_lines": cli_lines,
     }
+
+
+# ---------------------------------------------------------------------------
+# A single-route search
+# ---------------------------------------------------------------------------
+
+
+def _fx_summary() -> str:
+    from src import config
+
+    rates = [c for c in config.FX_RATES_TO_USD if c != "USD"]
+    confirm = [c for c in rates if config.needs_confirmation(c) or config.is_placeholder_rate(c)]
+    tail = (
+        "every one CONFIRM BEFORE TRUSTING" if rates and len(confirm) == len(rates)
+        else f"{len(confirm)} of them CONFIRM BEFORE TRUSTING"
+    )
+    return f"FX rates used (table as of {config.FX_RATES_AS_OF}) — {len(rates)} rates, {tail}"
+
+
+def search_run(out: Dict[str, Any], req: Dict[str, Any], calls: Dict[str, int]) -> Dict[str, Any]:
+    from src import config
+    from src.formatter import _money, unknown_cash_line
+    from src.main import (
+        SINGLE_ROUTE_TRIPS_FOOTER,
+        RunRefusal,
+        SearchRun,
+        none_fundable_header,
+        unfundable_reason,
+    )
+    from src.optimizer import search_award_cash
+    from src.seats_client import PARSER_VERSION
+
+    run = out["run"]
+    code = out["code"]
+    payload: Dict[str, Any] = {
+        "kind": "search",
+        "mode": "live",
+        "started_at": out["started_at"],
+        "duration_s": out["duration_s"],
+        "exit_code": code,
+        "exit_label": EXIT_LABELS.get(code, f"EXIT {code}"),
+        "argv_display": out["argv_display"],
+        "refusal": None,
+        "transcript": out["transcript"],
+        "route": {"origin": req["origin"], "destination": req["destination"],
+                  "from": req["from"], "to": req["to"]},
+        "passengers": 1,
+        "calls": {"this_run": {"search": int(out["calls_spent"]), "trips": 0},
+                  "since_launch": calls["since_launch"], "cap": calls["cap"]},
+        "rows": [],
+    }
+    if isinstance(run, RunRefusal) or not isinstance(run, SearchRun):
+        payload["refusal"] = {
+            "kind": getattr(run, "kind", "unknown"),
+            "message": getattr(run, "message", out["transcript"].strip()),
+        }
+        return payload
+
+    strategies = run.strategies
+    rank_of = {}
+    for i, st in enumerate(strategies, 1):
+        rank_of.setdefault(id(st.award), (i, st))
+    if strategies:
+        state = "ok"
+    elif run.last_error:
+        state = "api_error"
+    elif not run.awards:
+        state = "no_awards"
+    else:
+        state = "none_fundable"
+
+    rows: Dict[tuple, Dict[str, Any]] = {}
+    for award in run.awards:
+        key = (str(award.date), award.program_source_code or award.program or "")
+        row = rows.setdefault(key, {
+            "date": str(award.date),
+            "program": award.program or None,
+            "source_code": award.program_source_code or None,
+            "cabins": {"Y": None, "W": None, "J": None, "F": None},
+        })
+        cabin = award.award_type if award.award_type in row["cabins"] else None
+        if cabin is None:
+            continue
+        known, cash, note, apd_floor = search_award_cash(run.trip, award)
+        ranked = rank_of.get(id(award))
+        strategy = ranked[1] if ranked else None
+        cell = {
+            "cost": award.cost,
+            "seats": award.seats_available,
+            "carriers": list(award.candidate_carriers),
+            "direct": award.direct,
+            "taxes": {
+                "known": bool(known),
+                "usd": num(cash) if known else None,
+                "text": _money(cash) if known else None,
+                "amount": num(award.cash_component_source_amount),
+                "currency": award.cash_component_currency or None,
+                "source_text": (
+                    f"{award.cash_component_currency} {award.cash_component_source_amount:,.2f}"
+                    if award.cash_component_source_amount is not None
+                    and (award.cash_component_currency or "USD") != "USD" else None
+                ),
+                "confirm": bool(known) and config.needs_confirmation(
+                    award.cash_component_currency or "USD"),
+                "note": note or None,
+                "apd_floor": num(apd_floor) if apd_floor else None,
+            },
+            "fundable": strategy is not None,
+            "rank": ranked[0] if ranked else None,
+            "path_summary": strategy.transfer_path.summary() if strategy else None,
+            "stranded": (strategy.transfer_path.stranded_points or None) if strategy else None,
+            "total": num(strategy.total_value) if strategy else None,
+            "total_text": (
+                (_money(strategy.total_value) if strategy.cash_cost_known
+                 else f">= {_money(strategy.total_value)}") if strategy else None
+            ),
+            "total_is_floor": bool(strategy and not strategy.cash_cost_known),
+            "why_not": None if strategy else unfundable_reason(award),
+            "indirect_path": getattr(award, "indirect_ur_path", "") or None,
+            "source_note": award.source_note or None,
+            "parser_version": PARSER_VERSION,
+        }
+        prev = row["cabins"][cabin]
+        # One row can in principle repeat a cabin; the cheaper award shows and
+        # the count of the others is said, never silently dropped.
+        if prev is None or award.cost < prev["cost"]:
+            if prev is not None:
+                cell["others_hidden"] = prev.get("others_hidden", 0) + 1
+            row["cabins"][cabin] = cell
+        else:
+            prev["others_hidden"] = prev.get("others_hidden", 0) + 1
+
+    note = run.pagination_note or ""
+    payload.update({
+        "state": state,
+        "api_error": run.last_error if state == "api_error" else None,
+        "coverage_note": note or None,
+        "coverage_incomplete": bool(getattr(run.client, "last_incomplete", False))
+        or "INCOMPLETE" in note,
+        "trips_footer": SINGLE_ROUTE_TRIPS_FOOTER,
+        "header_line": none_fundable_header(len(run.awards)) if state == "none_fundable" else None,
+        "unknown_cash_line": unknown_cash_line(strategies) or None,
+        "fundable_count": len(strategies),
+        "rows": sorted(rows.values(), key=lambda r: (r["date"], r["program"] or "")),
+        "context": {
+            "key_source": run.key_source,
+            "wallet_lines": run.wallet.describe(),
+            "wallet_warnings": list(run.wallet_warnings),
+            "fx_lines": list(config.fx_report_lines()),
+            "fx_summary": _fx_summary(),
+        },
+    })
+    return payload

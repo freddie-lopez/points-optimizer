@@ -529,6 +529,83 @@ class Engine:
             out["confirm_id"] = self.issue_confirm(self._trip_digest(trip_id, path, opts))
         return out
 
+    # ---------------------------------------------------------------- search
+
+    def _search_request(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """D17: codes and dates are checked with the trip builder's own
+        validators BEFORE anything is spent - the CLI search would spend a call
+        on a typo. Every refusal is the builder's wording."""
+        from datetime import timedelta
+
+        from src.trip_builder import TripBuilderError, validate_date, validate_iata
+
+        body = body or {}
+        errors: List[Dict[str, Any]] = []
+        out: Dict[str, Any] = {}
+        for field, label, key in (("origin", "From", "origin"),
+                                  ("destination", "To", "destination")):
+            try:
+                out[key] = validate_iata(str(body.get(field) or ""), label)
+            except TripBuilderError as e:
+                errors.append({"leg": None, "field": field, "message": str(e)})
+        d_from = d_to = None
+        try:
+            d_from = validate_date(str(body.get("date") or ""), "Date")
+        except TripBuilderError as e:
+            errors.append({"leg": None, "field": "date", "message": str(e)})
+        raw_to = str(body.get("date_to") or "").strip()
+        if raw_to:
+            try:
+                d_to = validate_date(raw_to, "To date")
+            except TripBuilderError as e:
+                errors.append({"leg": None, "field": "date_to", "message": str(e)})
+        if d_from and d_to and d_to < d_from:
+            errors.append({"leg": None, "field": "date_to",
+                           "message": f"To date: {d_to} is before the date {d_from}. "
+                                      f"Refused rather than swapped."})
+        if out.get("origin") and out.get("origin") == out.get("destination"):
+            errors.append({"leg": None, "field": "destination",
+                           "message": f"To: origin and destination are both {out['origin']}."})
+        if errors:
+            raise ApiError(400, "invalid", "The search was not sent: fix the fields below.",
+                           errors=errors)
+        out["from"] = str(d_from)
+        out["to"] = str(d_to) if d_to else str(d_from + timedelta(days=30))
+        out["date_arg"] = f"{d_from}:{d_to}" if d_to else str(d_from)
+        return out
+
+    def search_argv(self, req: Dict[str, Any]) -> List[str]:
+        return (["--origin", req["origin"], "--destination", req["destination"],
+                 "--date", req["date_arg"], "--max-results", str(SEARCH_MAX_RESULTS)]
+                + self.wallet_argv())
+
+    def _search_digest(self, req: Dict[str, Any]) -> str:
+        return canonical_digest({"kind": "search", "request": req,
+                                 "wallet": self.wallet_argv(),
+                                 "wallet_file_sha256": self._wallet_file_digest()})
+
+    def search_preflight(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        req = self._search_request(body)
+        blocked = self._blocked("search")
+        return {
+            "max_calls": PAGES_PER_SEARCH,
+            "window": {"from": req["from"], "to": req["to"]},
+            "argv_display": shlex.join(PROG + self.search_argv(req)),
+            "calls": self.calls_state(),
+            "blocked": blocked,
+            "confirm_id": None if blocked else self.issue_confirm(self._search_digest(req)),
+        }
+
+    def search_run(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        from src.ui import serialize
+
+        req = self._search_request(body)
+        self.redeem_confirm((body or {}).get("confirm_id"), self._search_digest(req))
+        with self.run_slot():
+            out = self.invoke(self.search_argv(req))
+            payload = serialize.search_run(out, req, self.calls_state())
+        return self.store(payload)
+
     def _blocked(self, mode: str) -> Optional[Dict[str, str]]:
         """Why this run would be refused before it starts, in the CLI's words.
         The run itself still goes through dispatch, which refuses it the same way."""
