@@ -851,8 +851,15 @@ def print_trip_totals(
     table.add_column("Value", justify="right")
 
     table.add_row("Pay cash for everything", _money(totals["all_cash_usd"]))
-    table.add_row("Optimizer's recommendation", _money(totals["optimized_usd"]))
-    table.add_row("Saving", _money(totals["savings_usd"]))
+    if totals.get("margin_withheld_reason"):
+        # A trip withheld because legs were NOT PRICED has no recommendation
+        # total and no saving: printing them would report "could not price" as a
+        # dollar figure one row above the WITHHELD percentage.
+        table.add_row("Optimizer's recommendation", "[bold red]WITHHELD[/bold red]")
+        table.add_row("Saving", "[bold red]WITHHELD[/bold red]")
+    else:
+        table.add_row("Optimizer's recommendation", _money(totals["optimized_usd"]))
+        table.add_row("Saving", _money(totals["savings_usd"]))
 
     # THE HEADLINE. When any surcharge on the trip is a range or an unknown, the
     # honest headline is an INTERVAL. Printing the point estimate alone is what

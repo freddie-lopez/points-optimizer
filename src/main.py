@@ -817,11 +817,20 @@ def run_fixture(args, console: Console) -> int:
     # finding of zero value - withheld instead, exit 3, and the reason says why.
     party = totals.get("legs_party_pricing_unverified_ids") or []
     if party:
-        withheld = True
-        totals["margin_withheld_reason"] = (
+        reasons = []
+        if withheld:
+            # Both reasons are named: the provenance one does not go away because
+            # a second reason arrived.
+            reasons.append(
+                f"--require-all-live and the margin's provenance is "
+                f"'{totals.get('margin_provenance')}', not live"
+            )
+        reasons.append(
             f"flight leg(s) {', '.join(party)} are for 2+ travellers and were not "
             f"priced (award prices are per seat)"
         )
+        withheld = True
+        totals["margin_withheld_reason"] = "; AND ".join(reasons)
     totals["margin_withheld"] = withheld
 
     # THE HASH RIDES WITH THE PERCENTAGE. `print_trip_totals` puts it in the

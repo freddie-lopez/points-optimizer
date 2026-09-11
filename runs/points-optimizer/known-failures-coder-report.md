@@ -151,3 +151,14 @@ fundable regardless of party size; both counters are populated.
 
 Final state: sandbox 935 passed / 13 skipped (same under -O); v5-probes and
 adversarial-probes red sets identical to master.
+
+## Re-test 3 round
+
+R3-1 a withheld-for-unpriced trip prints WITHHELD for "Optimizer's
+recommendation" and "Saving" too; R3-2 a trip withheld for two reasons names
+both; R3-3 a party leg with no REACHABLE unpriced partner is not treated as a
+party leg. Regression tests fail on `a0b30b3`. The Tester's three R3 probes
+(red on `a0b30b3`) are green: Tester probes 140/140.
+
+Final state: sandbox 937 passed / 13 skipped (same under -O); v5-probes and
+adversarial-probes red sets identical to master.

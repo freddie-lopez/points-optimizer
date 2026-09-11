@@ -540,3 +540,56 @@ def test_R2_7_passengers_with_html_says_the_export_was_not_written(capsys, monke
         capsys, lambda *a, **k: _resp(rows),
     )
     assert "--html was NOT written" in out
+
+
+# ===========================================================================
+# Re-test 3
+# ===========================================================================
+
+
+def test_R3_1_and_R3_2_a_withheld_party_trip_prints_no_saving_and_names_every_reason(
+    tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setenv("SEATS_AERO_KEY", "test_key_not_a_real_one")
+    from src import trip_builder
+
+    monkeypatch.setattr(trip_builder, "FIXTURE_DIR", tmp_path)
+    import requests as _rq
+
+    def side(*a, **k):
+        params = k.get("params") or {}
+        if params.get("origin_airport") == "MAD":
+            raise _rq.exceptions.ConnectionError("down")
+        return _resp([_row(source="united", cost="50000", taxes=5600,
+                           currency="USD", airlines="UA")])
+
+    code, out = _cli(
+        ["--new-trip", "couple2", "--leg", "SFO:MAD:2027-01-15:790",
+         "--leg", "MAD:AMS:2027-01-19:300", "--travelers", "2", "--live",
+         "--balance", "UR=160000", "--card", CSP, "--transfer-date", "2026-09-15"],
+        capsys, side,
+    )
+    assert code == 3
+    assert "Saving WITHHELD" in " ".join(out.replace("│", " ").split())
+    assert "--require-all-live" in out and "2+ travellers" in out
+
+
+def test_R3_3_a_party_leg_with_nothing_reachable_is_not_withheld(tmp_path):
+    from datetime import date
+
+    from src.models import CashOption, Leg
+    from src.optimizer import evaluate_trip, trip_totals
+    from src.ratio_manager import RatioManager
+    from src.wallet import Wallet
+
+    leg = Leg(id="P2", kind="flight", description="for two", date=date(2027, 1, 15),
+              cash_options=[CashOption(label="c", amount=790.0)], points_candidates=[],
+              travelers=2, origin="SFO", destination="JFK",
+              unpriced_partner_programs=["Delta SkyMiles"])
+    rm = RatioManager(ROOT / "data" / "ratios.csv", ROOT / "data" / "bonuses.csv",
+                      ROOT / "data" / "programs.yaml")
+    wallet = Wallet(balances={"UR": 160000}, cards=[CSP])
+    (r,) = evaluate_trip([leg], ratios_manager=rm, wallet=wallet,
+                         transfer_date=date(2026, 9, 15), today=date(2026, 9, 10))
+    assert r.verdict != "cash (multi-traveller points not priced)"
+    assert trip_totals([r], wallet)["legs_party_pricing_unverified_ids"] == []

@@ -1278,6 +1278,7 @@ def evaluate_leg(
             for currency in wallet.currencies
         )
     ]
+    party_reachable_unpriced = list(reachable_unpriced) if party_leg else []
     if party_leg and reachable_unpriced:
         # A break-even in points is a ONE-SEAT price; quoting it against the
         # party's cash is the false win this leg is guarded against.
@@ -1373,7 +1374,7 @@ def evaluate_leg(
             )
             result.margin_usd = 0.0
             result.margin_pct = 0.0
-        elif party_leg and (party_candidates or leg.unpriced_partner_programs):
+        elif party_leg and (party_candidates or party_reachable_unpriced):
             _party_verdict(result, leg, party_candidates)
         elif result.break_even_programs:
             # A partner DOES exist - we just have no award price for it. That is
