@@ -812,6 +812,16 @@ def run_fixture(args, console: Console) -> int:
         "live",
         "snapshot",
     )
+    # A trip with a flight leg for 2+ travellers has a flight that was NOT
+    # priced. "Beats cash by 0.00%" would then be "could not price" reported as a
+    # finding of zero value - withheld instead, exit 3, and the reason says why.
+    party = totals.get("legs_party_pricing_unverified_ids") or []
+    if party:
+        withheld = True
+        totals["margin_withheld_reason"] = (
+            f"flight leg(s) {', '.join(party)} are for 2+ travellers and were not "
+            f"priced (award prices are per seat)"
+        )
     totals["margin_withheld"] = withheld
 
     # THE HASH RIDES WITH THE PERCENTAGE. `print_trip_totals` puts it in the
@@ -921,6 +931,7 @@ def run_search(args, console: Console) -> int:
         console.print(f"[red]Error: {e}[/red]")
         return 1
     print_key_banner(console, seats_client.key_resolution)
+    print_relocation_banner(console)
 
     ratios = load_ratio_manager()
 
@@ -1009,6 +1020,12 @@ def run_search(args, console: Console) -> int:
         console.print(f"[{style}]Seats.aero result coverage: {note}[/{style}]")
 
     if int(args.passengers or 1) > 1 and results:
+        if args.html:
+            console.print(
+                "[bold yellow]--html was NOT written: the export is a "
+                "recommendation, and a per-seat list is not one for "
+                f"{args.passengers} passengers.[/bold yellow]"
+            )
         # Every price below is for ONE seat. Ranking and summarising them as the
         # answer for a party would repeat the multi-traveller false win.
         console.print(

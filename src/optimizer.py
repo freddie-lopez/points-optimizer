@@ -407,7 +407,13 @@ def optimize(
             # `total_value` let a 52,000-point award with NO tax figure ($520 +
             # an unknown) evict a 50,000-point one with $56 of known taxes ($556)
             # - and the known award vanished before the ranking could put it first.
-            key = f"{award.program}-{award.date}-{award.award_type}"
+            # Known and unknown cash are deduplicated SEPARATELY: an unknown can
+            # never evict a known award (R-1), and a known award must not delete
+            # a cheaper unknown one either (it is ranked after, not hidden).
+            key = (
+                f"{award.program}-{award.date}-{award.award_type}-"
+                f"{'known' if strategy.cash_cost_known else 'unknown'}"
+            )
             if key not in seen or _strategy_rank(strategy) < _strategy_rank(seen[key]):
                 seen[key] = strategy
 
@@ -890,13 +896,13 @@ def evaluate_leg(
     # the winner's own date's fare can become the leg's reported cash.
     cash_context: Dict[int, Tuple[float, Optional[CashOption], Optional[date]]] = {}
 
+    # MULTI-TRAVELLER FLIGHT LEGS ARE NOT PRICED. Award prices are per seat and
+    # nothing below multiplies them by the party. Facts that do NOT depend on the
+    # party size - an award naming no program, a program reachable only
+    # indirectly, a program that is no partner at all - are still recorded per
+    # candidate; only a candidate that would be SCORED is held back.
+    party_leg = leg.kind == "flight" and int(getattr(leg, "travelers", 1) or 1) > 1
     for cand in leg.points_candidates:
-        # MULTI-TRAVELLER FLIGHT LEGS ARE NOT PRICED. Checked first: no other
-        # rule below knows the party size, so anything they conclude about this
-        # candidate would be a one-seat conclusion about a party's trip.
-        if leg.kind == "flight" and int(getattr(leg, "travelers", 1) or 1) > 1:
-            party_candidates.append(cand)
-            continue
         # FINDING M-5. A RESPONSE THAT NAMED NO PROGRAM IS A DATA FAILURE, NOT A
         # FACT ABOUT CHASE'S PARTNER LIST.
         #
@@ -963,6 +969,9 @@ def evaluate_leg(
                 f"{cand.program} is not reachable from {held} on {transfer_date}.",
                 program=cand.program,
             )
+            continue
+        if party_leg:
+            party_candidates.append(cand)
             continue
 
         try:
@@ -1269,6 +1278,15 @@ def evaluate_leg(
             for currency in wallet.currencies
         )
     ]
+    if party_leg and reachable_unpriced:
+        # A break-even in points is a ONE-SEAT price; quoting it against the
+        # party's cash is the false win this leg is guarded against.
+        result.warnings.append(
+            f"{', '.join(reachable_unpriced)} IS a {source_program} partner for "
+            f"this leg, but no break-even is quoted: the leg is for "
+            f"{leg.travelers} travellers and award prices are per seat."
+        )
+        reachable_unpriced = []
     if reachable_unpriced and result.cash_total_score_usd != float("inf"):
         result.break_even_programs = [
             ratios_manager.normalize_program(p) for p in reachable_unpriced
@@ -1355,6 +1373,8 @@ def evaluate_leg(
             )
             result.margin_usd = 0.0
             result.margin_pct = 0.0
+        elif party_leg and (party_candidates or leg.unpriced_partner_programs):
+            _party_verdict(result, leg, party_candidates)
         elif result.break_even_programs:
             # A partner DOES exist - we just have no award price for it. That is
             # a missing input, not an absent path, and the two must not be
@@ -1373,25 +1393,6 @@ def evaluate_leg(
                 f"({'; '.join(blocked_partner_candidates)}), but every transfer "
                 f"path was blocked by the balance ceiling or the stranded-points "
                 f"constraint. This is a constraint, not a missing partner."
-            )
-        elif party_candidates:
-            result.verdict = VERDICT_PARTY_NOT_PRICED
-            result.add_reason(
-                "PARTY_PRICING_UNVERIFIED",
-                f"{len(party_candidates)} points option(s) on a flight leg for "
-                f"{leg.travelers} travellers were not scored: award prices are per "
-                f"seat and multi-traveller pricing is not modelled.",
-                travelers=leg.travelers,
-            )
-            result.verdict_reason = (
-                f"Pay cash BY DEFAULT, not by finding. This flight leg is for "
-                f"{leg.travelers} travellers and every award price here is for ONE "
-                f"seat; the tool does not yet multiply points, award taxes or the "
-                f"balance by the party size, or check that {leg.travelers} seats "
-                f"are open. Scoring one seat of points against the party's cash "
-                f"could print a points win that does not exist, so nothing is "
-                f"scored. Price it by hand: {leg.travelers} x the points, "
-                f"{leg.travelers} x the taxes, against the party's total cash."
             )
         elif indirect_candidates:
             best_indirect = min(indirect_candidates, key=lambda c: c.points)
@@ -1876,6 +1877,27 @@ def _withhold_points_side_for_unknown_apd(
         f"${max(result.cash_total_score_usd - result.points_floor_usd, 0.0):,.2f}. "
         f"{charge.unknown_reason}"
     ).strip()
+
+
+def _party_verdict(result: LegResult, leg: Leg, party_candidates) -> None:
+    result.verdict = VERDICT_PARTY_NOT_PRICED
+    result.add_reason(
+        "PARTY_PRICING_UNVERIFIED",
+        f"{len(party_candidates)} fundable points option(s) on a flight leg for "
+        f"{leg.travelers} travellers were not scored: award prices are per seat "
+        f"and multi-traveller pricing is not modelled.",
+        travelers=leg.travelers,
+    )
+    result.verdict_reason = (
+        f"Pay cash BY DEFAULT, not by finding. This flight leg is for "
+        f"{leg.travelers} travellers and every award price here is for ONE seat; "
+        f"the tool does not yet multiply points, award taxes or the balance by "
+        f"the party size, or check that {leg.travelers} seats are open. Scoring "
+        f"one seat of points against the party's cash could print a points win "
+        f"that does not exist, so the reachable options are not scored. Price "
+        f"them by hand: {leg.travelers} x the points, {leg.travelers} x the "
+        f"taxes, against the party's total cash."
+    )
 
 
 def _legs_with(results, code: str) -> List[str]:

@@ -453,3 +453,90 @@ def test_S4_a_relocation_variable_is_named_on_a_live_run(capsys, monkeypatch, tm
     )
     # The harness sets all three; a live run must say they are in effect.
     assert "POINTS_OPTIMIZER_CACHE_DIR is set" in out
+
+
+# ===========================================================================
+# Re-test 2 (docs/test-reports/known-failures.md, "Re-test 2")
+# ===========================================================================
+
+
+def test_R2_1_a_party_leg_quotes_no_per_seat_break_even(tmp_path):
+    """Trip A's shape: an unpriced reachable partner on a leg for two."""
+    from datetime import date
+
+    from src.models import CashOption, Leg
+    from src.optimizer import evaluate_trip, trip_totals
+    from src.ratio_manager import RatioManager
+    from src.wallet import Wallet
+
+    leg = Leg(id="P1", kind="flight", description="SFO-JFK for two",
+              date=date(2027, 1, 15), cash_options=[CashOption(label="c", amount=790.0)],
+              points_candidates=[], travelers=2, origin="SFO", destination="JFK",
+              unpriced_partner_programs=["United MileagePlus"])
+    rm = RatioManager(ROOT / "data" / "ratios.csv", ROOT / "data" / "bonuses.csv",
+                      ROOT / "data" / "programs.yaml")
+    wallet = Wallet(balances={"UR": 160000}, cards=[CSP])
+    (r,) = evaluate_trip([leg], ratios_manager=rm, wallet=wallet,
+                         transfer_date=date(2026, 9, 15), today=date(2026, 9, 10))
+    assert r.verdict == "cash (multi-traveller points not priced)"
+    assert not r.break_even_programs
+    assert "Points would win below" not in r.verdict_reason
+    assert trip_totals([r], wallet)["legs_party_pricing_unverified_ids"] == ["P1"]
+
+
+@pytest.mark.parametrize("bad", [0, -1, "two", 1.5, True])
+def test_R2_2_a_leg_is_for_at_least_one_whole_traveller(tmp_path, bad):
+    doc = json.dumps({"id": "t", "legs": [{
+        "id": "L1", "kind": "flight", "description": "x", "date": "2027-01-15",
+        "travelers": bad, "cash_options": [{"label": "c", "amount": 100}]}]}).encode()
+    assert "travelers" in _load(tmp_path, doc)
+
+
+def test_R2_3_a_known_award_does_not_delete_a_cheaper_unknown_one(capsys, monkeypatch):
+    _, out = _search(capsys, monkeypatch, [
+        _row(source="united", cost="50000", taxes=5600, currency="USD", airlines="UA"),
+        _row(source="united", cost="30000", taxes=UNSET, currency="USD", airlines="UA"),
+    ])
+    assert "Top strategy cash cost: $56.00" in out
+    assert "30,000" in out, "the cheaper unknown-tax award is ranked after, not hidden"
+
+
+def test_R2_5_a_trip_with_an_unpriced_party_leg_withholds_its_headline(tmp_path, capsys, monkeypatch):
+    b1, totals, out = _trip_b_with_b1_travelers(
+        tmp_path, 2, 790.0,
+        [dict(source="united", cost="50000", taxes=5600, currency="USD", airlines="UA")],
+    )
+    # The totals dict alone does not withhold (main does); drive the CLI path.
+    monkeypatch.setenv("SEATS_AERO_KEY", "test_key_not_a_real_one")
+    from src import trip_builder
+
+    monkeypatch.setattr(trip_builder, "FIXTURE_DIR", tmp_path)
+    code, out = _cli(
+        ["--new-trip", "couple", "--leg", "SFO:MAD:2027-01-15:790",
+         "--travelers", "2", "--live", "--balance", "UR=160000", "--card", CSP,
+         "--transfer-date", "2026-09-15"],
+        capsys,
+        lambda *a, **k: _resp([_row(source="united", cost="50000", taxes=5600,
+                                    currency="USD", airlines="UA")]),
+    )
+    assert code == 3
+    assert "THE TRIP MARGIN IS WITHHELD" in out
+    assert "beats paying cash by 0.00%" not in out
+
+
+def test_R2_6_search_names_a_relocation_in_effect(capsys, monkeypatch):
+    _, out = _search(capsys, monkeypatch, [
+        _row(source="united", cost="50000", taxes=5600, currency="USD", airlines="UA"),
+    ])
+    assert "POINTS_OPTIMIZER_ENV_FILE is set" in out
+
+
+def test_R2_7_passengers_with_html_says_the_export_was_not_written(capsys, monkeypatch):
+    monkeypatch.setenv("SEATS_AERO_KEY", "test_key_not_a_real_one")
+    rows = [_row(source="united", cost="50000", taxes=5600, currency="USD", airlines="UA")]
+    _, out = _cli(
+        ["--origin", "SFO", "--destination", "MAD", "--date", "2027-01-15",
+         "--balance", "UR=160000", "--card", CSP, "--passengers", "2", "--html"],
+        capsys, lambda *a, **k: _resp(rows),
+    )
+    assert "--html was NOT written" in out

@@ -46,6 +46,21 @@ def _strict_date(value, what: str) -> "date | None":
         raise TripFixtureError(f"{what} is {value!r}, which is not an ISO date.") from e
 
 
+def _travelers(value, leg_id) -> int:
+    """A party size of at least one whole traveller - or a TripFixtureError."""
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise TripFixtureError(f"leg {leg_id!r} travelers is {value!r}, not a count.")
+    try:
+        n = int(value)
+    except ValueError as e:
+        raise TripFixtureError(f"leg {leg_id!r} travelers is {value!r}, not a count.") from e
+    if n < 1 or str(value).strip() != str(n):
+        raise TripFixtureError(
+            f"leg {leg_id!r} travelers is {value!r}; a leg is for at least 1 traveller."
+        )
+    return n
+
+
 def _maybe_date(value) -> "date | None":
     """A date if the fixture supplied one, else None. Never a guessed date."""
     if not value:
@@ -235,7 +250,7 @@ def _build_trip_fixture(data: dict) -> TripFixture:
                 date=date.fromisoformat(raw["date"]),
                 cash_options=cash_options,
                 points_candidates=points_candidates,
-                travelers=int(raw.get("travelers", 1)),
+                travelers=_travelers(raw.get("travelers", 1), raw.get("id")),
                 notes=notes,
                 data_flags=list(raw.get("data_flags", [])),
                 unpriced_partner_programs=list(raw.get("unpriced_partner_programs", [])),

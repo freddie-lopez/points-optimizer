@@ -227,7 +227,13 @@ def resolve_key(flag: Optional[str] = None) -> KeyResolution:
         "No Seats.aero API key found. Four places were checked, in this order:\n"
         f"  1. {KEY_SOURCE_FLAG}  (pass --api-key <key>)\n"
         f"  2. {KEY_SOURCE_ENV}  (export {KEY_ENV_VAR}=<key>)\n"
-        f"  3. {KEY_SOURCE_REPO_ENV}  ({_ENV_PATH})\n"
+        f"  3. {KEY_SOURCE_REPO_ENV}  ({_ENV_PATH})"
+        + (
+            "  [RELOCATED by POINTS_OPTIMIZER_ENV_FILE]"
+            if os.environ.get("POINTS_OPTIMIZER_ENV_FILE")
+            else ""
+        )
+        + "\n"
         f"  4. {KEY_SOURCE_USER_CONFIG}  ({USER_CONFIG_ENV_PATH})\n"
         f"Write '{KEY_ENV_VAR}=<key>' into one of the two files, or pass the "
         f"flag. Nothing is assumed and no request is attempted without one."

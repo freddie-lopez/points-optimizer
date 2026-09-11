@@ -131,3 +131,23 @@ Final state: sandbox 919 passed / 13 skipped (same under `-O`); simulated Mac (v
   `last_search_awards` side channel stays (documented).
 - Two Tester probes (`test_kf_retest.py::test_the_below_duty_rule_is_per_passenger_on_a_two_traveller_leg`)
   now error: they score a 2-traveller leg, which Must-fix 1 forbids.
+
+## Re-test 2 round
+
+All 8 fixed (R2-1..R2-8), each with a regression test that fails on `fcb70f8`:
+the party guard now also suppresses a per-seat break-even for an unpriced
+partner and runs AFTER the party-independent facts (unattributed, indirect, not
+a partner); a trip with an unpriced party leg withholds its headline (exit 3,
+README exit table updated); search dedups known and unknown cash separately;
+`travelers` must be a whole number >= 1; search and the key-not-found error name
+relocations; `--passengers N --html` says the export was not written; README
+states the unconvertible-currency APD exception.
+
+Probe conflicts, for the Tester to judge: `test_kf_retest2.py` probes that
+assert exit 0 on party-leg runs now see exit 3 (R2-5); the R2-4 probe expects
+verdict PARTY for a leg whose only awards are Qatar (indirect) and unattributed
+- the branch gives the indirect verdict, because nothing on that leg was
+fundable regardless of party size; both counters are populated.
+
+Final state: sandbox 935 passed / 13 skipped (same under -O); v5-probes and
+adversarial-probes red sets identical to master.

@@ -84,7 +84,7 @@ refusal to answer apart from an unfundable plan apart from a crash.
 | `0` | Success. A margin was produced and, if a balance was given, the plan is executable from it. |
 | `1` | Error. Bad arguments, a missing or unreadable file, an unreplayable manifest, or an unhandled failure. **Nothing was scored.** |
 | `2` | **WALLET ERROR.** No balances or cards were supplied, or the wallet file is malformed. The tool refuses to assume which cards and points you hold. **Nothing was scored.** |
-| `3` | **WITHHELD.** At least one leg did not come back live — the default as of v5; `--allow-badge-fallback` opts out — so no margin is quoted. A refusal to answer, **not** a finding of zero value. |
+| `3` | **WITHHELD.** At least one leg did not come back live — the default as of v5; `--allow-badge-fallback` opts out — or a flight leg is for 2+ travellers and was not priced, so no margin is quoted. A refusal to answer, **not** a finding of zero value. |
 | `4` | **NOT EXECUTABLE.** A margin was produced, but the recommendation cannot be funded from the balance you supplied. The number is real; the plan is not actionable as printed. |
 
 `3` and `4` are deliberately distinct: "the number is not quotable" and "the plan
@@ -420,11 +420,14 @@ reported as a floor plus a break-even instead of a score, when:
   for its cabin (the duty belongs inside it). Assumes an adult who is not on an
   onward connection; the duty's exemptions are not modelled.
 
-When a UK departure's taxes are unknown, the duty is added to the floor (it is
-owed whatever else is), and the break-even is quoted after it.
+When a UK departure's taxes are unknown because NO usable figure exists, the
+duty is added to the floor (it is owed whatever else is), and the break-even is
+quoted after it. When a figure exists but is in a currency with no FX rate, the
+duty is stated but not added - the unconverted figure may already contain it.
 
-Flight legs for **2+ travellers** are not scored at all: award prices are per
-seat and party pricing is not modelled yet.
+Flight legs for **2+ travellers** have no reachable award scored (and no
+per-seat break-even quoted): award prices are per seat and party pricing is not
+modelled yet. A trip with such a leg withholds its headline (exit `3`).
 
 Replays of snapshots captured under an earlier parser print **REPARSED** - the
 same bytes can now give a different answer, by design.

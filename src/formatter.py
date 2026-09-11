@@ -925,7 +925,7 @@ def print_trip_totals(
         )
         table.add_row(
             "[red]  withheld because[/red]",
-            f"[red]--require-all-live and provenance is '{provenance}'[/red]",
+            f"[red]{totals.get('margin_withheld_reason') or ('--require-all-live and provenance is ' + repr(provenance))}[/red]",
         )
     elif totals.get("headline_is_a_range"):
         table.add_row(
@@ -1149,7 +1149,14 @@ def print_trip_totals(
 
     console.print(table)
 
-    if totals.get("margin_withheld"):
+    if totals.get("margin_withheld") and totals.get("margin_withheld_reason"):
+        console.print(
+            f"\n[bold red]THE TRIP MARGIN IS WITHHELD.[/bold red] "
+            f"{totals['margin_withheld_reason']}. A total that leaves those legs "
+            f"out would report 'could not price' as a saving of zero. Per-leg "
+            f"results above are unaffected."
+        )
+    elif totals.get("margin_withheld"):
         console.print(
             f"\n[bold red]THE TRIP MARGIN IS WITHHELD.[/bold red] --require-all-live "
             f"was passed and the margin's provenance is "
