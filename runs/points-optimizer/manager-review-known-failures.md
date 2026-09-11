@@ -81,3 +81,44 @@
 3. Commit the real snapshots: `tests/fixtures/seats_aero/live_trip_b/*.json` plus `MANIFEST.md`. The key-free test runs over them first. Until then, the Group C fix is proven only on synthetic data.
 4. Replays of his corpus will print **REPARSED** (parser `2026-09-09.v5` -> `2026-09-10.taxes-trust`), and B4's answer will change: Qatar becomes "indirect, not scored", and any tax figure below the APD is distrusted. That is by design, not a regression.
 5. pytest no longer touches his key, cache or corpus, and uses no API quota.
+
+---
+
+## Sign-off re-review (4940154)
+
+**Verdict**: Ship. Must-fix 1 and 2 are closed and I re-ran every claim myself. There are no Critical, High or Medium findings left open. One consequence Tsuki has to know about: until he answers D1, every trip with a flight leg for 2 travellers (a couple's trip) withholds its headline and exits 3. That is the honest behaviour, and it means the tool gives him no flight answer for trips with his girlfriend until D1 is decided and built.
+
+**What I verified myself at 4940154:**
+- **Full suite:** 937 passed / 13 skipped, and the same under `-O`.
+- **Probe suites:**
+  - v5-probes: 19/79, the same red set by test id as a clean, cache-free export of master. The corpus repair only swaps B4's taxes for United's real $224.63; the assertions are unchanged.
+  - adversarial-probes: 40/38, the same red set as master.
+  - known-failures-probes: 140/140 green.
+- **Simulated Mac** (fresh export into `points-optimizer-v5`, key exported and also in `.env`, warm cache, qatar tax-0 corpus): 946 passed / 4 skipped, both with a corpus captured by master and with one captured by the branch, and also under `-O`. The checkout was byte-identical after both runs.
+- **My own couple repro** (B1 for 2 travellers, the party's $790, United 50,000 + $56) no longer produces a POINTS verdict. The leg gets `cash (multi-traveller points not priced)`, with no floor, no break-even and 0 points spent. On the CLI, Optimizer's recommendation, Saving and the percentage all read WITHHELD, with the reason named, and the exit code is 3. The R2-1 side door is closed: an unpriced partner on a party leg gets no one-seat break-even.
+- **Search:** `--passengers 2` shows the "PRICED FOR ONE SEAT" banner and names no top strategy. With one passenger, United 50,000 + $56 ranks #1 and the cheaper 30,000 award with unknown taxes is shown after it as `>= $300.00` instead of being dropped. The R2-3 fix holds.
+- **Replay of the master-captured corpus:** prints REPARSED. B4 now reads "at least $638.11 ... INCLUDING UK Air Passenger Duty ... the award's other taxes are UNKNOWN". The $500 figure and "carrier-imposed surcharge" are gone.
+- **The real repo:** no `.env`, no `data/cache/`, no snapshots in `live_trip_b/`, and no leftover test-home directories.
+
+**Still must-fix:** none.
+
+**Should fix soon (unchanged or new, all Low):**
+1. Exit 3 now means two things: an API or provenance failure, and a party leg that was not priced. It is documented, but a script that retries on 3 would retry forever on a couple's trip. Coder: give the party case its own exit code when D1 is built, or sooner.
+2. On the `--offline` badge path, a party leg that departs the UK still prints "APD ... ADDED to the points-side cash total x2" when no points side exists (Tester R3 observation; the wording dates from v5). Coder.
+3. The `last_search_awards` side channel stays in place and is documented. Coder: return the awards from `optimize()`.
+4. The corpus-dependent skips (13 in the sandbox, 4 on the Mac) remain until Tsuki commits his corpus.
+5. Process: the Coder edited the Tester's v5 probe (I had assigned that to the Tester). The edit is sound, but a probe should be changed by its owner.
+6. Unverified: macOS Python behaviour (the `PYTHONUSERBASE` pin and `sitecustomize` chaining), the Seats.aero "taxes not available" footnote, the BA/Qatar/Finnair combine conditions, and Tsuki's real corpus.
+
+**Decisions for Tsuki (final):**
+- **D1. Multi-traveller pricing: now urgent, because it blocks every couple's trip.** Does `CASH_USD` on a leg mean the fare per person or the total for the party? **Recommend: the total for the party**, with the prompt and flag saying so. Then model N x points, N x award taxes, N x APD and N x the balance draw, and require seats >= N, treating `american`'s 0 seats as "not reported". Until this is built, a trip with a party leg is WITHHELD (exit 3), and search for 2+ passengers prints a per-seat list only.
+- **D2. KrisFlyer (a direct 1:1 UR partner) is never scored,** because Seats.aero doesn't report `singapore` taxes. The same goes for `qatar` and `turkish`. **Recommend: accept this now, and add a manual "captured award taxes" input next** so a KrisFlyer award can be scored from the airline's booking page. The README now states this rule.
+- **D3. Qatar and Finnair via BA Avios are named, not scored.** Even if scored, Qatar's taxes are unreported, so it could never be more than a floor. **Recommend: keep it not scored**, and add an informational "if your BA->Qatar combine is set up" floor line. The companion rule applies to his girlfriend: she needs her own Privilege Club account, at least 30 days old, with earned Avios.
+- **D4. The tax-trust rules:** a figure of 0 from any source is unknown, a UK figure below the APD for its cabin is unknown, and APD is added to floors when no usable figure exists. **Recommend accepting all three.** The below-APD rule now states its assumption in the output: an adult who is not on an onward connection. The APD exemptions are not modelled.
+
+**What Tsuki does on his Mac:**
+1. Merge or pull `fix/known-failures` at `4940154` or later. From the venv, run `.venv/bin/python -m pytest -q -p no:cacheprovider`. Expect **946 passed / 4 skipped**. That comes from the simulation; the result with his real corpus is unverified. If subprocess tests fail with `ModuleNotFoundError`, run from the venv.
+2. Commit his real snapshots: `tests/fixtures/seats_aero/live_trip_b/*.json` plus `MANIFEST.md`. The key-free test runs over them first. This turns the 9 corpus tests from skips into real checks.
+3. Replays of his corpus will print **REPARSED** (parser `2026-09-09.v5` -> `2026-09-10.taxes-trust`), and B4 changes: Qatar becomes "indirect, not scored", and a tax figure below the APD is distrusted and the duty added. That is by design.
+4. Solo trips work as before. A trip with any flight leg for 2 travellers prints WITHHELD and exits 3 until D1 is built. Price those legs by hand: 2 x the points and 2 x the taxes against the pair's total cash.
+5. pytest no longer reads his key, cache or corpus, and uses no API quota. Live runs still archive into the committed corpus by design. If a `POINTS_OPTIMIZER_*` variable is set in his shell, the banner now says so.
