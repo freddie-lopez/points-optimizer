@@ -252,3 +252,4 @@ pre.echo { margin: 0; padding: 10px; background: var(--ink); border: 1px solid v
   table.grid tbody tr, .trow, .btn { transition: background-color .12s ease, border-color .12s ease; }
 }
 .cmdrow .btn { flex: none; white-space: nowrap; }
+.form > .btn { justify-self: start; }

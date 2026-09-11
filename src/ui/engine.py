@@ -529,6 +529,91 @@ class Engine:
             out["confirm_id"] = self.issue_confirm(self._trip_digest(trip_id, path, opts))
         return out
 
+    # -------------------------------------------------------------- new trip
+
+    def _draft(self, body: Dict[str, Any]):
+        """(fixture, errors) from the form, through the builder's OWN
+        validators - the same ones --new-trip calls - one error per field."""
+        from src import trip_builder as tb
+
+        body = body or {}
+        errors: List[Dict[str, Any]] = []
+
+        def check(leg, field, fn, *a):
+            try:
+                return fn(*a)
+            except tb.TripBuilderError as e:
+                errors.append({"leg": leg, "field": field, "message": str(e)})
+                return None
+
+        name = check(None, "name", tb.validate_name, str(body.get("name") or ""))
+        cabin = check(None, "cabin", tb.validate_cabin, str(body.get("cabin") or ""))
+        legs_in = body.get("legs") or []
+        if not isinstance(legs_in, list) or not legs_in:
+            errors.append({"leg": None, "field": "legs",
+                           "message": "A trip needs at least one flight leg."})
+            legs_in = []
+        if len(legs_in) > 20:
+            errors.append({"leg": None, "field": "legs", "message": "At most 20 legs."})
+            legs_in = []
+        flights = []
+        for i, raw in enumerate(legs_in, start=1):
+            raw = raw if isinstance(raw, dict) else {}
+            o = check(i, "origin", tb.validate_iata, str(raw.get("origin") or ""), f"Leg {i} from")
+            d = check(i, "destination", tb.validate_iata, str(raw.get("destination") or ""),
+                      f"Leg {i} to")
+            when = check(i, "date", tb.validate_date, str(raw.get("date") or ""), f"Leg {i} date")
+            cash = check(i, "cash", tb.validate_cash, str(raw.get("cash") or ""), f"Leg {i} cash")
+            leg_cabin = check(i, "cabin", tb.validate_cabin, str(raw.get("cabin") or cabin or ""))
+            if o and d and o == d:
+                errors.append({"leg": i, "field": "destination",
+                               "message": f"Leg {i}: origin and destination are both {o}. A "
+                                          f"leg that goes nowhere has no fare and no award space."})
+            if None not in (o, d, when, cash, leg_cabin) and o != d:
+                flights.append(tb.FlightSpec(o, d, when, cash,
+                                             cabin=None if leg_cabin == cabin else leg_cabin))
+        if errors or name is None or cabin is None:
+            return None, errors
+        return tb.build_fixture(name, flights, [], 1, cabin), []
+
+    def trip_draft(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        from src import trip_builder as tb
+
+        fixture, errors = self._draft(body)
+        if errors:
+            return {"ok": False, "errors": errors}
+        return {
+            "ok": True,
+            "echo_lines": tb.echo_lines(fixture),
+            "draft_hash": canonical_digest({"fixture": fixture, "dir": str(self.trips_dir)}),
+        }
+
+    def trip_create(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Write the previewed trip with the builder's own writer (D14). The
+        writer refuses an existing name (no --force here) and proves the file
+        loads before it reports success."""
+        from src import trip_builder as tb
+
+        fixture, errors = self._draft(body)
+        if errors:
+            raise ApiError(400, "invalid", "The trip was not written: fix the fields below.",
+                           errors=errors)
+        digest = canonical_digest({"fixture": fixture, "dir": str(self.trips_dir)})
+        if (body or {}).get("draft_hash") != digest:
+            raise ApiError(409, "draft_changed",
+                           "The trip changed since the preview, or was never previewed. "
+                           "Preview it again.")
+        try:
+            path = tb.write_fixture(fixture, directory=self.trips_dir, force=False)
+        except tb.TripBuilderError as e:
+            raise ApiError(409, "refused", str(e))
+        return {
+            "id": path.stem,
+            "path": display_path(path),
+            "lines": [f"Wrote {display_path(path)}",
+                      "This fixture has NO points prices. Score it LIVE or REPLAY."],
+        }
+
     # ---------------------------------------------------------------- search
 
     def _search_request(self, body: Dict[str, Any]) -> Dict[str, Any]:

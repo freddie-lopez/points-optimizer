@@ -474,3 +474,117 @@ def test_every_search_cells_taxes_come_from_search_award_cash(search_client, mon
     if kris["fundable"]:
         assert kris["total_is_floor"] is True and kris["total_text"].startswith(">= ")
     assert run["unknown_cash_line"] is None or "UNKNOWN (NOT $0)" in run["unknown_cash_line"]
+
+
+# ----------------------------------------------------------------- new trip
+
+from src import trip_builder  # noqa: E402
+
+INPUTS = g.GOLDEN_DIR / "inputs"
+
+
+def test_the_cli_flags_path_writes_the_same_bytes_as_before_per_leg_cabins(tmp_path):
+    from datetime import date
+
+    path = trip_builder.new_trip_from_flags(
+        "byte_check", ["SFO:LHR:2027-01-15:2400", "LHR:SFO:2027-01-29:1850.5"],
+        ["Hotel Kyoto: Gion:2027-01-16:3:500"], travelers=2, cabin="J",
+        directory=tmp_path, today=date(2026, 9, 11))
+    assert path.read_bytes() == (INPUTS / "new_trip_flags_before_per_leg_cabin.json").read_bytes()
+
+
+def test_a_mixed_cabin_fixture_loads_with_each_legs_own_cabin(tmp_path):
+    from datetime import date
+
+    from src.trip_loader import load_trip_fixture
+
+    fx = trip_builder.build_fixture(
+        "mixed", [trip_builder.FlightSpec("SFO", "LHR", date(2027, 1, 15), 2400.0, cabin="J"),
+                  trip_builder.FlightSpec("LHR", "SFO", date(2027, 1, 29), 900.0)],
+        [], 1, "Y", today=date(2026, 9, 11))
+    assert fx["description"].endswith("cabins by leg: L1 J, L2 Y.")
+    path = trip_builder.write_fixture(fx, directory=tmp_path)
+    legs = load_trip_fixture(path).legs
+    assert [l.cabin for l in legs] == ["J", "Y"]
+    assert "business" in legs[0].description and "economy" in legs[1].description
+
+
+NT = {"name": "sfo_lhr_jan", "cabin": "J",
+      "legs": [{"origin": "sfo", "destination": "LHR", "date": "2027-01-15", "cabin": "J",
+                "cash": "2400"}]}
+
+
+@pytest.fixture
+def nt_client(tmp_path, pinned):
+    trips = copy_trips(tmp_path / "trips", names=["trip_b_europe.json"])
+    with running_server(wallet_path=write_wallet(tmp_path / "w.json"), trips_dir=trips) as c:
+        c.trips_dir = trips
+        yield c
+
+
+def test_the_ui_previews_writes_and_runs_a_new_trip_offline(nt_client):
+    d = nt_client.post("/api/trips/draft", NT).json()
+    assert d["ok"] is True
+    assert d["echo_lines"] == [
+        "About to write sfo_lhr_jan.json:",
+        "  L1  SFO->LHR, Jan 15 2027, one-way, business, 1 adult  ->  $2,400.00 USD",
+        "  points_candidates: NONE ON ANY LEG. This trip is scoreable only with --live or "
+        "--from-snapshot.",
+    ]
+    made = nt_client.post("/api/trips/create", dict(NT, draft_hash=d["draft_hash"])).json()
+    assert made["id"] == "sfo_lhr_jan"
+    assert made["lines"][1] == "This fixture has NO points prices. Score it LIVE or REPLAY."
+    assert (nt_client.trips_dir / "sfo_lhr_jan.json").exists()
+    listing = {t["id"]: t for t in nt_client.get("/api/trips").json()}
+    assert listing["sfo_lhr_jan"]["live_only"] is True
+    detail = nt_client.get("/api/trips/sfo_lhr_jan").json()
+    assert detail["flags"] == [trip_builder.LIVE_ONLY_FLAG]
+    run = nt_client.post("/api/trips/sfo_lhr_jan/run",
+                         {"mode": "offline", "options": TRANSFER}).json()
+    assert run["exit_code"] == 0
+    assert run["trip"]["flags"] == [trip_builder.LIVE_ONLY_FLAG]
+    (leg,) = run["legs"]
+    assert leg["cells"]["path"]["segments"][0]["text"] == "never priced"
+    assert leg["cells"]["verdict"]["segments"][0]["text"] == "PAY CASH (never priced)"
+    assert "--trip-fixture " + str(nt_client.trips_dir / "sfo_lhr_jan.json") in run["argv_display"]
+
+
+def test_an_existing_name_is_refused_in_the_writers_words(nt_client):
+    d = nt_client.post("/api/trips/draft", dict(NT, name="trip_b_europe")).json()
+    before = (nt_client.trips_dir / "trip_b_europe.json").read_bytes()
+    r = nt_client.post("/api/trips/create", dict(NT, name="trip_b_europe", draft_hash=d["draft_hash"]))
+    assert r.status == 409 and r.json()["error"] == "refused"
+    assert r.json()["message"].endswith(
+        "already exists and --force was not given. Refusing to overwrite: the file may hold "
+        "captures nobody can reproduce.")
+    assert (nt_client.trips_dir / "trip_b_europe.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("leg,field,start", [
+    ({"cash": "0"}, "cash", "Leg 1 cash: a cash price of 0.0 is refused. Zero is not a price - it is silence"),
+    ({"cash": "abc"}, "cash", "Leg 1 cash: 'abc' is not a number."),
+    ({"origin": "SOF"}, "origin", "Leg 1 from: 'SOF' is not an airport this tool knows."),
+    ({"date": "2027-02-30"}, "date", "Leg 1 date: '2027-02-30' is not an ISO date"),
+    ({"destination": "SFO"}, "destination", "Leg 1: origin and destination are both SFO."),
+    ({"cabin": "Q"}, "cabin", "--cabin 'Q' is not one of Y/W/J/F."),
+])
+def test_form_errors_are_the_builders_refusals_per_field(nt_client, leg, field, start):
+    body = dict(NT, legs=[dict(NT["legs"][0], **leg)])
+    d = nt_client.post("/api/trips/draft", body).json()
+    assert d["ok"] is False
+    msgs = [e["message"] for e in d["errors"] if e["field"] == field and e["leg"] == 1]
+    assert msgs and msgs[0].startswith(start), d["errors"]
+
+
+@pytest.mark.parametrize("name", ["../evil", "a/b", "", ".hidden", "x" * 0])
+def test_a_trip_name_can_never_leave_the_trips_directory(nt_client, name):
+    d = nt_client.post("/api/trips/draft", dict(NT, name=name)).json()
+    assert d["ok"] is False and d["errors"][0]["field"] == "name"
+
+
+def test_create_without_the_preview_hash_writes_nothing(nt_client):
+    r = nt_client.post("/api/trips/create", NT)
+    assert r.status == 409 and r.json()["error"] == "draft_changed"
+    r = nt_client.post("/api/trips/create", dict(NT, draft_hash="0" * 64))
+    assert r.status == 409
+    assert not (nt_client.trips_dir / "sfo_lhr_jan.json").exists()

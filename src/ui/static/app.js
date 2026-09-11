@@ -349,6 +349,11 @@
   }
 
   function renderTripHead(main, trip) {
+    if (S.lastWrite && S.lastWrite.id === trip.id) {
+      var wrote = tid(el("div", "panel funding"), "nt-wrote");
+      S.lastWrite.lines.forEach(function (l) { add(wrote, el("div", "", l)); });
+      add(main, wrote);
+    }
     var head = tid(el("div", "trip-head"), "trip-detail");
     add(head, el("div", "label", "Trip"), el("h1", "", trip.name), el("div", "d", trip.description),
       el("div", "d", "Source: " + trip.source));
@@ -1434,8 +1439,8 @@
     api("POST", "/api/trips/create", body).then(function (res) {
       if (res.status === 200 && res.body.id) {
         var id = res.body.id;
+        S.lastWrite = { id: id, lines: res.body.lines };
         loadTrips().then(function () { S.nt = null; S.mode = "offline"; go("#trips/" + id); });
-        S.lastWrite = res.body.lines;
       } else {
         var m = (res.body && res.body.message) || ("HTTP " + res.status);
         nt.errors = [{ leg: null, field: "name", message: m }];

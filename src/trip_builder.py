@@ -213,6 +213,10 @@ class FlightSpec:
     destination: str
     date: date
     cash_usd: float
+    # This leg's cabin, when it differs from the trip's. None = the trip's
+    # cabin. No CLI path sets it (--new-trip takes one --cabin for every leg),
+    # so every CLI-built fixture is unchanged; the local UI's form sets it.
+    cabin: Optional[str] = None
 
 
 @dataclass
@@ -310,16 +314,17 @@ def build_fixture(
     legs: List[Dict] = []
 
     for i, spec in enumerate(flights, start=1):
+        leg_cabin = spec.cabin or cabin
         legs.append(
             {
                 "id": f"L{i}",
                 "kind": "flight",
-                "description": describe_flight(spec, travelers, cabin),
+                "description": describe_flight(spec, travelers, leg_cabin),
                 "date": str(spec.date),
                 "origin": spec.origin,
                 "destination": spec.destination,
                 "travelers": travelers,
-                "cabin": cabin,
+                "cabin": leg_cabin,
                 "cash_options": [
                     {
                         "label": (
@@ -364,13 +369,20 @@ def build_fixture(
             }
         )
 
+    leg_cabins = [spec.cabin or cabin for spec in flights]
+    if len(set(leg_cabins)) <= 1:
+        shown = leg_cabins[0] if leg_cabins else cabin
+        cabin_text = f"cabin {shown} ({CABINS[shown]})"
+    else:
+        cabin_text = "cabins by leg: " + ", ".join(
+            f"L{i} {c}" for i, c in enumerate(leg_cabins, start=1)
+        )
     return {
         "id": name,
         "name": name,
         "description": (
             f"Built by --new-trip on {captured}: {len(flights)} flight leg(s), "
-            f"{len(hotels)} hotel leg(s), {travelers} traveller(s), cabin "
-            f"{cabin} ({CABINS[cabin]})."
+            f"{len(hotels)} hotel leg(s), {travelers} traveller(s), {cabin_text}."
         ),
         "source": (
             "user_entered_via_new_trip. Cash prices are what the user typed; "
