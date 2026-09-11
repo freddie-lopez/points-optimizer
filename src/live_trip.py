@@ -1117,10 +1117,26 @@ def metal_pass(
     parsed_cache: Dict[Tuple[str, str, str], Any] = {}
     out: Dict[int, MetalLookup] = {}
     state = {"sent": 0, "rate_limited_by": ""}
+    # A 429 on a SEARCH in phase 1 is the same rate limit: no trips request is
+    # sent after it either.
+    if getattr(client, "saw_http_429", False) is True:
+        state["rate_limited_by"] = "a search earlier in this run"
+    spends = client is not None and bool(getattr(client, "spends_api_budget", True))
+
+    def peek(aid: str):
+        """A disk-cache answer, which costs no call. None when there is none."""
+        cached = getattr(client, "cached_trips", None)
+        if replay or opts.refresh or opts.cache is None or not callable(cached):
+            return None
+        try:
+            return cached(aid, opts.cache, opts.cache_ttl)
+        except Exception:  # noqa: BLE001 - a peek never decides anything by raising
+            return None
 
     def fetch(leg: Leg, award: Award, aid: str):
         if aid in fetched:
             return fetched[aid]
+        before = SeatsClient._budget_remaining() if spends else None
         try:
             entry = client.trips_raw(
                 aid,
@@ -1139,9 +1155,13 @@ def metal_pass(
             if e.request_sent:
                 state["sent"] += 1
             if e.code == "HTTP_429" and not state["rate_limited_by"]:
-                state["rate_limited_by"] = aid
+                state["rate_limited_by"] = f"availability {aid}"
         except Exception as e:  # noqa: BLE001 - the metal pass never raises
             entry = e
+            # The transport counts a call BEFORE it sends. If the shared counter
+            # moved, a request may have left, so it counts against the cap too.
+            if before is not None and SeatsClient._budget_remaining() < before:
+                state["sent"] += 1
         fetched[aid] = entry
         return entry
 
@@ -1237,13 +1257,18 @@ def metal_pass(
                 award, "TRANSPORT_HAS_NO_TRIPS", type(client).__name__
             )
         if aid not in fetched:
+            blocked = None
             if state["rate_limited_by"]:
-                return _not_looked_up(
-                    award, "RATE_LIMITED_EARLIER",
-                    f"HTTP 429 on availability {state['rate_limited_by']}",
-                )
-            if not replay and state["sent"] >= opts.trips_cap:
-                return _not_looked_up(award, "CAP_REACHED", str(opts.trips_cap))
+                blocked = ("RATE_LIMITED_EARLIER", f"HTTP 429 on {state['rate_limited_by']}")
+            elif not replay and state["sent"] >= opts.trips_cap:
+                blocked = ("CAP_REACHED", str(opts.trips_cap))
+            if blocked:
+                # Nothing more may be SENT - but an answer already on disk costs
+                # no call, so it is read rather than reported as not looked up.
+                hit = peek(aid)
+                if hit is None:
+                    return _not_looked_up(award, *blocked)
+                fetched[aid] = hit
         return from_entry(award, aid, fetch(leg, award, aid))
 
     for leg, outcome, awards in queried:

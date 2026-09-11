@@ -334,7 +334,9 @@ Off-date (flexible-date) findings are never looked up.
 
 Lookups are deduplicated by availability id (one row carries four cabins and one
 response carries them all), counted on the **same** call counter as search, and
-capped per run. A cache hit is free. A 2xx response is cached and archived like
+capped per run. A cache hit is free: it never counts against the cap, and once
+the cap is spent - or after an HTTP 429 on any search or lookup in the run -
+answers already in the disk cache are still read while nothing more is sent. A 2xx response is cached and archived like
 a search response - under `data/cache/seats_aero/trips/` and
 `<snapshot dir>/trips_endpoint/`, with a manifest of its own in the search
 manifest's column layout - whatever its shape. HTTP errors (404 included),
@@ -681,7 +683,12 @@ Every verdict the code can produce is listed here;
 - **No YQ verdict exists yet**, so a lookup changes no number. One verdict is per
   source and rests on one flight; it may not carry over to other metal or routes.
 - **The trips call budget is per process.** It cannot see your other runs today;
-  Seats.aero's real limit shows up as HTTP 429, which stops further lookups.
+  Seats.aero's real limit shows up as HTTP 429. A 429 on any search or itinerary
+  lookup in a run stops every later trips REQUEST in that run; a lookup the disk
+  cache can answer is still read, because a cache hit sends nothing. The same
+  holds once the per-run cap is spent: nothing more is sent, and cached answers
+  are still read. A lookup neither the cap nor the cache allows reads NOT LOOKED
+  UP and is counted.
 - **An award you cannot book from UR is never pointed at a UR program on the same
   metal** (for example AAdvantage space on IB metal and Iberia Plus). Not built.
 

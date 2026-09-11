@@ -213,7 +213,7 @@ def test_a_429_on_the_first_lookup_stops_every_later_one():
 
 def test_the_banner_names_the_429(capsys):
     _, out, _ = cli(capsys, stub=Stub(trips_status={"B2": 429}))
-    assert "Seats.aero rate-limited an itinerary lookup (HTTP 429)" in out
+    assert "Seats.aero rate-limited a request in this run (HTTP 429)" in out
 
 
 # ---------------------------------------------------------------------------

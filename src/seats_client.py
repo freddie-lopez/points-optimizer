@@ -1026,6 +1026,10 @@ class SeatsClient:
         self.last_snapshot_content_hash: str = ""
         self.last_snapshot_captured_at = None
         self.last_snapshot_parser_version: str = ""
+        # STICKY for the life of this client: Seats.aero answered HTTP 429 to a
+        # search or an itinerary lookup. Its real rate limit shows up only this
+        # way, so every later trips request in the run is not sent.
+        self.saw_http_429: bool = False
 
     # -- rate limiting ---------------------------------------------------
 
@@ -1238,6 +1242,8 @@ class SeatsClient:
                     params=params,
                     timeout=15,
                 )
+                if getattr(response, "status_code", None) == 429:
+                    self.saw_http_429 = True
                 response.raise_for_status()
                 payload = response.json() or {}
                 http_status = getattr(response, "status_code", None)
@@ -1396,6 +1402,66 @@ class SeatsClient:
 
     # -- trips -----------------------------------------------------------
 
+    def cached_trips(
+        self,
+        availability_id: str,
+        cache: Optional["response_cache.ResponseCache"],
+        cache_ttl: Optional[int] = None,
+    ) -> Optional["RawTripsResult"]:
+        """
+        The disk cache's answer for this id, or None. NEVER sends anything.
+
+        `trips_raw` asks this first; the metal pass also asks it after the
+        per-run cap is spent or after an HTTP 429, because a cache hit costs no
+        call and the answer is already on disk.
+        """
+        from src import seats_trips
+
+        if cache is None or not seats_trips.valid_availability_id(availability_id):
+            return None
+        request = {"availability_id": availability_id, **seats_trips.TRIPS_REQUEST_PARAMS}
+        key = response_cache.request_key("trips", request)
+        tcache = cache.for_trips()
+        hit = tcache.get(key, ttl=cache_ttl)
+        if hit is None:
+            return None
+        if len(hit.pages) != 1:
+            tcache.warnings.append(
+                f"Trips cache file {hit.path.name} holds {len(hit.pages)} pages; "
+                f"a trips response is exactly one. Treated as a MISS and "
+                f"re-fetched. The file is left in place."
+            )
+            return None
+        payload = hit.pages[0]
+        # WAY (9): the stored coverage and the coverage recomputed from the
+        # bytes, unioned - neither can answer "complete" for the other.
+        stored = response_cache.provenance_from_meta(hit.meta)
+        recomputed, recomputed_why = seats_trips.trips_coverage(payload)
+        incomplete = bool(stored.get("incomplete")) or recomputed
+        reasons = [
+            r
+            for r in (str(stored.get("incomplete_reason") or ""), recomputed_why)
+            if r
+        ]
+        return RawTripsResult(
+            payload=payload,
+            http_status=hit.http_status,
+            served_from_cache=True,
+            fetched_at=hit.fetched_at,
+            request=request,
+            request_key=key,
+            snapshot_name=hit.meta.get("snapshot"),
+            manifest_key="",
+            incomplete=incomplete,
+            incomplete_reason=(
+                "; ".join(reasons)
+                or "the cached response is INCOMPLETE and records no reason."
+            )
+            if incomplete
+            else "",
+            request_sent=False,
+        )
+
     def trips_raw(
         self,
         availability_id: str,
@@ -1430,43 +1496,9 @@ class SeatsClient:
         tcache = cache.for_trips() if cache is not None else None
 
         if tcache is not None and not refresh:
-            hit = tcache.get(key, ttl=cache_ttl)
-            if hit is not None and len(hit.pages) != 1:
-                tcache.warnings.append(
-                    f"Trips cache file {hit.path.name} holds {len(hit.pages)} pages; "
-                    f"a trips response is exactly one. Treated as a MISS and "
-                    f"re-fetched. The file is left in place."
-                )
-            elif hit is not None:
-                payload = hit.pages[0]
-                # WAY (9): the stored coverage and the coverage recomputed from
-                # the bytes, unioned - neither can answer "complete" for the other.
-                stored = response_cache.provenance_from_meta(hit.meta)
-                recomputed, recomputed_why = seats_trips.trips_coverage(payload)
-                incomplete = bool(stored.get("incomplete")) or recomputed
-                reasons = [
-                    r
-                    for r in (str(stored.get("incomplete_reason") or ""), recomputed_why)
-                    if r
-                ]
-                return RawTripsResult(
-                    payload=payload,
-                    http_status=hit.http_status,
-                    served_from_cache=True,
-                    fetched_at=hit.fetched_at,
-                    request=request,
-                    request_key=key,
-                    snapshot_name=hit.meta.get("snapshot"),
-                    manifest_key="",
-                    incomplete=incomplete,
-                    incomplete_reason=(
-                        "; ".join(reasons)
-                        or "the cached response is INCOMPLETE and records no reason."
-                    )
-                    if incomplete
-                    else "",
-                    request_sent=False,
-                )
+            hit = self.cached_trips(availability_id, cache, cache_ttl)
+            if hit is not None:
+                return hit
 
         if self._budget_remaining() <= 0:
             raise TripsLookupError(
@@ -1507,6 +1539,7 @@ class SeatsClient:
                 "HTTP_404", "HTTP 404 Not Found", request_sent=True, http_status=404
             )
         if status == 429:
+            self.saw_http_429 = True
             raise TripsLookupError(
                 "HTTP_429",
                 "HTTP 429 Too Many Requests",

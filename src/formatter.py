@@ -687,8 +687,9 @@ def _print_metal_banner(report, console: Console) -> None:
         )
     if report.rate_limited:
         console.print(
-            "  [bold red]Seats.aero rate-limited an itinerary lookup (HTTP 429); "
-            "every later lookup in this run was NOT attempted.[/bold red]"
+            "  [bold red]Seats.aero rate-limited a request in this run (HTTP 429); "
+            "no itinerary request was sent after it (answers already in the disk "
+            "cache were still read).[/bold red]"
         )
     label = seats_trips.trips_parser_label()
     if label:
