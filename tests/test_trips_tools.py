@@ -138,7 +138,11 @@ def test_no_key_captures_nothing(tmp_path):
 
 def test_a_capture_writes_the_envelope_and_the_raw_body_with_no_key(tmp_path):
     code, out, stub = run(capture_args(tmp_path), stub=Stub(raw_text='{"data": "verbatim"}'))
-    assert code == 0, out
+    # The raw body here is deliberately NOT the page, so the label check refuses
+    # the file and capture says so with exit 5 (Re-test 2, R2-4). The envelope
+    # and the verbatim body are still written.
+    assert code == trips_tools.EXIT_DRIFT, out
+    assert "CANNOT FLIP THE UNVERIFIED LABEL" in out
     files = sorted((tmp_path / "real").iterdir())
     names = [p.name for p in files]
     assert names == [

@@ -18,9 +18,10 @@ capture is what can flip the trips parser's UNVERIFIED label.
 booking site, and a record with the site half left blank. It settles, for ONE
 source, whether Seats.aero's TotalTaxes already includes carrier surcharges.
 
-Exit codes: 0 captured and clean; 1 nothing captured (usage, no key, declined,
-HTTP or network error, key material detected, refused input); 5 captured with
-drift (the file IS written; do not flip the label).
+Exit codes: 0 captured and clean (the label check accepts the file); 1 nothing
+captured (usage, no key, declined, HTTP or network error, key material detected,
+refused input); 5 captured with drift, or captured but refused by the label
+check (the file IS written; do not flip the label).
 """
 import argparse
 import json
@@ -80,10 +81,11 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "EXIT CODES:\n"
-            "  0  captured and clean\n"
+            "  0  captured and clean: the label check accepts the file\n"
             "  1  nothing captured (usage, no key, declined, HTTP or network error,\n"
             "     key material detected, refused input)\n"
-            "  5  captured WITH drift - the file is written; do not flip the label\n"
+            "  5  captured WITH drift, or refused by the label check - the file is\n"
+            "     written; do not flip the label\n"
         ),
     )
     sub = parser.add_subparsers(dest="command")
@@ -218,6 +220,7 @@ class Capture:
 
     def __init__(self):
         self.row: Optional[Dict[str, Any]] = None
+        self.flip_problems: List[str] = []
         self.search_request: Optional[Dict[str, str]] = None
         self.availability_id = ""
         self.payload: Any = None
@@ -479,6 +482,20 @@ def run_capture(
             f"parser until it reads this capture cleanly, then capture again.[/bold red]"
         )
         for item in cap.blocking_drift:
+            console.print(f"[red]  - {escape(item)}[/red]")
+        return EXIT_DRIFT, cap
+    # Re-test 2, R2-4. "Clean" is the LABEL CHECK's verdict, not this tool's
+    # own: the advice below is only printed for a file the check accepts, so
+    # following it can never turn the label test red.
+    cap.flip_problems = seats_trips.schema_verification_problems(cap.path.name, cap.path.parent)
+    if cap.flip_problems:
+        console.print(
+            f"[bold red]CAPTURED, BUT THIS FILE CANNOT FLIP THE UNVERIFIED LABEL "
+            f"({len(cap.flip_problems)} reason(s) from the label check). The file is "
+            f"written and is still useful as a drift record. Do NOT set "
+            f"TRIPS_SCHEMA_VERIFIED_BY to it.[/bold red]"
+        )
+        for item in cap.flip_problems:
             console.print(f"[red]  - {escape(item)}[/red]")
         return EXIT_DRIFT, cap
     console.print(

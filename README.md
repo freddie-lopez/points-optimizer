@@ -493,9 +493,9 @@ above stays the whole contract of `python -m src.main`.
 
 | Code | Meaning |
 |---|---|
-| 0 | captured and clean |
+| 0 | captured and clean: the label check (`schema_verification_problems`) accepts the file, and only then does it print the `TRIPS_SCHEMA_VERIFIED_BY` advice |
 | 1 | nothing captured: usage error, no key, declined at the prompt, HTTP or network error, key material detected, or refused input (an unreported source; a tax figure scoring does not believe - 0, negative, unconvertible, or below the UK APD owed; a search that says there is more) |
-| 5 | captured WITH drift: the file is written; do not flip the label |
+| 5 | captured WITH drift, or captured but refused by the label check (an inferred route, a raw body that is not the page, an out-dir that is not `real/`) and the reasons listed: the file is written; do not flip the label |
 
 Both subcommands resolve the key the way `python -m src.main` does, print the
 key banner, print how many calls they will make, and ask `Continue? [y/N]`
