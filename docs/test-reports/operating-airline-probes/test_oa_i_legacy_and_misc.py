@@ -85,12 +85,36 @@ def _render(root, airlines, tmp_path):
     return r.stdout
 
 
+# RE-TEST 4, coordinator ruling on D29: byte-identical to master EXCEPT the
+# changelog sentences the Manager asked to reword (should-fix 5a). Exactly these
+# (old -> new) pairs are normalised; any other difference fails.
+REWORDED = [
+    ("undercount, which is the v0 bug. Reported as a floor plus a break-even ",
+     "undercount and turn an unknown charge into a saving that is not there. Reported as a floor plus a break-even "),
+    ("The v1 modeled band 150-200 is KEPT", "The earlier modelled band 150-200 is KEPT"),
+    ("matching the v1 modeled band.", "matching the earlier modelled band."),
+    ("which matches the v1 modeled band exactly.", "which matches the earlier modelled band exactly."),
+]
+
+
+def _unwrap(text):
+    return " ".join(text.split())
+
+
+def reworded_only(master_text):
+    out = _unwrap(master_text)
+    for old, new in REWORDED:
+        out = out.replace(old, new)
+    return out
+
+
 @pytest.mark.parametrize("airlines", ["VS, DL", "VS"])
 def test_not_engaged_output_is_byte_identical_to_master(tmp_path, airlines):
-    """D29: `trips_mode=None` must render exactly what master rendered."""
+    """D29 (as ruled in re-test 4): `trips_mode=None` renders master's output, bar the reworded sentences."""
     master = _render(_master_tree(tmp_path), airlines, tmp_path)
     branch = _render(ROOT, airlines, tmp_path)
-    assert branch == master
+    assert "which is the v0 bug" in _unwrap(master), "precondition: master carries the old sentence"
+    assert _unwrap(branch) == reworded_only(master)
 
 
 def test_rich_markup_in_api_strings_is_printed_literally_and_cannot_crash(capsys, monkeypatch):
@@ -114,30 +138,19 @@ def test_mixed_cabin_itineraries_under_min_cabin_pct_100_are_recorded_as_drift()
     assert any("MixedCabinPct" in d for d in parsed.drift), parsed.drift
 
 
-def _record(root, source, verdict_line):
-    d = root / "docs" / "yq-checks"
-    d.mkdir(parents=True, exist_ok=True)
-    name = f"2026-09-10-{source}.md"
-    (d / name).write_text(
-        f"# yq-check record: {source}, 2026-09-10\n\n## Seats.aero\n- program: x (source {source})\n\n"
-        f"## site\n- verdict (includes_yq / excludes_yq / inconclusive): {verdict_line}\n")
-    return f"docs/yq-checks/{name}"
-
-
-@pytest.mark.parametrize("record_says", ["excludes_yq", "inconclusive"])
-def test_a_record_whose_own_verdict_disagrees_with_the_row_is_refused(tmp_path, record_says):
+@pytest.mark.parametrize("record_says,why", [("excludes_yq", "says excludes_yq and the row says includes_yq"),
+                                            ("inconclusive", "INCONCLUSIVE")])
+def test_a_record_whose_own_verdict_disagrees_with_the_row_is_refused(tmp_path, record_says, why):
     """
-    yq-check prints BOTH candidate CSV rows (deviation 5) and the record has a
-    verdict line to fill. The loader never compares the two: a record that says
-    "excludes_yq" or "inconclusive" backs an `includes_yq` row, which then
-    scores every award of that source at taxes only.
+    RE-TEST 4: 6-column CSV and the D1/must-fix-2 record lines, with the refusal
+    REASON asserted (a 5-column CSV now fails on its header, which would make
+    this probe pass for the wrong reason).
     """
-    ev = _record(tmp_path, "virginatlantic", record_says)
-    csv = tmp_path / "yq.csv"
-    csv.write_text("source,verdict,verified_on,evidence,notes\n"
-                   f"virginatlantic,includes_yq,2026-09-10,{ev},x\n")
-    with pytest.raises(YqInclusionError):
-        yq_inclusion.load(csv, today=date(2026, 9, 11), root=tmp_path)
+    from conftest import yq_load, yq_record_body, yq_write_record
+
+    ev = yq_write_record(tmp_path, yq_record_body(verdict=record_says))
+    with pytest.raises(YqInclusionError, match=why):
+        yq_load(tmp_path, f"virginatlantic,VS,includes_yq,2026-09-10,{ev},x")
 
 
 def test_a_failed_archive_is_said_out_loud_and_the_line_still_prints(capsys, monkeypatch):

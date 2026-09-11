@@ -123,25 +123,43 @@ def test_a_couple_leg_that_can_never_be_scored_spends_no_trips_call(tmp_path, ca
 
 EVID = "docs/yq-checks/2026-09-10-virginatlantic.md"
 
+# RE-TEST 4: rewritten for D1(b). A verdict is keyed by (source, airline) and
+# applies only when the award's lookup is KNOWN on exactly that airline. Every
+# other outcome must score EXACTLY as with no table at all.
+from conftest import YQ_HEADER, yq_load, yq_record_body, yq_table, yq_write_record  # noqa: E402
 
-def table(which, source="virginatlantic"):
-    return {source: YqVerdict(source, which, date(2026, 9, 10), EVID)}
+
+def table(which, source="virginatlantic", airline="VS"):
+    return yq_table(which, source=source, airline=airline, evidence=EVID)
 
 
-def run_yq(which, trips, airlines="VS, DL", **row_kw):
+def run_yq(which, trips, airlines="VS, DL", airline="VS", **row_kw):
     stub = Stub(rows_for=vs_b4_rows(airlines=airlines, **row_kw), trips={B4_VS: trips})
-    results, totals, text, opts, fx = evaluate(stub, yq_table=table(which))
+    results, totals, text, opts, fx = evaluate(stub, yq_table=table(which, airline=airline) if which else {})
     return results["B4"], totals, text
 
 
-@pytest.mark.parametrize("airlines", ["VS, DL", "VS"])
-@pytest.mark.parametrize("name", ["known_vs", "404", "ambiguous", "known_dl"])
-def test_includes_yq_never_adds_a_band(name, airlines):
-    b4, totals, text = run_yq("includes_yq", OUTCOMES[name], airlines=airlines)
-    cand = b4.best_points
-    assert b4.points_total_score_usd == pytest.approx(b4.funding_plan.score_usd + cand.observed_taxes_usd)
-    assert b4.points_score_low_usd == pytest.approx(b4.points_score_high_usd)
-    assert b4.apd_added_usd == 0.0
+def test_includes_yq_on_known_vs_scores_at_taxes_only_and_adds_no_band():
+    for airlines in ("VS, DL", "VS"):
+        b4, totals, text = run_yq("includes_yq", OUTCOMES["known_vs"], airlines=airlines)
+        cand = b4.best_points
+        assert b4.points_total_score_usd == pytest.approx(b4.funding_plan.score_usd + cand.observed_taxes_usd)
+        assert b4.points_score_low_usd == pytest.approx(b4.points_score_high_usd)
+        assert b4.apd_added_usd == 0.0
+
+
+OFF_AIRLINE = [(n, a) for n in ("404", "ambiguous", "known_dl", "known_vs_dl", "empty") for a in ("VS, DL", "VS")
+               if not (n == "known_vs_dl" and a == "VS")]
+
+
+@pytest.mark.parametrize("name,airlines", OFF_AIRLINE)
+@pytest.mark.parametrize("which", ["includes_yq", "excludes_yq"])
+def test_a_verdict_off_its_airline_scores_exactly_as_no_row(name, airlines, which):
+    """D1(b): not KNOWN on VS alone -> the (virginatlantic, VS) verdict is inert, every number as with no row."""
+    base = snapshot(*evaluate(Stub(rows_for=vs_b4_rows(airlines=airlines), trips={B4_VS: OUTCOMES[name]}))[:2])
+    got = snapshot(*evaluate(Stub(rows_for=vs_b4_rows(airlines=airlines), trips={B4_VS: OUTCOMES[name]}),
+                             yq_table=table(which))[:2])
+    assert got == base
 
 
 def test_excludes_yq_adds_exactly_one_band_on_known_single_metal():
@@ -161,6 +179,7 @@ def test_excludes_yq_on_carriers_with_different_bands_stays_unknown(name):
 @pytest.mark.parametrize("taxes", [0, 1, -5, 500])
 def test_untrusted_taxes_win_over_every_verdict(which, taxes):
     b4, totals, text = run_yq(which, OUTCOMES["known_vs"], taxes=taxes)
+    assert b4.best_points.metal.status is MetalStatus.KNOWN, "precondition: the verdict WOULD apply"
     assert b4.points_total_score_usd == float("inf")
     assert "B4" in totals["legs_taxes_unknown_ids"]
 
@@ -168,68 +187,52 @@ def test_untrusted_taxes_win_over_every_verdict(which, taxes):
 @pytest.mark.parametrize("which", ["includes_yq", "excludes_yq"])
 def test_unconvertible_currency_wins_over_every_verdict(which):
     b4, totals, text = run_yq(which, OUTCOMES["known_vs"], currency="XAF")
+    assert b4.best_points.metal.status is MetalStatus.KNOWN
     assert b4.points_total_score_usd == float("inf")
 
 
 # ---------------------------------------------------------------------------
-# The validator
+# The validator (6-column CSV, full records; each refusal checked for its REASON
+# so a wrong header can never make these pass)
 # ---------------------------------------------------------------------------
 
 
-def _record(root, name, source):
-    d = root / "docs" / "yq-checks"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / name).write_text(
-        f"# yq-check record: {source}, 2026-09-10\n\n## Seats.aero\n- program: x (source {source})\n"
-        f"\n## site\n- verdict (includes_yq / excludes_yq / inconclusive): includes_yq\n"
-    )
-    return f"docs/yq-checks/{name}"
-
-
 def test_a_record_for_one_source_cannot_back_a_verdict_for_another(tmp_path):
-    """
-    The plan's undercount guard: no source leaves case E "without a row backed
-    by evidence". The loader checks that the evidence file exists, is inside
-    docs/yq-checks/, has the marker and no blanks - but not that it is a record
-    FOR THIS SOURCE. Copying the Virgin row to add Flying Blue (the plan's
-    rejected option (b), "generalise one check to every source") loads cleanly
-    and moves Flying Blue scores.
-    """
-    ev = _record(tmp_path, "2026-09-10-virginatlantic.md", "virginatlantic")
-    csv = tmp_path / "yq.csv"
-    csv.write_text(
-        "source,verdict,verified_on,evidence,notes\n"
-        f"virginatlantic,includes_yq,2026-09-10,{ev},JFK-LHR J\n"
-        f"flyingblue,includes_yq,2026-09-10,{ev},copied\n"
-    )
-    with pytest.raises(YqInclusionError):
-        yq_inclusion.load(csv, today=date(2026, 9, 11), root=tmp_path)
+    ev = yq_write_record(tmp_path, yq_record_body("virginatlantic"))
+    assert yq_load(tmp_path, f"virginatlantic,VS,includes_yq,2026-09-10,{ev},JFK-LHR J")
+    with pytest.raises(YqInclusionError, match="is a record for virginatlantic, not for 'flyingblue'"):
+        yq_load(tmp_path, f"virginatlantic,VS,includes_yq,2026-09-10,{ev},JFK-LHR J",
+                f"flyingblue,VS,includes_yq,2026-09-10,{ev},copied")
 
 
 def test_the_committed_table_is_still_header_only():
     assert yq_inclusion.load() == {}
-    assert (yq_inclusion.YQ_TABLE_PATH.read_text().strip()
-            == "source,verdict,verified_on,evidence,notes")
+    assert yq_inclusion.YQ_TABLE_PATH.read_text().strip() == YQ_HEADER
 
 
-@pytest.mark.parametrize("line", [
-    "qatar,includes_yq,2026-09-10,{ev},x",
-    "virginatlantic,unverified,2026-09-10,{ev},x",
-    "virginatlantic,includes_yq,2099-01-01,{ev},x",
-    "notasource,includes_yq,2026-09-10,{ev},x",
-    "virginatlantic,includes_yq,2026-09-10,docs/yq-checks/../../README.md,x",
-    "virginatlantic,includes_yq,2026-09-10,README.md,x",
-    "virginatlantic,includes_yq,2026-09-10,/etc/passwd,x",
-    "virginatlantic,includes_yq,2026-09-10,docs/yq-checks/README.md,x",
+@pytest.mark.parametrize("line,why", [
+    ("qatar,VS,includes_yq,2026-09-10,{ev},x", "reports no taxes"),
+    ("virginatlantic,VS,unverified,2026-09-10,{ev},x", "is not one of"),
+    ("virginatlantic,VS,includes_yq,2099-01-01,{ev},x", "future"),
+    ("notasource,VS,includes_yq,2026-09-10,{ev},x", "not a Seats.aero source"),
+    ("virginatlantic,VS,includes_yq,2026-09-10,docs/yq-checks/../../README.md,x", "must be a path"),
+    ("virginatlantic,VS,includes_yq,2026-09-10,README.md,x", "outside"),
+    ("virginatlantic,VS,includes_yq,2026-09-10,/etc/passwd,x", "must be a path"),
+    ("virginatlantic,VS,includes_yq,2026-09-10,docs/yq-checks/README.md,x", "blanks"),
+    ("virginatlantic,,includes_yq,2026-09-10,{ev},x", "two-character airline code"),
+    ("virginatlantic,VSS,includes_yq,2026-09-10,{ev},x", "two-character airline code"),
 ])
-def test_the_validator_refuses_bad_rows(tmp_path, line):
-    ev = _record(tmp_path, "2026-09-10-virginatlantic.md", "virginatlantic")
+def test_the_validator_refuses_bad_rows(tmp_path, line, why):
+    ev = yq_write_record(tmp_path, yq_record_body())
     (tmp_path / "docs" / "yq-checks" / "README.md").write_text("yq-check records ____\n")
     (tmp_path / "README.md").write_text("yq-check record\n")
-    csv = tmp_path / "yq.csv"
-    csv.write_text("source,verdict,verified_on,evidence,notes\n" + line.format(ev=ev) + "\n")
-    with pytest.raises(YqInclusionError):
-        yq_inclusion.load(csv, today=date(2026, 9, 11), root=tmp_path)
+    with pytest.raises(YqInclusionError, match=why):
+        yq_load(tmp_path, line.format(ev=ev))
+
+
+def test_the_validator_accepts_the_same_good_row_it_refuses_variants_of(tmp_path):
+    ev = yq_write_record(tmp_path, yq_record_body())
+    assert yq_load(tmp_path, f"virginatlantic,VS,includes_yq,2026-09-10,{ev},x")[("virginatlantic", "VS")].includes
 
 
 # ---------------------------------------------------------------------------

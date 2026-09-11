@@ -240,8 +240,9 @@ def test_every_line_naming_looked_up_metal_carries_the_label(scenario):
     rows_for = vs_b4_rows()
     trips = {B4_VS: tp.payload([vs_itinerary(B4_VS)])}
     if scenario.startswith("excludes"):
-        kw["yq_table"] = {"virginatlantic": YqVerdict("virginatlantic", "excludes_yq", date(2026, 9, 10),
-                                                      "docs/yq-checks/x.md")}
+        # RE-TEST 4: keyed by (source, airline) under D1(b).
+        from conftest import yq_table
+        kw["yq_table"] = yq_table("excludes_yq", evidence="docs/yq-checks/x.md")
         if scenario == "excludes_ambiguous":
             trips = {B4_VS: tp.payload([vs_itinerary(B4_VS), vs_itinerary(B4_VS, "DL41", trip_id="t2")])}
     if scenario == "af_alternative":
@@ -285,6 +286,15 @@ def _tree_at(commit, tmp_path):
     return dst
 
 
+REWORDED_R3 = [
+    ("undercount, which is the v0 bug. Reported as a floor plus a break-even ",
+     "undercount and turn an unknown charge into a saving that is not there. Reported as a floor plus a break-even "),
+    ("The v1 modeled band 150-200 is KEPT", "The earlier modelled band 150-200 is KEPT"),
+    ("matching the v1 modeled band.", "matching the earlier modelled band."),
+    ("which matches the v1 modeled band exactly.", "which matches the earlier modelled band exactly."),
+]
+
+
 def _norm(text):
     import re
     text = re.sub(r"\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(\+00:00|Z)?", "<TS>", text)
@@ -293,6 +303,12 @@ def _norm(text):
     text = re.sub(r"\d+ minutes? ago", "<AGO>", text)
     text = text.replace(" " + LABEL, "").replace("No lookup was made on this run",
                                                  "This lookup established nothing further")
+    # RE-TEST 4: exactly the rewordings round 3 made on purpose - should-fix 5a
+    # (the v0 / v1 changelog sentences) and D1's band note ("... no row for
+    # 'virginatlantic' on VS metal)"). Nothing else is normalised.
+    for old, new in REWORDED_R3:
+        text = text.replace(old, new)
+    text = re.sub(r"(has no row for '[a-z]+') on [A-Z]{2}(?:, [A-Z]{2})* metal\)", r"\1)", text)
     return [l.rstrip() for l in text.splitlines()]
 
 
@@ -310,5 +326,6 @@ def test_the_full_cli_output_is_the_round_2_output_plus_the_label_and_nothing_el
         r = subprocess.run([PY, str(RENDER), str(root), scenario], cwd=root, env=env,
                            capture_output=True, text=True, timeout=180)
         assert r.returncode == 0, r.stderr[-800:]
-        outs[name] = _norm(r.stdout)
-    assert outs["new"] == outs["old"]
+        outs[name] = r.stdout
+    # the old side is moved forward through the rewordings; the new side through the band-note rule
+    assert _norm(outs["new"]) == _norm(outs["old"])

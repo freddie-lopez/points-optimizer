@@ -296,3 +296,67 @@ def vs_b4_rows(airlines="VS, DL", taxes=45000, cost="60000", rid=None, **kw):
 
 
 B4_VS = aid_for("B4", "vir")
+
+
+# ---------------------------------------------------------------------------
+# Re-test 4: the D1(b) / must-fix-2 YQ contract, in one place.
+#   data/yq_inclusion.csv is source,airline,verdict,verified_on,evidence,notes;
+#   a record carries "itinerary lookup status", "checked airline" and the
+#   "operated by <airline> itself (yes / no)" line.
+# ---------------------------------------------------------------------------
+
+YQ_HEADER = "source,airline,verdict,verified_on,evidence,notes"
+
+
+def yq_record_body(source="virginatlantic", verdict="includes_yq", airline="VS", *, title_source=None,
+                   status="KNOWN", checked=None, operated="yes", operated_code=None, extra=""):
+    checked = airline if checked is None else checked
+    operated_code = airline if operated_code is None else operated_code
+    return (
+        f"# yq-check record: {title_source or source}, 2026-09-10\n\n## Seats.aero\n\n"
+        f"- program: Virgin Atlantic Flying Club (source {source})\n{extra}"
+        f"- itinerary lookup status: {status}\n"
+        f"- checked airline (the award's KNOWN flight-number carrier): {checked}\n\n"
+        f"## site\n\n"
+        f"- the site shows this flight operated by {operated_code} itself, not a codeshare partner "
+        f"(yes / no): {operated}\n"
+        f"- total taxes, fees and carrier-imposed charges for ONE adult, as the site shows it "
+        f"(one combined figure, or its lines added up): GBP 450.00\n"
+        f"- verdict (includes_yq / excludes_yq / inconclusive): {verdict}\n"
+    )
+
+
+def yq_write_record(root, body, name="2026-09-10-virginatlantic.md"):
+    d = root / "docs" / "yq-checks"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_text(body)
+    return f"docs/yq-checks/{name}"
+
+
+def yq_load(root, *rows):
+    from src import yq_inclusion
+
+    csv = root / "yq.csv"
+    csv.write_text(YQ_HEADER + "\n" + "\n".join(rows) + "\n")
+    return yq_inclusion.load(csv, today=date(2026, 9, 11), root=root)
+
+
+def yq_table(which, source="virginatlantic", airline="VS", evidence="docs/yq-checks/2026-09-10-virginatlantic.md"):
+    from src.yq_inclusion import YqVerdict
+
+    return {(source, airline): YqVerdict(source=source, airline=airline, verdict=which,
+                                         verified_on=date(2026, 9, 10), evidence=evidence)}
+
+
+# RE-TEST 4 (the Manager's must-fix 1, applied to these probes too). Every probe
+# here describes the UNVERIFIED state, so the two label constants are pinned for
+# every in-process probe: flipping them in source must not turn this suite red.
+# Probes that run a CHILD process on a tree (the master / round-2 byte
+# comparisons) read the source constants and need the committed, unflipped tree
+# and a git checkout; they say so in their docstrings.
+@pytest.fixture(autouse=True)
+def _pin_unverified_label_constants(monkeypatch):
+    from src import seats_trips
+
+    monkeypatch.setattr(seats_trips, "TRIPS_SCHEMA_VERIFIED_BY", "")
+    monkeypatch.setattr(seats_trips, "TRIPS_TOTALTAXES_UNIT", "unverified")

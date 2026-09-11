@@ -88,48 +88,48 @@ def test_M5_class_signals_that_say_nothing_more_do_not_block_known(extra):
 # --- H1 / M2: the stricter loader --------------------------------------------------
 
 
+# RE-TEST 4: records carry the D1/must-fix-2 lines and the CSV has the airline
+# column. Every refusal now asserts its REASON, so a stale header cannot make a
+# probe pass for the wrong reason.
+from conftest import yq_load, yq_record_body, yq_write_record  # noqa: E402
+
+
 def _record(root, body, name="2026-09-10-virginatlantic.md"):
-    d = root / "docs" / "yq-checks"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / name).write_text(body)
-    return f"docs/yq-checks/{name}"
+    return yq_write_record(root, body, name)
 
 
 def _body(source="virginatlantic", verdict="includes_yq", title_source=None, extra=""):
-    return (
-        f"# yq-check record: {title_source or source}, 2026-09-10\n\n## Seats.aero\n\n"
-        f"- program: Virgin Atlantic Flying Club (source {source})\n{extra}\n"
-        f"## site\n\n- taxes, fees and carrier-imposed charges for ONE adult: GBP 450.00\n"
-        f"- verdict (includes_yq / excludes_yq / inconclusive): {verdict}\n"
-    )
+    return yq_record_body(source=source, verdict=verdict, title_source=title_source, extra=extra)
 
 
-def _load(root, ev, source="virginatlantic", verdict="includes_yq"):
-    csv = root / "yq.csv"
-    csv.write_text("source,verdict,verified_on,evidence,notes\n" f"{source},{verdict},2026-09-10,{ev},x\n")
-    return yq_inclusion.load(csv, today=TODAY, root=root)
+def _load(root, ev, source="virginatlantic", verdict="includes_yq", airline="VS"):
+    return yq_load(root, f"{source},{airline},{verdict},2026-09-10,{ev},x")
 
 
-@pytest.mark.parametrize("said", ["includes_yq.", "includes-yq", "include_yq", "`includes_yq`", "**includes_yq**",
-                                  "includes_yq excludes_yq", "includes_yq?", "yes", "IN", "excludes_yq",
-                                  "inconclusive", "Inconclusive - site total differs"])
-def test_H1_class_every_near_miss_verdict_line_is_refused(tmp_path, said):
+@pytest.mark.parametrize("said,why", [
+    ("includes_yq.", "not one of"), ("includes-yq", "not one of"), ("include_yq", "not one of"),
+    ("`includes_yq`", "not one of"), ("**includes_yq**", "not one of"), ("includes_yq excludes_yq", "not one of"),
+    ("includes_yq?", "not one of"), ("yes", "not one of"), ("IN", "not one of"),
+    ("excludes_yq", "says excludes_yq and the row says includes_yq"), ("inconclusive", "INCONCLUSIVE"),
+    ("Inconclusive - site total differs", "not one of"),
+])
+def test_H1_class_every_near_miss_verdict_line_is_refused(tmp_path, said, why):
     ev = _record(tmp_path, _body(verdict=said))
-    with pytest.raises(YqInclusionError):
+    with pytest.raises(YqInclusionError, match=why):
         _load(tmp_path, ev)
 
 
 @pytest.mark.parametrize("said", ["includes_yq", "Includes_YQ", "  includes_yq   ", "INCLUDES_YQ\t"])
 def test_H1_a_legitimately_filled_verdict_line_loads(tmp_path, said):
     ev = _record(tmp_path, _body(verdict=said))
-    assert _load(tmp_path, ev)["virginatlantic"].includes
+    assert _load(tmp_path, ev)[("virginatlantic", "VS")].includes
 
 
 def test_H1_a_record_saved_with_crlf_line_endings_loads(tmp_path):
     d = tmp_path / "docs" / "yq-checks"
     d.mkdir(parents=True)
     (d / "2026-09-10-virginatlantic.md").write_bytes(_body().replace("\n", "\r\n").encode())
-    assert _load(tmp_path, "docs/yq-checks/2026-09-10-virginatlantic.md")["virginatlantic"].includes
+    assert _load(tmp_path, "docs/yq-checks/2026-09-10-virginatlantic.md")[("virginatlantic", "VS")].includes
 
 
 @pytest.mark.parametrize("variant", ["two_title_sources", "second_program_line", "notes_name_other"])
@@ -141,7 +141,7 @@ def test_M2_class_a_record_naming_another_source_never_backs_it(tmp_path, varian
     else:
         body = _body(extra="- note: same check as (source flyingblue)\n")
     ev = _record(tmp_path, body)
-    with pytest.raises(YqInclusionError):
+    with pytest.raises(YqInclusionError, match="not for 'flyingblue'"):
         _load(tmp_path, ev, source="flyingblue")
 
 
@@ -182,17 +182,20 @@ def test_the_whole_verdict_flow_a_record_the_tool_wrote_filled_by_hand_loads(tmp
              "--api-key", KEY, "--yes"],
             read=lambda p: "y", console=Console(file=buf, width=400), today=TODAY)
     out = buf.getvalue()
-    template = [l.strip() for l in out.splitlines() if l.strip().startswith("virginatlantic,<VERDICT>,")][0]
+    template = [l.strip() for l in out.splitlines() if l.strip().startswith("virginatlantic,VS,<VERDICT>,")][0]
     rec = next(rec_dir.glob("*.md"))
     # Fill the five FIELDS the site half asks for - exactly what the record says
     # to do - and nothing else.
+    # RE-TEST 4: the must-fix-2 site half (operated-by line, the TOTAL).
     fills = {
         "- date checked: ____": "- date checked: 2026-09-12",
         "- flight(s) shown: ____": "- flight(s) shown: VS19 LHR-SFO 11:00",
-        "- taxes, fees and carrier-imposed charges for ONE adult: ____":
-            "- taxes, fees and carrier-imposed charges for ONE adult: GBP 450.00",
-        "- separate carrier-imposed charge line (if any): ____":
-            "- separate carrier-imposed charge line (if any): none shown",
+        "- the site shows this flight operated by VS itself, not a codeshare partner (yes / no): ____":
+            "- the site shows this flight operated by VS itself, not a codeshare partner (yes / no): yes",
+        "- total taxes, fees and carrier-imposed charges for ONE adult, as the site shows it "
+        "(one combined figure, or its lines added up): ____":
+            "- total taxes, fees and carrier-imposed charges for ONE adult, as the site shows it "
+            "(one combined figure, or its lines added up): USD 610.00",
         "- verdict (includes_yq / excludes_yq / inconclusive): ____":
             "- verdict (includes_yq / excludes_yq / inconclusive): includes_yq",
     }
@@ -202,8 +205,9 @@ def test_the_whole_verdict_flow_a_record_the_tool_wrote_filled_by_hand_loads(tmp
         text = text.replace(blank, filled)
     rec.write_text(text)
     csv = tmp_path / "yq.csv"
-    csv.write_text("source,verdict,verified_on,evidence,notes\n" + template.replace("<VERDICT>", "includes_yq") + "\n")
-    assert yq_inclusion.load(csv, today=TODAY, root=tmp_path)["virginatlantic"].includes
+    csv.write_text("source,airline,verdict,verified_on,evidence,notes\n" + template.replace("<VERDICT>", "includes_yq") + "\n")
+    assert "____" not in text
+    assert yq_inclusion.load(csv, today=TODAY, root=tmp_path)[("virginatlantic", "VS")].includes
 
 
 # ===========================================================================

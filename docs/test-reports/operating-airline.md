@@ -859,3 +859,215 @@ unchanged. Only the precondition went. Both tests are green.
 | R2-5 | Synthetic page re-wrapped flips | **Closed for the cheap paths**; deliberate hand-built forgery remains, as stated in the README and fixtures READMEs | round-2 probe green; 8 honest-capture probes show no false refusal |
 | R2-6 | "This lookup" where none was made | **Closed** | all 10 NOT_LOOKED_UP codes plus NOT_RECORDED |
 | R2-7 | Metal lines without the label | **Closed** | 4 scenarios; escaping changed nothing but the label |
+
+---
+
+# Re-test 4 (fix round 3 from the Manager review: `b3bc640..ea79ce9`, report `ea79ce9`)
+
+Tester pass, 2026-09-11. As in every round, I changed no application code and no
+test under `tests/`, and every probe runs behind the socket canary. It recorded
+zero connection attempts.
+
+New probes are in `test_oa_r4_retest.py` (50 tests). The existing probes were
+updated to the round-3 contract; the full list, with reasons, is below.
+
+Recorded state: **1 red / 495 green**, with the same red set under `python -O`.
+The red is new finding R4-1.
+
+## Must-fix 1, verified myself: the full suite in every label state
+
+Setup:
+1. A scratch `git archive HEAD` export.
+2. `python -m src.trips_tools capture` (stubbed, route mode, LHR-SFO
+   `virginatlantic` J) wrote an honest capture into its
+   `tests/fixtures/seats_aero/trips_endpoint/real/`. It exited 0 with
+   "CAPTURED CLEAN".
+3. Then `TRIPS_SCHEMA_VERIFIED_BY`, and then `TRIPS_TOTALTAXES_UNIT = "cents"`,
+   were edited **in source**.
+
+| State | normal | `python -O` |
+|---|---|---|
+| committed tree (no capture) | **1580 passed, 13 skipped** | **1580 passed, 13 skipped** |
+| capture committed, constants not flipped | **1580 passed, 13 skipped** | - |
+| `TRIPS_SCHEMA_VERIFIED_BY` = the capture | **1571 passed, 22 skipped** | **1571 passed, 22 skipped** |
+| flipped + `TRIPS_TOTALTAXES_UNIT = "cents"` | **1570 passed, 23 skipped** | **1570 passed, 23 skipped** |
+
+These match the Coder's figures exactly. The extra skips are tests that describe
+the unflipped constants.
+
+**Must-fix 3's messages, checked the same way** (scratch exports, full suite):
+- A **drifting** capture (cabin word "premium economy") exits 5 and says "exactly
+  one test is red ... `test_every_committed_real_capture_parses_without_required_field_drift`".
+  Committed, the suite gives **1 failed** (exactly that test), 1579 passed, 13 skipped.
+- A capture the **label check refuses** (`--availability-id` with no local row)
+  exits 5 and says "Committing these files turns no test red". Committed, the
+  suite gives **1580 passed, 13 skipped**.
+
+**My own probes had the same problem as must-fix 1.** In the flipped-plus-cents
+tree, 45 probes went red because they assumed the unverified state. I added an
+autouse fixture to the probe conftest that pins both constants for every
+in-process probe. In the flipped tree that leaves only the probes that shell out
+to `git` (the master and round-2 comparisons, the contract-tests diff), which
+need a git checkout of the committed tree, plus R4-1.
+
+## The 38 red probes: each confirmed, then updated
+
+Every one of the 38 was red only because of a change the Manager asked for. I
+confirmed this for each group before editing, by checking that the probe passes
+under the new contract with nothing else relaxed.
+
+| Probe(s) | Why red | Change | What still guards |
+|---|---|---|---|
+| `test_oa_d_numbers.py::test_includes_yq_never_adds_a_band[...]` (8) | `YqVerdict` gained `airline` (TypeError). Under D1(b), `includes_yq` on 404, AMBIGUOUS or DL metal is now deliberately inert | Replaced by `test_includes_yq_on_known_vs_scores_at_taxes_only_and_adds_no_band` (both row lists), plus **`test_a_verdict_off_its_airline_scores_exactly_as_no_row[...]` (18)**: 404, AMBIGUOUS, KNOWN DL, KNOWN VS+DL and an empty list, x row lists, x both verdicts. Every one of the 21 numeric fields per leg and every totals key must equal the run with no table | Stronger. "Never adds a band" still holds on the only metal a verdict now reaches, and "inert everywhere else" is new |
+| `::test_excludes_yq_adds_exactly_one_band_on_known_single_metal`, `::test_excludes_yq_on_carriers_with_different_bands_stays_unknown[2]`, `::test_untrusted_taxes_win_over_every_verdict[8]`, `::test_unconvertible_currency_wins_over_every_verdict[2]` | TypeError (positional `YqVerdict`) | The `table()` helper builds `YqVerdict(airline="VS")` keyed by `(source, airline)`. The untrusted-tax and unconvertible probes gained a precondition that the metal is KNOWN VS, so the verdict *would* apply and the untrusted-taxes rule is what refuses | Unchanged assertions (one $200-$350 band; `inf` plus TAXES_UNKNOWN) |
+| `::test_the_committed_table_is_still_header_only` | header is now 6 columns | expects `source,airline,verdict,verified_on,evidence,notes` | loader returns `{}` |
+| `test_oa_i_legacy_and_misc.py::test_not_engaged_output_is_byte_identical_to_master[2]` | should-fix 5a reworded the "which is the v0 bug" sentence | **Coordinator's D29 ruling:** normalises exactly four old-to-new pairs (the v0 sentence and the three `surcharges.csv` "v1 modeled band" notes), with a precondition that master still carries the old sentence. It compares whitespace-unwrapped text, because the reworded sentence moves the line wrap | Every other word must equal master's |
+| `test_oa_r2_retest.py::test_H1_a_legitimately_filled_verdict_line_loads[4]`, `::test_H1_a_record_saved_with_crlf_line_endings_loads` | records lacked the D1 and must-fix-2 lines; 5-column CSV | records carry "itinerary lookup status: KNOWN", "checked airline", and "operated by VS itself ... : yes"; 6-column CSV; result keyed `("virginatlantic", "VS")` | the same verdict spellings and CRLF |
+| `::test_the_whole_verdict_flow_a_record_the_tool_wrote_filled_by_hand_loads` | the site half and the row template changed | fills the new five fields (operated-by: yes, the TOTAL), uses the `virginatlantic,VS,<VERDICT>,...` template, and asserts no `____` remains | a tool-written, honestly filled record still loads |
+| `test_oa_r3_retest.py::test_every_line_naming_looked_up_metal_carries_the_label[excludes_known, excludes_ambiguous]` | TypeError | table keyed by `(source, airline)` | unchanged: every metal line carries the label |
+| `::test_the_full_cli_output_is_the_round_2_output_plus_the_label_and_nothing_else[6]` | should-fix 5a wording, and D1's band note ("... no row for 'virginatlantic' **on VS metal**") | normalises exactly those (the same four sentences, plus that one band-note clause) | every other line must equal round 2's |
+
+**Probes that were still green, but only because a 5-column CSV now fails on its
+header.** Each would have passed for the wrong reason, so each now uses the
+6-column CSV and a full record, and asserts its **refusal reason** with `match=`:
+- `test_oa_d_numbers.py::test_a_record_for_one_source_cannot_back_a_verdict_for_another`
+  (it also asserts the same good row loads on its own);
+- `::test_the_validator_refuses_bad_rows[...]`: the 8 old cases with their
+  reasons, plus 2 new ones (a blank airline and a 3-letter airline), plus
+  `::test_the_validator_accepts_the_same_good_row_it_refuses_variants_of`;
+- `test_oa_i_legacy_and_misc.py::test_a_record_whose_own_verdict_disagrees_with_the_row_is_refused[2]`;
+- `test_oa_r2_retest.py::test_H1_class_every_near_miss_verdict_line_is_refused[12]`;
+- `::test_M2_class_a_record_naming_another_source_never_backs_it[3]`.
+
+`conftest.py` gained the YQ contract helpers (`yq_record_body`,
+`yq_write_record`, `yq_load`, `yq_table`, `YQ_HEADER`) and the label-constant
+pin.
+
+## New finding
+
+| # | Sev | Title | Probe |
+|---|---|---|---|
+| R4-1 | **Medium** | A yq-check record that says it "cannot tell includes from excludes" still backs a verdict, and D1 then applies it to every cabin and route on that airline | `test_oa_r4_retest.py::test_a_record_that_says_the_check_cannot_tell_includes_from_excludes_backs_no_verdict` |
+
+### R4-1. Medium: a check with no modelled band still produces a loadable verdict
+
+**Repro (stubbed):**
+1. Run `yq-check --origin JFK --destination LHR --cabin W --source virginatlantic`
+   on a row with W space and a KNOWN `VS4` itinerary.
+2. The surcharge table has no VS row for W (it has only VS/NA-EU/J), so the block
+   and the record say "modelled carrier surcharge band: **NONE MODELLED for VS
+   metal, so the site total cannot tell includes from excludes**". The record
+   also carries "WARNING: likely INCONCLUSIVE".
+3. The tool **still prints the row template** `virginatlantic,VS,<VERDICT>,...`,
+   and its rule still says "site total about equal to the row figure:
+   includes_yq".
+4. Fill the five fields honestly (the site total equals the row figure) and paste
+   the row: `yq_inclusion.load` returns `("virginatlantic", "VS") -> includes_yq`.
+
+**Why it matters:**
+- With no band, a site total equal to the row figure is also what a fare with
+  **no** carrier surcharge shows, so it is not evidence of inclusion. The
+  record's own words say so.
+- Because D1 keys a verdict by (source, airline) only, that one W check then
+  scores every Virgin Atlantic award on VS metal, in every cabin and region
+  (J included), at taxes alone.
+
+The recommended check (JFK-LHR J) has a band and is unaffected. The failure
+needs a cabin or route with no modelled row, which is likely if J has no space on
+the date Tsuki picks. Hence Medium: this is the one step that can move money.
+
+**Location:** `src/trips_tools.py` `run_yq_check` prints the template whenever an
+airline is KNOWN, whatever `band_text` says. `src/yq_inclusion.py` never reads
+the band line or the INCONCLUSIVE warning.
+
+**Fix direction:** print no template (as for "no KNOWN airline") when the band is
+NONE MODELLED, and have the loader refuse such a record.
+
+## New behaviour, attacked: what held up
+
+- **D1(b) scoping** (`test_oa_r4_retest.py`, plus the 18 off-airline equivalence
+  probes):
+  - A `(virginatlantic, VS)` verdict does not reach KNOWN DL, KNOWN AF, KNOWN
+    VS+DL (one segment on VS), AMBIGUOUS VS|DL, a 404, or `--trips off`. In every
+    case the numbers equal the no-table run.
+  - The award's line names the recorded check and the exact reason it does not
+    apply ("a different airline", "several airlines", "AMBIGUOUS",
+    "UNKNOWN (HTTP_404)", "NOT LOOKED UP").
+  - A valid but different airline (DL) does not reach VS.
+  - Two rows for one source each reach only their own metal.
+  - **Case C is keyed by (source, airline):** `excludes_yq` on VS adds exactly
+    $200-$350; a `flyingblue`/VS row does not reach a Virgin award; `excludes_yq`
+    on AF under Virgin applies and stays SURCHARGE_UNKNOWN (no band), never
+    taxes-only.
+- **Loader:**
+  - The airline column normalises case and whitespace (`vs`, ` VS `, `Vs\t`), as
+    do the record's airline codes.
+  - It refuses a record whose status is not KNOWN (AMBIGUOUS, UNKNOWN, NOT LOOKED
+    UP), whose checked airline differs or is `NONE`, whose operated-by code
+    differs, or whose operated-by answer is `no`, `y`, `yes.`,
+    `yes (VS3 operated by Virgin)` or `n/a`. It also refuses a record with two
+    operated-by lines. `Yes`, `YES` and padded `yes` load.
+- **yq-check arithmetic:**
+  - VS J from JFK prints "$200-$350 (pt $275) one way (VS metal, cabin J)" and
+    "row figure + band: $450.00-$600.00 (row $250.00 + band)", which is half the
+    round-trip row, added to the USD row figure.
+  - Flying Blue on KL J to AMS prints "$75-$125 one way (KL metal)" and
+    $325.00-$375.00.
+  - With no single KNOWN airline, no template is printed.
+  - A band-bearing check, filled honestly, loads end to end.
+- **NOT_NEEDED_TAXES_UNREPORTED:** a `singapore` award in auto costs 0 trips
+  calls and is not counted as a missing lookup; `--trips all` looks it up.
+  (`qatar` and `turkish` already stop at NOT_DIRECT_PARTNER.)
+- **`--refresh`:** a warm cache plus `capture --refresh` sends exactly 1 search
+  and 1 trips request, as announced ("1 search (--refresh: never served from the
+  disk cache) + 1 trips"). The pre-call line honestly says "spent 2 of 1,000"
+  after an earlier run in the same process.
+- **Must-fix 3:** the test the drift message names exists, and the full-suite
+  runs above prove both messages.
+- **Rewording:** no changelog text (v0/v1/v5, round/re-test/R2-x, must/should-fix,
+  "finding X-n") appears in:
+  - capture or yq-check output;
+  - the record;
+  - live output for 12 table x outcome combinations.
+
+  The D29 and round-2 comparisons show that only the four ruled sentences and the
+  band-note clause changed.
+
+## Observations (not findings)
+
+- **Scope:** a verdict is keyed by (source, airline) only. A J check also reaches
+  W and Y awards and every region on that airline. That is D1 option (b) as
+  specified; R4-1 is where it bites. Worth a line to Tsuki.
+- **The rule gives no numeric tolerance for "about equal".** On VS J the gap to
+  the band is at least $200, so a realistic total will not straddle the two
+  verdicts; a stretched "about" lands on "inconclusive", which is safe.
+- **The loader does not check the airline against the program's
+  `bookable_carriers`.** This is harmless: a verdict only reaches awards whose
+  lookup is KNOWN on that airline. The same goes for `AIRLINE_RE` accepting an
+  all-digit code, which no flight number can produce.
+- **`capture --refresh` on a paginating search** overwrites a fresh, complete
+  trip-run cache entry with its one page, then deletes it (R2-3). The next trip
+  run re-fetches, which costs calls but never gives wrong data.
+- **Pre-existing changelog text outside 5a's live-output scope:** the `main.py`
+  `--help` strings (v0/v3/v5), and two replay refusal messages
+  (`snapshot_replay.py`: "predates v5", "finding H-1").
+
+## Invariants, re-verified
+
+| Check | Result |
+|---|---|
+| suite, committed tree | 1580 passed / 13 skipped, normal and `-O`; the tree is clean after the run |
+| baseline red sets (v5 / adversarial / known-failures) | 19 / 40 / 0, identical by id |
+| header-only `yq_inclusion.csv` | nothing moves (36 equivalence probes; exit code and headline equal to `--trips off`) |
+| couple trip | WITHHELD, exit 3 |
+| `-O` guards | all three import-time edits still refuse |
+| network | 0 connection attempts; replays make 0 `requests.get` calls |
+| keys | none in any cache, snapshot, manifest, capture or `.raw.txt` file, or in stdout (env, `.env`, `--api-key`) |
+| D29 (as ruled) | identical to master apart from the four reworded sentences |
+| search path | the pagination grid still matches master, and the old-corpus replay hash is master's |
+
+## Earlier findings
+
+- **Round 1 (22), round 2 (7) and round 3 (none):** still closed. Their probes,
+  updated as listed above where round 3 changed the contract, are green.
+- **Open:** R4-1 only.
