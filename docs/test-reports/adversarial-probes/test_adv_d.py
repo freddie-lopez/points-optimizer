@@ -4,6 +4,7 @@ consequences of the parser holes, and CLI-level behaviour.
 """
 import copy
 import json
+import sys
 import subprocess
 from datetime import date
 from io import StringIO
@@ -255,7 +256,7 @@ def test_D9_cli_exit_code_for_an_unconfigured_cash_currency(tmp_path):
         }],
     }))
     out = subprocess.run(
-        ["python", "-m", "src.main", "--trip-fixture", str(fixture),
+        [sys.executable, "-m", "src.main", "--trip-fixture", str(fixture),
          "--balance", f"UR={UR}", "--card", CSP, "--transfer-date", "2026-09-15"],
         cwd=str(ROOT), capture_output=True, text=True,
     )
@@ -284,7 +285,7 @@ def test_D10_reason_code_validation_also_survives_python_O():
         "    print('RAISED')\n"
     )
     for flags in ([], ["-O"]):
-        r = subprocess.run(["python", *flags, "-c", code], cwd=str(ROOT),
+        r = subprocess.run([sys.executable, *flags, "-c", code], cwd=str(ROOT),
                            capture_output=True, text=True)
         print(flags or "(none)", "->", r.stdout.strip())
         assert r.stdout.strip() == "RAISED"

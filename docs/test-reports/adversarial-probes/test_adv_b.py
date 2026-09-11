@@ -4,6 +4,7 @@ and the 160,000 UR feasibility ceiling.
 """
 import copy
 import json
+import sys
 from datetime import date, timedelta
 from io import StringIO
 from pathlib import Path
@@ -483,7 +484,7 @@ def test_B8_the_live_outcome_invariant_survives_python_O():
     )
     for flags in ([], ["-O"], ["-OO"]):
         out = subprocess.run(
-            ["python", *flags, "-c", code], cwd=str(ROOT),
+            [sys.executable, *flags, "-c", code], cwd=str(ROOT),
             capture_output=True, text=True,
         )
         print(flags or ["(none)"], "->", out.stdout.strip(), out.stderr[-200:])

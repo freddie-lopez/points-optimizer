@@ -27,6 +27,7 @@ The findings collapse into three root causes and the file is organised that way:
 import copy
 import errno
 import json
+import sys
 import tempfile
 from datetime import date, datetime, timezone
 from io import StringIO
@@ -233,7 +234,7 @@ def test_C1_the_invariant_survives_python_O():
     )
     for flags in ([], ["-O"], ["-OO"]):
         out = subprocess.run(
-            ["python", *flags, "-c", code], cwd=str(ROOT), capture_output=True,
+            [sys.executable, *flags, "-c", code], cwd=str(ROOT), capture_output=True,
             text=True,
         )
         assert out.stdout.strip() == "RAISED", flags
