@@ -112,7 +112,7 @@ back and the Coder does both.
 git fetch <bundle> feature/operating-airline:feature/operating-airline
 git checkout feature/operating-airline
 
-# 2. The suite. No API calls. Expect 1578 passed / 13 skipped (the sandbox
+# 2. The suite. No API calls. Expect 1580 passed / 13 skipped (the sandbox
 #    figure; unverified on the Mac).
 .venv/bin/python -m pytest -q -p no:cacheprovider
 

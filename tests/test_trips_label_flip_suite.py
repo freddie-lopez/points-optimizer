@@ -85,6 +85,9 @@ def _pytest(dst):
 
 @pytest.fixture(scope="module")
 def flipped_tree(tmp_path_factory):
+    committed = (ROOT / "src" / "seats_trips.py").read_text()
+    if 'TRIPS_SCHEMA_VERIFIED_BY: str = ""' not in committed:
+        pytest.skip("the label is already flipped in this tree: the whole suite is the check")
     dst = _copy(tmp_path_factory.mktemp("flip"))
     r = subprocess.run([sys.executable, "-c", CAPTURE, str(dst)], cwd=dst,
                        capture_output=True, text=True, timeout=120)
@@ -110,7 +113,8 @@ def test_the_dependent_tests_pass_with_the_label_flipped_in_source(flipped_tree)
 def test_they_also_pass_with_the_unit_flipped_to_cents(flipped_tree):
     source = flipped_tree / "src" / "seats_trips.py"
     text = source.read_text()
-    assert 'TRIPS_TOTALTAXES_UNIT = "unverified"' in text
+    if 'TRIPS_TOTALTAXES_UNIT = "unverified"' not in text:
+        pytest.skip("the unit is already flipped in this tree: the whole suite is the check")
     source.write_text(text.replace(
         'TRIPS_TOTALTAXES_UNIT = "unverified"', 'TRIPS_TOTALTAXES_UNIT = "cents"'
     ))
