@@ -28,13 +28,16 @@ THREE RULES THAT ARE NOT NEGOTIABLE HERE:
 3. A LEG THAT FAILS DOES NOT FAIL THE TRIP. Score the legs that worked, report
    the ones that did not, and say which is which.
 """
-from dataclasses import dataclass
+import dataclasses
+from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+from src import seats_trips
 from src.models import (
+    METAL_REASONS,
     Award,
     CashOption,
     DateRange,
@@ -44,10 +47,12 @@ from src.models import (
     LiveLegOutcome,
     LiveQuerySpec,
     LiveQueryState,
+    MetalLookup,
+    MetalStatus,
     PointsCandidate,
     PointsProvenance,
 )
-from src.seats_client import SeatsAeroError, SeatsClient
+from src.seats_client import SeatsAeroError, SeatsClient, TripsLookupError
 from src.surcharge import SurchargeTable, default_table
 
 # The provenance string a live candidate carries. DISTINCT from
@@ -93,6 +98,21 @@ class LiveOptions:
     # never as live.
     allow_badge_fallback: bool = True
     surcharges: Optional[SurchargeTable] = None
+    # THE OPERATING-AIRLINE LOOKUP. None means NOT ENGAGED: no metal pass runs
+    # and the output is byte-identical to a run before the lookup existed. The
+    # CLI always passes a mode ("auto", "all" or "off"); direct callers and
+    # their stub clients keep the old behaviour by not passing one.
+    trips_mode: Optional[str] = None
+    # Per-run ceiling on trips HTTP requests actually SENT (cache hits are free).
+    trips_cap: int = 10
+    # Filled by `apply_live` when the metal pass runs: what it did, for the
+    # banner. Never read by any scorer.
+    metal_report: Optional[object] = None
+
+
+TRIPS_MODES = ("auto", "all", "off")
+DEFAULT_TRIPS_CAP = 10
+TRIPS_CAP_MIN, TRIPS_CAP_MAX = 1, 50
 
 
 # ---------------------------------------------------------------------------
@@ -558,6 +578,7 @@ def award_to_candidate(
     outcome: LiveLegOutcome,
     surcharges: SurchargeTable,
     snapshot_name: str = "",
+    metal: Optional[MetalLookup] = None,
 ) -> PointsCandidate:
     """
     Convert one parsed live Award into a PointsCandidate for the existing scorer.
@@ -699,6 +720,11 @@ def award_to_candidate(
         carrier_source=carrier_source,
         cabin=award.award_type,
         is_round_trip=False,
+        metal=metal,
+        availability_id=str((award.raw_diagnostics or {}).get("availability_id") or ""),
+        program_source_code=award.program_source_code,
+        row_carriers=list(award.candidate_carriers),
+        observed_taxes_whole_because="program_policy" if taxes_are_the_surcharge else "",
     )
 
 
@@ -755,6 +781,15 @@ def apply_live(
     """
     surcharges = opts.surcharges or default_table()
     outcomes: List[LiveLegOutcome] = []
+    # PHASE 1 collects (leg, outcome, awards); PHASE 2 looks up metal once every
+    # search has finished, so an itinerary lookup can never spend budget a
+    # search needed; PHASE 3 records each leg exactly as before, with the metal
+    # attached. `_record` reads nothing `query_leg` does not write, so moving it
+    # after the loop changes no leg's result - the unchanged suite is the proof.
+    queried: List[Tuple[Leg, LiveLegOutcome, List[Award]]] = []
+    engaged = opts.trips_mode is not None
+    spends = bool(getattr(client, "spends_api_budget", True)) and client is not None
+    budget_at_start = SeatsClient._budget_remaining() if (engaged and spends) else None
 
     flight_legs = [leg for leg in fixture.legs if leg.kind == "flight"]
     remaining_flight_legs = len(flight_legs)
@@ -763,7 +798,7 @@ def apply_live(
     for leg in fixture.legs:
         if leg.kind != "flight":
             outcome, awards = query_leg(leg, client, opts)
-            _record(leg, outcome, awards, opts, surcharges)
+            queried.append((leg, outcome, awards))
             outcomes.append(outcome)
             continue
 
@@ -803,15 +838,324 @@ def apply_live(
                     f"request was made for it."
                 ),
             )
-            _record(leg, outcome, [], opts, surcharges)
+            queried.append((leg, outcome, []))
             outcomes.append(outcome)
             continue
 
         outcome, awards = query_leg(leg, client, opts)
-        _record(leg, outcome, awards, opts, surcharges)
+        queried.append((leg, outcome, awards))
         outcomes.append(outcome)
 
+    metal_by_award: Optional[Dict[int, MetalLookup]] = None
+    if engaged:
+        budget_after_search = (
+            SeatsClient._budget_remaining() if budget_at_start is not None else None
+        )
+        metal_by_award, report = metal_pass(queried, client, opts, surcharges)
+        if budget_at_start is not None:
+            report.search_calls = budget_at_start - budget_after_search
+            report.trips_calls = budget_after_search - SeatsClient._budget_remaining()
+        opts.metal_report = report
+
+    for leg, outcome, awards in queried:
+        _record(leg, outcome, awards, opts, surcharges, metal_by_award)
+
     return fixture, outcomes
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: the operating-airline lookup
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MetalPassReport:
+    """What the metal pass did on this run. For the banner; never scored."""
+
+    mode: str = ""
+    cap: int = DEFAULT_TRIPS_CAP
+    replay: bool = False
+    candidates: int = 0
+    requests_sent: int = 0
+    served_from_cache: int = 0
+    replayed: int = 0
+    by_status: Dict[str, int] = field(default_factory=dict)
+    not_looked_up_missing: int = 0
+    rate_limited: bool = False
+    # (availability id, parser version) for replayed trips snapshots read under
+    # a different trips parser than this one.
+    reparsed: List[Tuple[str, str]] = field(default_factory=list)
+    # Seats.aero calls this run spent, split. None when nothing spends budget
+    # (a replay) - never 0 by default, which would read as "measured: none".
+    search_calls: Optional[int] = None
+    trips_calls: Optional[int] = None
+
+
+def _metal_domain(award: Award) -> Dict[str, Any]:
+    carriers = tuple(award.candidate_carriers or ())
+    return {"possible_carriers": carriers} if carriers else {"domain_unbounded": True}
+
+
+def _not_looked_up(award: Award, code: str, detail: str) -> MetalLookup:
+    return MetalLookup(
+        status=MetalStatus.NOT_LOOKED_UP,
+        availability_id=str((award.raw_diagnostics or {}).get("availability_id") or ""),
+        reason_code=code,
+        detail=detail,
+        row_carriers=tuple(award.candidate_carriers or ()),
+        **_metal_domain(award),
+    )
+
+
+def _why_not_looked_up(
+    award: Award, surcharges: SurchargeTable, mode: str
+) -> Optional[Tuple[str, str]]:
+    """
+    (reason code, detail) when this award is not looked up in this mode, else
+    None. `auto` looks up only an award whose cash side can depend on the metal:
+    a DIRECT UR partner's, whose carrier surcharge is not a program-wide $0.
+    """
+    if mode == "all":
+        return None
+    if award.ur_transferable is not True:
+        return (
+            "NOT_DIRECT_PARTNER",
+            award.program or award.program_source_code or "this award's program",
+        )
+    est = surcharges.resolve(
+        award.program,
+        "",
+        award.route_region or "",
+        award.award_type,
+        "",
+        is_round_trip=False,
+        carrier_is_known=False,
+    )
+    if est.is_known and est.amount_high == 0.0:
+        return ("NOT_NEEDED_POLICY", award.program)
+    if mode == "off":
+        return ("TRIPS_OFF", "--trips off")
+    return None
+
+
+def _partition_awards(leg: Leg, awards: List[Award]):
+    """(on_date, promoted, off_date) - THE DATE RULE, written once."""
+    cash_by_date = _cash_dates(leg)
+    on_date: List[Award] = []
+    promoted: List[Award] = []
+    off_date: List[Award] = []
+    for award in awards:
+        if award.date == leg.date:
+            on_date.append(award)
+        elif award.date in cash_by_date:
+            promoted.append(award)
+        else:
+            off_date.append(award)
+    return on_date, promoted, off_date
+
+
+def metal_pass(
+    queried: List[Tuple[Leg, LiveLegOutcome, List[Award]]],
+    client,
+    opts: LiveOptions,
+    surcharges: SurchargeTable,
+) -> Tuple[Dict[int, MetalLookup], MetalPassReport]:
+    """
+    One MetalLookup per LIVE CANDIDATE (on-date or promoted), keyed by id(award).
+
+    NEVER RAISES, like `query_leg`. Every candidate gets a lookup, and every
+    lookup that did not establish metal says which of the named ways it failed,
+    with the award's possible carriers. Lookups are deduplicated by availability
+    id: one row carries four cabins and one response carries them all.
+    """
+    mode = opts.trips_mode or "auto"
+    replay = bool(getattr(client, "trips_replay", False))
+    report = MetalPassReport(mode=mode, cap=opts.trips_cap, replay=replay)
+    has_trips = client is not None and callable(getattr(client, "trips_raw", None))
+    fetched: Dict[str, Any] = {}
+    parsed_cache: Dict[Tuple[str, str, str], Any] = {}
+    out: Dict[int, MetalLookup] = {}
+    state = {"sent": 0, "rate_limited_by": ""}
+
+    def fetch(leg: Leg, award: Award, aid: str):
+        if aid in fetched:
+            return fetched[aid]
+        try:
+            entry = client.trips_raw(
+                aid,
+                cache=opts.cache,
+                cache_ttl=opts.cache_ttl,
+                refresh=opts.refresh,
+                leg_id=leg.id,
+                trip_id=opts.trip_id,
+                award_date=str(award.date),
+                route=str(award.route or ""),
+            )
+            if getattr(entry, "request_sent", False):
+                state["sent"] += 1
+        except TripsLookupError as e:
+            entry = e
+            if e.request_sent:
+                state["sent"] += 1
+            if e.code == "HTTP_429" and not state["rate_limited_by"]:
+                state["rate_limited_by"] = aid
+        except Exception as e:  # noqa: BLE001 - the metal pass never raises
+            entry = e
+        fetched[aid] = entry
+        return entry
+
+    def from_entry(award: Award, aid: str, entry) -> MetalLookup:
+        base = dict(
+            availability_id=aid,
+            row_carriers=tuple(award.candidate_carriers or ()),
+            **_metal_domain(award),
+        )
+        if isinstance(entry, TripsLookupError):
+            code = entry.code
+            if code in METAL_REASONS[MetalStatus.NOT_LOOKED_UP]:
+                return MetalLookup(
+                    status=MetalStatus.NOT_LOOKED_UP, reason_code=code,
+                    detail=str(entry), **base,
+                )
+            if code in METAL_REASONS[MetalStatus.NOT_RECORDED]:
+                return MetalLookup(
+                    status=MetalStatus.NOT_RECORDED, reason_code=code,
+                    detail=str(entry), on_replay=True, **base,
+                )
+            if code in METAL_REASONS[MetalStatus.UNKNOWN]:
+                return MetalLookup(
+                    status=MetalStatus.UNKNOWN, reason_code=code,
+                    detail=str(entry), on_replay=replay, **base,
+                )
+            return MetalLookup(
+                status=MetalStatus.UNKNOWN, reason_code="UNEXPECTED_ERROR",
+                detail=f"unrecognised lookup code {code!r}: {entry}",
+                on_replay=replay, **base,
+            )
+        if isinstance(entry, Exception):
+            return MetalLookup(
+                status=MetalStatus.UNKNOWN, reason_code="UNEXPECTED_ERROR",
+                detail=f"{type(entry).__name__}: {entry}", on_replay=replay, **base,
+            )
+        facts = seats_trips.AwardFacts.from_award(award)
+        pkey = (aid, facts.origin, facts.destination)
+        if pkey not in parsed_cache:
+            parsed_cache[pkey] = seats_trips.parse_trips_payload(
+                entry.payload, aid, (facts.origin, facts.destination)
+            )
+            _annotate_trips_row(opts, entry, parsed_cache[pkey])
+        lookup = seats_trips.match_award(parsed_cache[pkey], facts)
+        return dataclasses.replace(
+            lookup,
+            served_from_cache=bool(entry.served_from_cache),
+            fetched_at=entry.fetched_at,
+            on_replay=replay,
+            replayed_from_snapshot=bool(getattr(entry, "replayed_from_snapshot", False)),
+            snapshot_name=str(
+                entry.snapshot_name or "" if getattr(entry, "replayed_from_snapshot", False) else ""
+            ),
+            snapshot_content_hash=str(getattr(entry, "snapshot_content_hash", "") or ""),
+            snapshot_parser_version=str(getattr(entry, "snapshot_parser_version", "") or ""),
+        )
+
+    def one(leg: Leg, award: Award) -> MetalLookup:
+        aid = str((award.raw_diagnostics or {}).get("availability_id") or "")
+        why = _why_not_looked_up(award, surcharges, mode)
+        if replay:
+            # A recorded lookup is used WHATEVER the qualification: it is
+            # evidence the live run had.
+            if has_trips and seats_trips.valid_availability_id(aid):
+                entry = fetch(leg, award, aid)
+                if not (
+                    isinstance(entry, TripsLookupError) and entry.code == "NO_TRIPS_SNAPSHOT"
+                ) or not why:
+                    return from_entry(award, aid, entry)
+            if why:
+                return _not_looked_up(award, *why)
+        elif why:
+            return _not_looked_up(award, *why)
+        if not aid:
+            return _not_looked_up(
+                award, "NO_AVAILABILITY_ID",
+                f"{award.program or 'this award'} {award.award_type} on {award.date}",
+            )
+        if not seats_trips.valid_availability_id(aid):
+            return _not_looked_up(award, "AVAILABILITY_ID_INVALID", repr(aid)[:80])
+        if not has_trips:
+            return _not_looked_up(
+                award, "TRANSPORT_HAS_NO_TRIPS", type(client).__name__
+            )
+        if aid not in fetched:
+            if state["rate_limited_by"]:
+                return _not_looked_up(
+                    award, "RATE_LIMITED_EARLIER",
+                    f"HTTP 429 on availability {state['rate_limited_by']}",
+                )
+            if not replay and state["sent"] >= opts.trips_cap:
+                return _not_looked_up(award, "CAP_REACHED", str(opts.trips_cap))
+        return from_entry(award, aid, fetch(leg, award, aid))
+
+    for leg, outcome, awards in queried:
+        if leg.kind != "flight" or not awards:
+            continue
+        on_date, promoted, _ = _partition_awards(leg, awards)
+        for award in on_date + promoted:
+            try:
+                lookup = one(leg, award)
+            except Exception as e:  # noqa: BLE001 - the metal pass never raises
+                lookup = MetalLookup(
+                    status=MetalStatus.UNKNOWN,
+                    availability_id=str((award.raw_diagnostics or {}).get("availability_id") or ""),
+                    reason_code="UNEXPECTED_ERROR",
+                    detail=f"{type(e).__name__}: {e}",
+                    row_carriers=tuple(award.candidate_carriers or ()),
+                    on_replay=replay,
+                    **_metal_domain(award),
+                )
+            out[id(award)] = lookup
+            report.candidates += 1
+            report.by_status[lookup.status.value] = (
+                report.by_status.get(lookup.status.value, 0) + 1
+            )
+            if lookup.is_missing_lookup:
+                report.not_looked_up_missing += 1
+
+    for aid, entry in fetched.items():
+        if isinstance(entry, Exception):
+            continue
+        if entry.served_from_cache:
+            report.served_from_cache += 1
+        if getattr(entry, "replayed_from_snapshot", False):
+            report.replayed += 1
+            version = str(getattr(entry, "snapshot_parser_version", "") or "")
+            if version != seats_trips.TRIPS_PARSER_VERSION:
+                report.reparsed.append((aid, version or "unknown"))
+    report.requests_sent = state["sent"]
+    report.rate_limited = bool(state["rate_limited_by"])
+    return out, report
+
+
+def _annotate_trips_row(opts: LiveOptions, entry, parsed) -> None:
+    """Fill the trips manifest row this fetch wrote, now that it is parsed."""
+    cache = getattr(opts, "cache", None)
+    name = getattr(entry, "snapshot_name", None)
+    if cache is None or not name or entry.served_from_cache:
+        return
+    if getattr(entry, "replayed_from_snapshot", False):
+        return
+    trips_cache = cache.for_trips() if hasattr(cache, "for_trips") else None
+    if trips_cache is None or trips_cache.snapshot_dir is None:
+        return
+    try:
+        trips_cache.annotate_manifest(
+            name, parsed.manifest_state, len(parsed.readable),
+            manifest_key=getattr(entry, "manifest_key", "") or "",
+        )
+    except OSError as e:
+        cache.warnings.append(
+            f"COULD NOT ANNOTATE the trips manifest row for {name} "
+            f"({type(e).__name__}: {e})."
+        )
 
 
 def _record(
@@ -820,6 +1164,7 @@ def _record(
     awards: List[Award],
     opts: LiveOptions,
     surcharges: SurchargeTable,
+    metal_by_award: Optional[Dict[int, MetalLookup]] = None,
 ) -> None:
     """
     Attach one leg's live result to the leg. Sets provenance on EVERY leg.
@@ -847,20 +1192,8 @@ def _record(
         )
         return
 
-    cash_by_date = _cash_dates(leg)
-    on_date: List[Award] = []
-    promoted: List[Award] = []
-    findings: List[FlexibleFinding] = []
-
-    for award in awards:
-        if award.date == leg.date:
-            on_date.append(award)
-        elif award.date in cash_by_date:
-            promoted.append(award)
-        else:
-            findings.append(_finding(leg, award))
-
-    leg.flexible_date_findings = findings
+    on_date, promoted, off_date = _partition_awards(leg, awards)
+    leg.flexible_date_findings = [_finding(leg, award) for award in off_date]
 
     usable = on_date + promoted
     if promoted:
@@ -887,6 +1220,7 @@ def _record(
         award_to_candidate(
             leg, a, outcome, surcharges,
             snapshot_name=(outcome.snapshot_path.name if outcome.snapshot_path else ""),
+            metal=(metal_by_award or {}).get(id(a)),
         )
         for a in usable
     ]

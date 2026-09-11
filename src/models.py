@@ -649,6 +649,22 @@ class PointsCandidate:
     # never scored and is never reported as "not a partner / no points path".
     indirect_ur_path: str = ""
 
+    # --- the operating-airline lookup (Seats.aero trips endpoint) ----------
+    # What the lookup established about which airline flies this award. None
+    # means the lookup was never engaged on this run (a direct `apply_live`
+    # caller, a fixture candidate), which renders exactly as before it existed.
+    # A MetalLookup here DISCLOSES; it moves a score only through the YQ rule
+    # in `live_trip.award_to_candidate`, and only for a source whose taxes have
+    # a verified `excludes_yq` row.
+    metal: Optional["MetalLookup"] = None
+    availability_id: str = ""
+    program_source_code: str = ""
+    row_carriers: List[str] = field(default_factory=list)
+    # WHY the API's taxes are the whole carrier-side cash figure, when they are:
+    # "program_policy" (a program-wide no-YQ row) or
+    # "yq_included_verified:<evidence path>" (a verified includes_yq source).
+    observed_taxes_whole_because: str = ""
+
     @property
     def extra_observed_taxes_usd(self) -> float:
         """

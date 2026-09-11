@@ -2,6 +2,7 @@
 from typing import Dict, List, Optional
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from src import config
@@ -58,6 +59,31 @@ def _high_end_assumptions(totals: Dict) -> List[str]:
     if totals.get("legs_apd_unknown"):
         parts.append("the departure tax is $0")
     return parts
+
+
+def metal_lines(cand) -> List[str]:
+    """
+    The operating-airline lines for one candidate, or [] when the lookup was
+    never engaged. Plain text; callers ESCAPE it, because the parser label is in
+    square brackets and rich would otherwise read it as markup and delete it.
+    """
+    metal = getattr(cand, "metal", None)
+    if metal is None:
+        return []
+    lines = [metal.render()]
+    if metal.flights:
+        lines.append("flights: " + "; ".join(metal.flights))
+    if metal.excluded_mixed:
+        lines.append(
+            f"{metal.excluded_mixed} further itinerar"
+            f"{'y' if metal.excluded_mixed == 1 else 'ies'} at this price fly part "
+            f"of the distance in a lower cabin; not counted"
+        )
+    if metal.other_price_note:
+        lines.append(metal.other_price_note)
+    if metal.trip_taxes_note:
+        lines.append(f"per-itinerary taxes: {metal.trip_taxes_note}")
+    return lines
 
 
 def _money(x: float) -> str:
@@ -483,7 +509,10 @@ def print_leg_detail(results: List[LegResult], console: Console = None) -> None:
                     f"        stranded: {r.points_path.stranded_points:,} "
                     f"(within the unavoidable transfer increment)"
                 )
-            if r.best_points.operating_carrier:
+            if getattr(r.best_points, "metal", None) is not None:
+                for line in metal_lines(r.best_points):
+                    console.print(f"        {escape(line)}")
+            elif r.best_points.operating_carrier:
                 console.print(
                     f"        metal: {r.best_points.operating_carrier} "
                     f"(source: {r.best_points.carrier_source}), "
@@ -686,6 +715,8 @@ def _print_live_scoring_block(r: LegResult, console: Console) -> None:
     console.print(
         f"  {kind}: {cand.program}  {cand.cabin}  {cand.points:,} points"
     )
+    for line in metal_lines(cand):
+        console.print(f"     {escape(line)}")
     if cand.surcharge_captured:
         console.print(
             f"     taxes from the API: {_money(cand.cash_surcharge)} - taken as "
