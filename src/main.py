@@ -635,9 +635,14 @@ def trips_flag_problems(args) -> list:
         )
     if cap is not None:
         text = str(cap).strip()
-        if not text.lstrip("-").isdigit() or not (
-            TRIPS_CAP_MIN <= int(text) <= TRIPS_CAP_MAX
-        ):
+        value = None
+        if text.lstrip("-").isdigit():
+            try:
+                # "²" is a digit to isdigit and not a number to int.
+                value = int(text)
+            except ValueError:
+                value = None
+        if value is None or not (TRIPS_CAP_MIN <= value <= TRIPS_CAP_MAX):
             problems.append(
                 f"--trips-cap {cap!r} is not a whole number from {TRIPS_CAP_MIN} "
                 f"to {TRIPS_CAP_MAX}."
