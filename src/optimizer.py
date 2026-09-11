@@ -13,6 +13,8 @@ from src.config import (
 )
 from src.funding import all_plans, best_plan, residue_report
 from src.models import (
+    METAL_PROVENANCE_TRIPS,
+    MetalStatus,
     Award,
     CashOption,
     FundingPlan,
@@ -632,6 +634,33 @@ def resolve_leg_surcharge(
     # A program-wide no-YQ policy row needs neither, which is why a United or
     # Aeroplan candidate still resolves to a confirmed $0 here.
     region, country, why_not = _leg_region_and_country(leg)
+
+    # METAL FROM THE ITINERARY LOOKUP, for a source verified `excludes_yq`
+    # (only `award_to_candidate` sets this carrier_source, and only then). The
+    # itinerary's carriers - or the union of AMBIGUOUS sets - resolve TOGETHER:
+    # a figure only when every one gives the same outcome. For a set that means
+    # "all of these fly segments", which is safe for exactly that reason.
+    metal = getattr(cand, "metal", None)
+    if cand.carrier_source == METAL_PROVENANCE_TRIPS and metal is not None and (
+        metal.status in (MetalStatus.KNOWN, MetalStatus.AMBIGUOUS)
+    ):
+        est = surcharges.resolve_ambiguous_metal(
+            ratios_manager.normalize_program(cand.program),
+            list(metal.all_carriers),
+            region or "",
+            cand.cabin,
+            country or "",
+            is_round_trip=cand.is_round_trip,
+            today=today,
+        )
+        if not est.is_known:
+            est.notes = (
+                f"Cannot model a surcharge for {cand.label!r} on the metal its "
+                f"itinerary lookup found ({', '.join(metal.all_carriers)})"
+                + (f": {why_not}" if region is None else "")
+                + f". {est.notes}"
+            ).strip()
+        return est
     est = surcharges.resolve(
         ratios_manager.normalize_program(cand.program),
         cand.operating_carrier if cand.has_known_metal else "",
@@ -642,6 +671,19 @@ def resolve_leg_surcharge(
         carrier_is_known=cand.has_known_metal,
         today=today,
     )
+    if not est.is_known and metal is not None and metal.status in (
+        MetalStatus.KNOWN, MetalStatus.AMBIGUOUS
+    ):
+        # The lookup DID name metal; it is deliberately not used here, and the
+        # note must say that rather than "no operating carrier is recorded".
+        est.notes = (
+            f"Cannot model a surcharge for {cand.label!r}: the itinerary lookup "
+            f"names {', '.join(metal.all_carriers)} by flight number, and that "
+            f"metal is NOT used for a surcharge because whether Seats.aero's taxes "
+            f"for this source already include one is not verified. The band for "
+            f"that metal is stated on the operating-airline line and is NOT ADDED."
+        )
+        return est
     if not est.is_known:
         why = []
         if not cand.operating_carrier:

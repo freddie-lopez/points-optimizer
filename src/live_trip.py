@@ -37,6 +37,7 @@ import requests
 
 from src import seats_trips
 from src.models import (
+    METAL_PROVENANCE_TRIPS,
     METAL_REASONS,
     Award,
     CashOption,
@@ -108,6 +109,9 @@ class LiveOptions:
     # Filled by `apply_live` when the metal pass runs: what it did, for the
     # banner. Never read by any scorer.
     metal_report: Optional[object] = None
+    # data/yq_inclusion.csv, loaded and validated. None means "load the
+    # committed table" - which is header-only, i.e. every source unverified.
+    yq_table: Optional[Dict[str, object]] = None
 
 
 TRIPS_MODES = ("auto", "all", "off")
@@ -438,7 +442,12 @@ def query_leg(
 
 
 def _taxes_are_the_whole_carrier_cash_figure(
-    leg: Leg, award: Award, surcharges: SurchargeTable
+    leg: Leg,
+    award: Award,
+    surcharges: SurchargeTable,
+    *,
+    yq_verdict=None,
+    metal: Optional[MetalLookup] = None,
 ) -> Tuple[bool, str]:
     """
     May `{X}TotalTaxes` be taken as the COMPLETE carrier-side cash figure?
@@ -477,6 +486,7 @@ def _taxes_are_the_whole_carrier_cash_figure(
         carrier_is_known=False,
     )
     if est.is_known and est.amount_high == 0.0:
+        # CASE A. Today's rule, unchanged.
         return True, (
             f"{program} levies no carrier-imposed surcharge as a matter of "
             f"PROGRAM POLICY, which is metal-independent, so there is nothing to "
@@ -484,6 +494,47 @@ def _taxes_are_the_whole_carrier_cash_figure(
             f"complete carrier-side cash cost. GOVERNMENT TAXES AND AIRPORT "
             f"CHARGES BEYOND WHAT SEATS.AERO REPORTS ARE STILL NOT MODELLED."
         )
+    source = award.program_source_code or "(no source)"
+    if yq_verdict is not None and yq_verdict.includes:
+        # CASE B. The source's taxes were VERIFIED to contain the surcharge, so
+        # they are the whole carrier figure and no band is added on top.
+        return True, (
+            f"Seats.aero's taxes for the {source!r} source were VERIFIED to include "
+            f"carrier-imposed surcharges ({yq_verdict.evidence}, "
+            f"{yq_verdict.verified_on}), so the API's tax figure is taken as the "
+            f"complete carrier-side cash cost and NO modelled surcharge is added "
+            f"on top of it. That check was one flight on one date; it may not "
+            f"hold for every route and metal in this program."
+        )
+    if yq_verdict is not None and yq_verdict.excludes:
+        if metal is not None and metal.status in (MetalStatus.KNOWN, MetalStatus.AMBIGUOUS):
+            # CASE C. Scoreability is decided by whether the band resolves for
+            # the itinerary's metal - `resolve_leg_surcharge`, not here.
+            return False, (
+                f"Seats.aero's taxes for the {source!r} source were VERIFIED to "
+                f"EXCLUDE carrier-imposed surcharges ({yq_verdict.evidence}), so "
+                f"the modelled surcharge for the metal the itinerary lookup found "
+                f"({', '.join(metal.all_carriers)}, by flight number) is ADDED to "
+                f"the API's taxes. Seats.aero names the MARKETING carrier; a "
+                f"codeshare between carriers in the award's own list cannot be "
+                f"detected."
+            )
+        # CASE D. The surcharge must be added and the metal that keys it is not
+        # known, so the cash side is unknown.
+        status = (
+            "was never looked up (no itinerary lookup ran)"
+            if metal is None
+            else f"is {metal.status.value.replace('_', ' ').upper()}"
+            + (f" ({metal.reason_code})" if metal.reason_code else "")
+        )
+        return False, (
+            f"NOT SCORED: Seats.aero's taxes for the {source!r} source were "
+            f"VERIFIED to EXCLUDE carrier-imposed surcharges "
+            f"({yq_verdict.evidence}), so a surcharge must be added - and the "
+            f"operating airline {status}, so which surcharge is not known. "
+            f"Reported as a floor plus a break-even."
+        )
+    # CASE E: unverified. Today's rule.
     return False, (
         f"NOT SCORED: Seats.aero reports a tax figure for this award, but "
         f"{program}'s carrier-imposed surcharge here is "
@@ -579,6 +630,7 @@ def award_to_candidate(
     surcharges: SurchargeTable,
     snapshot_name: str = "",
     metal: Optional[MetalLookup] = None,
+    yq_table: Optional[Dict[str, object]] = None,
 ) -> PointsCandidate:
     """
     Convert one parsed live Award into a PointsCandidate for the existing scorer.
@@ -588,8 +640,21 @@ def award_to_candidate(
     unknown (`None`). "This award is real and you cannot reach this program from
     UR" is a finding, and dropping the row would hide real availability.
     """
+    from src import yq_inclusion
+
     carriers = list(award.candidate_carriers)
-    scoreable, why = _taxes_are_the_whole_carrier_cash_figure(leg, award, surcharges)
+    yq_verdict = yq_inclusion.verdict_for(award.program_source_code, yq_table or {})
+    scoreable, why = _taxes_are_the_whole_carrier_cash_figure(
+        leg, award, surcharges, yq_verdict=yq_verdict, metal=metal
+    )
+    policy_zero = bool(scoreable) and not (yq_verdict is not None and yq_verdict.includes)
+    band_from_metal = bool(
+        yq_verdict is not None
+        and yq_verdict.excludes
+        and metal is not None
+        and metal.status in (MetalStatus.KNOWN, MetalStatus.AMBIGUOUS)
+        and not policy_zero
+    )
 
     # What this function believes about the taxes. Starts as the parser's view
     # and can only get LESS certain here (see the UK duty check below).
@@ -647,7 +712,14 @@ def award_to_candidate(
             f"floor plus a break-even instead of as a number the tool cannot defend."
         )
 
-    if len(carriers) == 1 and scoreable:
+    if band_from_metal and not taxes_unknown:
+        # CASE C: the metal the itinerary lookup found keys the modelled band.
+        # A single carrier is known metal; several resolve together or not at
+        # all (`resolve_leg_surcharge` -> `resolve_ambiguous_metal`).
+        single = metal.status is MetalStatus.KNOWN and len(metal.carriers) == 1
+        operating = metal.carriers[0] if single else ""
+        carrier_source = METAL_PROVENANCE_TRIPS
+    elif len(carriers) == 1 and scoreable:
         operating, carrier_source = carriers[0], "seats_aero"
     elif len(carriers) == 1:
         operating, carrier_source = carriers[0], LIVE_UNRESOLVED_CARRIER_SOURCE
@@ -680,6 +752,13 @@ def award_to_candidate(
     snapshot = f", snapshot {snapshot_name}" if snapshot_name else ""
 
     taxes_are_the_surcharge = bool(scoreable and taxes_known)
+    if not taxes_are_the_surcharge:
+        whole_because = ""
+    elif policy_zero:
+        whole_because = "program_policy"
+    else:
+        whole_because = f"yq_included_verified:{yq_verdict.evidence}"
+    metal_note = _metal_band_note(leg, award, surcharges, metal, yq_verdict, policy_zero)
     program_missing = not (award.program or "").strip()
     label_program = award.program or "(program NOT NAMED by the response)"
 
@@ -724,7 +803,48 @@ def award_to_candidate(
         availability_id=str((award.raw_diagnostics or {}).get("availability_id") or ""),
         program_source_code=award.program_source_code,
         row_carriers=list(award.candidate_carriers),
-        observed_taxes_whole_because="program_policy" if taxes_are_the_surcharge else "",
+        observed_taxes_whole_because=whole_because,
+        metal_surcharge_note=metal_note,
+    )
+
+
+def _metal_band_note(leg, award, surcharges, metal, yq_verdict, policy_zero) -> str:
+    """
+    The modelled surcharge for the metal the lookup found, when it is NOT
+    ADDED because nobody has verified what Seats.aero's taxes contain.
+
+    Disclosure only. Empty when there is no known metal, when the program's
+    policy is a $0 surcharge, or when a verdict exists (then the band is either
+    added - excludes_yq - or irrelevant - includes_yq).
+    """
+    if metal is None or metal.status not in (MetalStatus.KNOWN, MetalStatus.AMBIGUOUS):
+        return ""
+    if policy_zero or yq_verdict is not None:
+        return ""
+    from src import regions
+
+    try:
+        region = regions.classify(leg.origin, leg.destination)
+        country = regions.departure_country(leg.origin)
+    except Exception:  # noqa: BLE001 - an unknown airport means no band, stated below
+        region, country = award.route_region or "", ""
+    est = surcharges.resolve_ambiguous_metal(
+        award.program, list(metal.all_carriers), region or "", award.award_type,
+        country or "", is_round_trip=False,
+    )
+    carriers = ", ".join(metal.all_carriers)
+    source = award.program_source_code or "(no source)"
+    if not est.is_known:
+        return (
+            f"modelled carrier surcharge for {carriers} metal under {award.program}: "
+            f"NONE MODELLED - the table does not resolve it for this metal. Nothing "
+            f"is added either way."
+        )
+    return (
+        f"modelled carrier surcharge for {carriers} metal under {award.program}: "
+        f"{est.render()} one-way - NOT ADDED: whether Seats.aero's taxes for "
+        f"{source!r} already include it is UNVERIFIED (data/yq_inclusion.csv has "
+        f"no row for {source!r}), so adding it could double count."
     )
 
 
@@ -857,6 +977,10 @@ def apply_live(
             report.trips_calls = budget_after_search - SeatsClient._budget_remaining()
         opts.metal_report = report
 
+    if opts.yq_table is None:
+        from src import yq_inclusion
+
+        opts.yq_table = yq_inclusion.load()
     for leg, outcome, awards in queried:
         _record(leg, outcome, awards, opts, surcharges, metal_by_award)
 
@@ -1221,6 +1345,7 @@ def _record(
             leg, a, outcome, surcharges,
             snapshot_name=(outcome.snapshot_path.name if outcome.snapshot_path else ""),
             metal=(metal_by_award or {}).get(id(a)),
+            yq_table=opts.yq_table,
         )
         for a in usable
     ]

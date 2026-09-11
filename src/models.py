@@ -671,6 +671,9 @@ class PointsCandidate:
     # "program_policy" (a program-wide no-YQ row) or
     # "yq_included_verified:<evidence path>" (a verified includes_yq source).
     observed_taxes_whole_because: str = ""
+    # The modelled surcharge for the metal the lookup found, stated as NOT
+    # ADDED while the source's YQ inclusion is unverified. Disclosure only.
+    metal_surcharge_note: str = ""
 
     @property
     def extra_observed_taxes_usd(self) -> float:
@@ -696,6 +699,17 @@ class PointsCandidate:
         wrong guess produces a confident wrong surcharge, which is worse than an
         honest unknown.
         """
+        if self.carrier_source == METAL_PROVENANCE_TRIPS:
+            # Metal from the itinerary lookup counts ONLY for a single carrier;
+            # several carriers resolve together through resolve_ambiguous_metal
+            # or not at all.
+            metal = self.metal
+            return bool(
+                self.operating_carrier
+                and metal is not None
+                and metal.status is MetalStatus.KNOWN
+                and tuple(metal.carriers) == (self.operating_carrier,)
+            )
         return bool(self.operating_carrier) and self.carrier_source in (
             "seats_aero",
             "captured",

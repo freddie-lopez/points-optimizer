@@ -83,6 +83,9 @@ def metal_lines(cand) -> List[str]:
         lines.append(metal.other_price_note)
     if metal.trip_taxes_note:
         lines.append(f"per-itinerary taxes: {metal.trip_taxes_note}")
+    note = getattr(cand, "metal_surcharge_note", "")
+    if note:
+        lines.append(note)
     return lines
 
 
@@ -757,7 +760,16 @@ def _print_live_scoring_block(r: LegResult, console: Console) -> None:
     )
     for line in metal_lines(cand):
         console.print(f"     {escape(line)}")
-    if cand.surcharge_captured:
+    whole_because = getattr(cand, "observed_taxes_whole_because", "") or ""
+    if cand.surcharge_captured and whole_because.startswith("yq_included_verified:"):
+        evidence = whole_because.split(":", 1)[1]
+        console.print(
+            f"     taxes from the API: {_money(cand.cash_surcharge)} - taken as "
+            f"the COMPLETE carrier-side cash figure because Seats.aero's taxes for "
+            f"this source were VERIFIED to include carrier-imposed surcharges "
+            f"(evidence: {escape(evidence)}). NO modelled surcharge is added."
+        )
+    elif cand.surcharge_captured:
         console.print(
             f"     taxes from the API: {_money(cand.cash_surcharge)} - taken as "
             f"the COMPLETE carrier-side cash figure because this program levies "
