@@ -28,6 +28,7 @@ from src.seats_client import SeatsClient
 from src.trip_loader import load_trip_fixture
 from src.wallet import Wallet
 from tests import _trips_payloads as tp
+from tests._trips_label_state import unverified_constants  # noqa: F401 - pins the label constants
 
 ROOT = Path(__file__).parent.parent
 TRIPS = ROOT / "tests" / "fixtures" / "trips"
@@ -149,6 +150,7 @@ def _b4(results):
     return next(r for r in results if r.leg.id == "B4")
 
 
+@pytest.mark.usefixtures("unverified_constants")
 def test_b4_prints_vs_by_flight_number_with_every_qualifier(rm):
     _, _, results, _, stub, _ = run(rm)
     b4 = _b4(results)

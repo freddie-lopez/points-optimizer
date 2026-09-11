@@ -18,6 +18,7 @@ from src.seats_client import SeatsClient
 from src.trip_loader import load_trip_fixture
 from tests import _trips_payloads as tp
 from tests.test_from_snapshot import REPLAY_BASE, build_corpus, run_cli
+from tests._trips_label_state import unverified_constants  # noqa: F401 - pins the label constants
 
 ROOT = Path(__file__).parent.parent
 REAL = json.loads((ROOT / "tests" / "fixtures" / "seats_aero" / "sfo_mad_real.json").read_text())
@@ -287,6 +288,7 @@ def test_the_default_trips_is_resolved_later_not_by_argparse():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("unverified_constants")
 def test_the_banner_splits_the_calls_and_carries_the_parser_label(capsys):
     _, out, _ = cli(capsys)
     assert "Seats.aero calls spent this run: 4 search + 3 trips" in out

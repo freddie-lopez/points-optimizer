@@ -16,6 +16,7 @@ import pytest
 
 from src import models, seats_trips
 from src.models import METAL_REASONS, MetalLookup, MetalStatus
+from tests._trips_label_state import unverified_constants  # noqa: F401 - pins the label constants
 
 ROOT = Path(__file__).parent.parent
 NOW = datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc)
@@ -245,6 +246,7 @@ def test_a_known_render_on_a_single_carrier_row_has_no_codeshare_clause():
     assert "codeshare" not in text
 
 
+@pytest.mark.usefixtures("unverified_constants")
 def test_while_the_constant_is_empty_every_known_render_is_labelled_unverified():
     assert seats_trips.TRIPS_SCHEMA_VERIFIED_BY == ""
     for kw in (KNOWN_OK, _with(KNOWN_OK, parser_verified=True)):

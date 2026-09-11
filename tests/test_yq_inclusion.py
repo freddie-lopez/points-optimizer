@@ -23,6 +23,7 @@ from src.wallet import Wallet
 from src.yq_inclusion import YqInclusionError, YqVerdict
 from tests import _trips_payloads as tp
 from tests.test_metal_end_to_end import B4_ID, REAL, Stub, render, vs_row
+from tests._trips_label_state import unverified_constants  # noqa: F401 - pins the label constants
 
 ROOT = Path(__file__).parent.parent
 TRIP_B = ROOT / "tests" / "fixtures" / "trips" / "trip_b_europe.json"
@@ -196,6 +197,7 @@ def test_excludes_yq_without_known_metal_is_unscoreable_surcharge_unknown(rm, tr
     assert "VERIFIED to EXCLUDE" in b4.best_points.source_note
 
 
+@pytest.mark.usefixtures("unverified_constants")
 def test_flying_blue_on_an_af_kl_itinerary_resolves_together(rm):
     stub = FBStub([tp.segment("KL606", "SFO", "AMS", 1), tp.segment("AF1401", "AMS", "MAD", 2)])
     legs, _ = scored(rm, verdict("flyingblue", "excludes_yq"), stub=stub)
@@ -207,6 +209,7 @@ def test_flying_blue_on_an_af_kl_itinerary_resolves_together(rm):
     assert "OPERATING METAL AMBIGUOUS" in b1.surcharge.notes
 
 
+@pytest.mark.usefixtures("unverified_constants")
 def test_flying_blue_ambiguous_af_or_kl_resolves_too(rm):
     stub = FBStub([tp.segment("KL606", "SFO", "MAD", 1)])
     stub.trips_payloads[FB_ID]["data"].append(tp.trip(
@@ -219,6 +222,7 @@ def test_flying_blue_ambiguous_af_or_kl_resolves_too(rm):
     assert b1.surcharge.is_known
 
 
+@pytest.mark.usefixtures("unverified_constants")
 def test_flying_blue_on_af_plus_dl_does_not_resolve(rm):
     stub = FBStub([tp.segment("DL41", "SFO", "AMS", 1), tp.segment("AF1401", "AMS", "MAD", 2)])
     legs, _ = scored(rm, verdict("flyingblue", "excludes_yq"), stub=stub)

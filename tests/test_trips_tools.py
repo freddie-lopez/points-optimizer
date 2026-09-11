@@ -19,6 +19,7 @@ from src import config, response_cache, seats_trips, trips_tools
 from src.seats_client import SeatsClient
 from tests import _trips_payloads as tp
 from tests.test_metal_end_to_end import B4_ID, vs_row
+from tests._trips_label_state import unverified_constants  # noqa: F401 - pins the label constants
 
 ROOT = Path(__file__).parent.parent
 FLAG_KEY = "flag_key_for_trips_tools_0123456789"
@@ -297,6 +298,7 @@ def test_an_argparse_error_is_exit_1_not_2():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("unverified_constants")
 def test_yq_check_prints_every_field_and_writes_a_record_with_blanks(tmp_path):
     code, out, _ = run(yq_args(tmp_path))
     assert code == 0, out

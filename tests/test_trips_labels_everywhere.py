@@ -7,6 +7,7 @@ from datetime import date
 from io import StringIO
 from unittest.mock import patch
 
+import pytest
 from rich.console import Console
 
 from src import trips_tools
@@ -16,10 +17,12 @@ from tests import _trips_payloads as tp
 from tests.test_metal_alternatives import AFStub, _af
 from tests.test_trips_tools import Stub, yq_args
 from tests.test_yq_inclusion import rm, scored  # noqa: F401 - fixture reuse
+from tests._trips_label_state import unverified_constants  # noqa: F401 - pins the label constants
 
 LABEL = "[trips parser UNVERIFIED against a real Seats.aero response - built from the published schema only]"
 
 
+@pytest.mark.usefixtures("unverified_constants")
 def test_an_alternative_from_trips_metal_carries_the_label_and_the_marketing_caveat(rm):
     SeatsClient.CACHE.clear()
     legs, _ = scored(rm, None, stub=AFStub([_af()]))
@@ -53,6 +56,7 @@ def test_an_alternative_from_known_metal_is_unchanged():
     assert alts and all("UNVERIFIED" not in a.note for a in alts)
 
 
+@pytest.mark.usefixtures("unverified_constants")
 def test_the_yq_block_flights_and_carrier_lines_carry_the_label(tmp_path):
     SeatsClient.reset_call_budget()
     buf = StringIO()

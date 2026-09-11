@@ -16,6 +16,7 @@ from src import seats_trips
 from src.models import MetalStatus
 from src.seats_trips import AwardFacts, match_award, parse_flight_number, parse_trips_payload
 from tests import _trips_payloads as tp
+from tests._trips_label_state import unverified_constants  # noqa: F401 - pins the label constants
 
 ROOT = Path(__file__).parent.parent
 OPENAPI = ROOT / "tests" / "fixtures" / "seats_aero" / "trips_endpoint" / "synthetic" / "openapi_example.json"
@@ -45,6 +46,7 @@ def _code(payload, facts=VS_FACTS):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("unverified_constants")
 def test_the_openapi_example_is_known_cm_tk():
     envelope = json.loads(OPENAPI.read_text())
     assert envelope["_meta"]["synthetic"] is True
@@ -349,6 +351,7 @@ def test_coverage_is_a_function_of_the_bytes():
     assert seats_trips.trips_coverage([]) == (False, "")
 
 
+@pytest.mark.usefixtures("unverified_constants")
 def test_per_trip_taxes_are_shown_raw_with_both_readings_and_used_nowhere():
     _, lookup = _lookup(_one(taxes=4460, currency="CAD"))
     assert lookup.trip_taxes_note == (

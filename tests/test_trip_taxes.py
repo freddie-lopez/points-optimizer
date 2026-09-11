@@ -12,6 +12,7 @@ from src.seats_client import SeatsClient
 from tests import _trips_payloads as tp
 from tests.test_metal_end_to_end import B4_ID, Stub, _numbers, render
 from tests.test_yq_inclusion import rm, scored, verdict  # noqa: F401 - fixture reuse
+from tests._trips_label_state import unverified_constants  # noqa: F401 - pins the label constants
 
 ROW_USD = 609.30  # the B4 row: GBP 450.00 at the configured GBP rate
 
@@ -39,10 +40,16 @@ def _stub(*taxes, currency="GBP"):
     return Stub(trips_payloads={B4_ID: tp.payload(trips)})
 
 
+@pytest.mark.skipif(
+    seats_trips.TRIPS_TOTALTAXES_UNIT != "unverified", reason="the unit has been flipped"
+)
 def test_the_committed_unit_is_unverified():
+    # Once flipped, test_trips_verification_label checks the new value is backed
+    # by a real capture instead.
     assert seats_trips.TRIPS_TOTALTAXES_UNIT == "unverified"
 
 
+@pytest.mark.usefixtures("unverified_constants")
 def test_unverified_taxes_are_shown_raw_with_both_readings(rm):
     legs, _ = scored(rm, verdict(which="includes_yq"), stub=_stub(4460, currency="CAD"))
     out = render(list(legs.values()))
@@ -52,6 +59,7 @@ def test_unverified_taxes_are_shown_raw_with_both_readings(rm):
     )
 
 
+@pytest.mark.usefixtures("unverified_constants")
 @pytest.mark.parametrize("taxes", [0, -1, 10 ** 9, None, "abc"])
 @pytest.mark.parametrize("which", [None, "includes_yq", "excludes_yq"])
 def test_while_unverified_no_trip_figure_moves_any_number(rm, taxes, which):
