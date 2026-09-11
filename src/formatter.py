@@ -632,6 +632,7 @@ def print_live_banner(
             f"cache-ttl: "
             f"{'default' if opts.cache_ttl is None else str(opts.cache_ttl) + 's'}"
         )
+    _print_metal_banner(getattr(opts, "metal_report", None), console)
     console.print(
         "  [dim]CASH IS FROM SCREENSHOTS AND ALWAYS WILL BE. There is no "
         "cash-price API in scope. Hotels are manual - Seats.aero is "
@@ -650,6 +651,45 @@ def print_live_banner(
             "and it is NOT reported as no award space.[/bold red]"
         )
     console.print("[bold cyan]" + "=" * 78 + "[/bold cyan]")
+
+
+def _print_metal_banner(report, console: Console) -> None:
+    """The operating-airline lookup's share of the banner. Nothing if not engaged."""
+    if report is None:
+        return
+    from src import seats_trips
+
+    counts = report.by_status
+    cap = "no cap applies to a replay" if report.replay else f"cap {report.cap}"
+    console.print(
+        f"  itinerary lookups (--trips {report.mode}, {cap}): "
+        f"{report.candidates} live award(s) - "
+        f"{report.requests_sent} request(s) sent, "
+        f"{report.served_from_cache} served from the disk cache, "
+        f"{report.replayed} replayed from a snapshot"
+    )
+    console.print(
+        f"    operating airline known {counts.get('known', 0)}, "
+        f"ambiguous {counts.get('ambiguous', 0)}, "
+        f"NOT KNOWN {counts.get('unknown', 0)}, "
+        f"NOT LOOKED UP {counts.get('not_looked_up', 0)}, "
+        f"NOT RECORDED {counts.get('not_recorded', 0)} "
+        f"({report.not_looked_up_missing} of those not looked up or not recorded "
+        f"are gaps in this run; the rest cannot change the answer)"
+    )
+    if report.search_calls is not None:
+        console.print(
+            f"  Seats.aero calls spent this run: {report.search_calls} search + "
+            f"{report.trips_calls} trips"
+        )
+    if report.rate_limited:
+        console.print(
+            "  [bold red]Seats.aero rate-limited an itinerary lookup (HTTP 429); "
+            "every later lookup in this run was NOT attempted.[/bold red]"
+        )
+    label = seats_trips.trips_parser_label()
+    if label:
+        console.print(f"  [yellow]{escape(label)}[/yellow]")
 
 
 def print_live_leg_detail(results: List[LegResult], console: Console = None) -> None:

@@ -365,6 +365,33 @@ DEFAULTS AS OF v5:
         ),
     )
     live.add_argument(
+        "--trips",
+        dest="trips",
+        default=None,
+        metavar="auto|all|off",
+        help=(
+            "Operating-airline lookup through Seats.aero's trips endpoint, one "
+            "call per availability id after every search has finished. 'auto' "
+            "(the default for --trip-fixture) looks up only awards whose cash "
+            "side can depend on the metal: a direct UR partner whose carrier "
+            "surcharge is not a program-wide $0. 'all' looks up every live "
+            "award (disclosure only). 'off' looks up nothing. Under today's "
+            "rules a lookup DISCLOSES the flight numbers and the carrier they "
+            "name; it cannot change a score, a verdict or an exit code. Not "
+            "accepted with --offline, --from-snapshot or a single-route search."
+        ),
+    )
+    live.add_argument(
+        "--trips-cap",
+        dest="trips_cap",
+        default=None,
+        metavar="N",
+        help=(
+            "Most trips requests this run may SEND (disk-cache hits are free). "
+            "Default 10, allowed 1-50. Lookups past it read NOT LOOKED UP."
+        ),
+    )
+    live.add_argument(
         "--api-key",
         default=None,
         metavar="KEY",
@@ -570,11 +597,78 @@ def build_live(args, console: Console):
         allow_badge_fallback=bool(getattr(args, "allow_badge_fallback", False)),
         cache=cache,
         surcharges=default_table(),
+        # The CLI ALWAYS engages the lookup; `None` is for direct callers only.
+        trips_mode=getattr(args, "trips", None) or "auto",
+        trips_cap=_trips_cap(args),
     )
     client = SeatsClient(getattr(args, "api_key", None))
     print_key_banner(console, client.key_resolution)
     print_relocation_banner(console)
     return client, opts, cache
+
+
+def _trips_cap(args) -> int:
+    """The validated --trips-cap, or the default. `trips_flag_problems` ran first."""
+    from src.live_trip import DEFAULT_TRIPS_CAP
+
+    raw = getattr(args, "trips_cap", None)
+    return DEFAULT_TRIPS_CAP if raw is None else int(str(raw).strip())
+
+
+def trips_flag_problems(args) -> list:
+    """
+    Every reason --trips / --trips-cap cannot be honoured on this invocation.
+
+    A flag that would silently do nothing is refused (exit 1) rather than
+    ignored: the lookup never runs offline, never runs on a replay (a replay
+    reads what was recorded), and never runs on a single-route search.
+    """
+    from src.live_trip import TRIPS_CAP_MAX, TRIPS_CAP_MIN, TRIPS_MODES
+
+    trips = getattr(args, "trips", None)
+    cap = getattr(args, "trips_cap", None)
+    named = [flag for flag, value in (("--trips", trips), ("--trips-cap", cap)) if value is not None]
+    problems = []
+    if trips is not None and trips not in TRIPS_MODES:
+        problems.append(
+            f"--trips {trips!r} is not one of {', '.join(TRIPS_MODES)}."
+        )
+    if cap is not None:
+        text = str(cap).strip()
+        if not text.lstrip("-").isdigit() or not (
+            TRIPS_CAP_MIN <= int(text) <= TRIPS_CAP_MAX
+        ):
+            problems.append(
+                f"--trips-cap {cap!r} is not a whole number from {TRIPS_CAP_MIN} "
+                f"to {TRIPS_CAP_MAX}."
+            )
+    if not named:
+        return problems
+    if getattr(args, "offline", False):
+        problems.append(
+            f"{' and '.join(named)} cannot be combined with --offline: an offline "
+            f"run has no live awards, so there is nothing to look up. DROP "
+            f"{' and '.join(named)}."
+        )
+    elif getattr(args, "from_snapshot", None):
+        problems.append(
+            f"{' and '.join(named)} cannot be combined with --from-snapshot: a "
+            f"replay reads the lookups the live run RECORDED and asks nothing. "
+            f"DROP {' and '.join(named)}."
+        )
+    elif not getattr(args, "trip_fixture", None) and not getattr(args, "new_trip", None):
+        problems.append(
+            f"{' and '.join(named)} cannot be combined with a single-route search: "
+            f"it does not call the trips endpoint. Use --trip-fixture, or "
+            f"`python -m src.trips_tools capture` for one award."
+        )
+    return problems
+
+
+SINGLE_ROUTE_TRIPS_FOOTER = (
+    "operating airline: NOT LOOKED UP - single-route search does not call the "
+    "trips endpoint; use --trip-fixture or `python -m src.trips_tools capture`"
+)
 
 
 class ReplayRefused(ValueError):
@@ -1079,6 +1173,7 @@ def run_search(args, console: Console) -> int:
     if note:
         style = "red" if "INCOMPLETE" in note else "dim"
         console.print(f"[{style}]Seats.aero result coverage: {note}[/{style}]")
+    console.print(f"[yellow]{SINGLE_ROUTE_TRIPS_FOOTER}[/yellow]")
 
     if int(args.passengers or 1) > 1 and results:
         if args.html:
@@ -1115,6 +1210,12 @@ def main() -> int:
     console = Console(width=190)
 
     try:
+        trips_problems = trips_flag_problems(args)
+        if trips_problems:
+            console.print("[red]Error: the operating-airline lookup flags cannot be honoured.[/red]")
+            for problem in trips_problems:
+                console.print(f"[red]  - {problem}[/red]")
+            return 1
         if getattr(args, "offline", False) and getattr(args, "live", False):
             console.print(
                 "[red]Error: --offline and --live are mutually exclusive.[/red]\n"
