@@ -112,7 +112,7 @@ back and the Coder does both.
 git fetch <bundle> feature/operating-airline:feature/operating-airline
 git checkout feature/operating-airline
 
-# 2. The suite. No API calls. Expect 1580 passed / 13 skipped (the sandbox
+# 2. The suite. No API calls. Expect 1602 passed / 13 skipped (the sandbox
 #    figure; unverified on the Mac).
 .venv/bin/python -m pytest -q -p no:cacheprovider
 
@@ -123,6 +123,9 @@ git checkout feature/operating-airline
 .venv/bin/python -m src.trips_tools yq-check --origin JFK --destination LHR \
     --date YYYY-MM-DD --source virginatlantic --cabin J
 #    (add --refresh if you ran it earlier today and want a fresh search row)
+#    It must be cabin J on a US-Europe route: that is the only place a VS band
+#    is modelled, and a check with no band prints no row (it cannot tell
+#    includes from excludes).
 ```
 
 4. On virginatlantic.com, find the same flight for one adult. First confirm it
