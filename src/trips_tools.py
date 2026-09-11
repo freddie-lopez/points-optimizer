@@ -4,11 +4,11 @@ seats.aero. A separate module so `python -m src.main` keeps its 0-4 exit codes.
 
     python -m src.trips_tools capture (--availability-id ID
         | --origin O --destination D --date YYYY-MM-DD --source CODE)
-        [--cabin J] [--yes] [--out-dir DIR] [--api-key KEY]
+        [--cabin J] [--yes] [--refresh] [--out-dir DIR] [--api-key KEY]
 
     python -m src.trips_tools yq-check --origin O --destination D
         --date YYYY-MM-DD --source CODE --cabin X
-        [--yes] [--record-dir DIR] [--out-dir DIR] [--api-key KEY]
+        [--yes] [--refresh] [--record-dir DIR] [--out-dir DIR] [--api-key KEY]
 
 `capture` writes ONE real trips response (key redacted, with its verbatim body
 beside it) and prints a drift report against the published schema. A clean
@@ -108,6 +108,14 @@ def build_parser() -> argparse.ArgumentParser:
             help=f"Where the capture is written (default {DEFAULT_REAL_DIR}).",
         )
         p.add_argument("--api-key", default=None, metavar="KEY")
+        p.add_argument(
+            "--refresh", action="store_true",
+            help=(
+                "Fetch the search even if the disk cache holds an answer for it (a "
+                "cached row can carry a stale availability id or price). The search "
+                "call is then always spent."
+            ),
+        )
 
     cap = sub.add_parser("capture", help="Capture one real trips response.")
     cap.add_argument("--availability-id", default=None, metavar="ID")
@@ -258,6 +266,11 @@ def _validate(args, command: str) -> Optional[str]:
             )
         if aid and not seats_trips.valid_availability_id(aid):
             return f"--availability-id {aid!r} is not a plain 10-64 character id"
+        if aid and getattr(args, "refresh", False):
+            return (
+                "--refresh bypasses the SEARCH cache, and --availability-id makes no "
+                "search: drop one of them"
+            )
     if all(route_flags) or command == "yq-check":
         try:
             date.fromisoformat(str(args.date))
@@ -269,11 +282,16 @@ def _validate(args, command: str) -> Optional[str]:
     return None
 
 
-def _call_count_line(id_mode: bool) -> str:
+def _call_count_line(id_mode: bool, refresh: bool = False) -> str:
     from src.seats_client import SeatsClient
 
     spent = SeatsClient.DAILY_CALL_CAP - SeatsClient._budget_remaining()
-    calls = "1 trips" if id_mode else "1 search (0 if served from the disk cache) + 1 trips"
+    if id_mode:
+        calls = "1 trips"
+    elif refresh:
+        calls = "1 search (--refresh: never served from the disk cache) + 1 trips"
+    else:
+        calls = "1 search (0 if served from the disk cache) + 1 trips"
     return (
         f"This will make at most {1 if id_mode else 2} Seats.aero API call(s): "
         f"{calls}. This process has spent {spent} of "
@@ -296,7 +314,8 @@ def _resolve_row_by_search(client, args, console) -> Tuple[Dict[str, Any], Dict[
     client.MAX_PAGES = 1
     try:
         raw = client.search_raw(
-            args.origin.upper(), args.destination.upper(), DateRange(day, day), cache=cache
+            args.origin.upper(), args.destination.upper(), DateRange(day, day), cache=cache,
+            refresh=bool(getattr(args, "refresh", False)),
         )
     except SeatsAeroError as e:
         raise ToolRefusal(f"the search failed ({e}). Nothing was captured.") from None
@@ -369,7 +388,7 @@ def run_capture(
     console.print(f"[dim]{escape(resolution.describe())}[/dim]")
 
     id_mode = bool(getattr(args, "availability_id", None))
-    console.print(_call_count_line(id_mode))
+    console.print(_call_count_line(id_mode, bool(getattr(args, "refresh", False))))
     if not args.yes:
         try:
             answer = read("Continue? [y/N] ")

@@ -545,15 +545,17 @@ above stays the whole contract of `python -m src.main`.
 
 Both subcommands resolve the key the way `python -m src.main` does, print the
 key banner, print how many calls they will make, and ask `Continue? [y/N]`
-unless `--yes` is passed.
+unless `--yes` is passed. `--refresh` sends the search even when the disk cache
+holds an answer for it (a cached row can carry a stale availability id or
+price); it cannot be combined with `--availability-id`, which makes no search.
 
 ```bash
 # at most 2 calls: 1 search (0 if cached) + 1 trips
-python -m src.trips_tools capture --origin SFO --destination LHR \
+.venv/bin/python -m src.trips_tools capture --origin SFO --destination LHR \
     --date 2027-01-15 --source virginatlantic
 
-# a capture of an award on the program's own metal, plus a YQ record to fill in
-python -m src.trips_tools yq-check --origin JFK --destination LHR \
+# the same capture, plus a YQ record to fill in - one run covers both (2 calls)
+.venv/bin/python -m src.trips_tools yq-check --origin JFK --destination LHR \
     --date 2027-01-15 --source virginatlantic --cabin J
 ```
 
