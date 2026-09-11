@@ -64,6 +64,21 @@ RECORD_AIRLINE_RE = re.compile(
 RECORD_LOOKUP_RE = re.compile(
     r"^\s*-\s*itinerary lookup status\s*:[ \t]*(.*?)[ \t]*$", re.M
 )
+# R4-1. yq-check writes this line into a record that CANNOT back a verdict (no
+# one KNOWN airline, or no nonzero modelled band to tell includes from
+# excludes). Any record carrying it is refused, whatever its verdict line says.
+NO_VERDICT_MARKER = "yq-check: NO VERDICT POSSIBLE"
+RECORD_NO_VERDICT_RE = re.compile(
+    r"^\s*-\s*yq-check\s*:\s*NO VERDICT POSSIBLE\b(.*)$", re.M | re.I
+)
+# And the band the record was compared against: a verdict needs a NONZERO band,
+# because with none (or $0) a site total equal to the row figure is also what a
+# fare with no carrier surcharge shows.
+RECORD_BAND_RE = re.compile(
+    r"^\s*-\s*modelled carrier surcharge band\s*:[ \t]*(.*?)[ \t]*$", re.M
+)
+DOLLARS_RE = re.compile(r"\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)")
+
 # Must-fix 2. The site half confirms the flight is OPERATED by that airline: a
 # flight number names the marketing carrier, and only the airline's own site
 # says who flies it. Anything but "yes" backs nothing.
@@ -175,6 +190,33 @@ def _check_record_statements(
             f"repeat the verdict written in its record; neither is picked."
         )
     _check_record_airline(body, where, airline)
+    _check_record_band(body, where)
+
+
+def _check_record_band(body: str, where: str) -> None:
+    """R4-1: the record was not marked unusable, and its band is present and nonzero."""
+    marked = RECORD_NO_VERDICT_RE.findall(body)
+    if marked:
+        raise YqInclusionError(
+            f"{where} is marked '{NO_VERDICT_MARKER}'{marked[0].rstrip()}. yq-check "
+            f"wrote that because this check cannot tell includes_yq from "
+            f"excludes_yq: it backs no verdict, whatever its verdict line says."
+        )
+    bands = RECORD_BAND_RE.findall(body)
+    if len(bands) != 1:
+        raise YqInclusionError(
+            f"{where} has {len(bands)} 'modelled carrier surcharge band' lines; it "
+            f"needs exactly one, as yq-check writes it."
+        )
+    amounts = [float(a.replace(",", "")) for a in DOLLARS_RE.findall(bands[0])]
+    if not amounts or max(amounts) <= 0:
+        raise YqInclusionError(
+            f"{where} was compared against no nonzero surcharge band "
+            f"({bands[0] or '(blank)'}). With no band, a site total equal to the "
+            f"row figure is also what a fare with no carrier surcharge shows, so "
+            f"the check cannot tell includes_yq from excludes_yq: it backs no "
+            f"verdict."
+        )
 
 
 def _check_record_airline(body: str, where: str, airline: str) -> None:

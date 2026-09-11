@@ -32,6 +32,15 @@ lookup names, and their sum:
 The record asks "the site shows this flight operated by <airline> itself (yes /
 no)"; the loader refuses any answer but `yes`.
 
+**A check needs a nonzero modelled band.** Without one, a site total equal to the
+row figure is also what a fare with no carrier surcharge shows. For such a cabin
+or route (for Virgin Atlantic today: anything but J on NA-EU routes), yq-check
+prints no row, says where a band exists, and writes the line `yq-check: NO
+VERDICT POSSIBLE` into the record. The loader refuses any record carrying that
+line, or whose "modelled carrier surcharge band" line is missing, NONE MODELLED
+or $0. The same marker is written when the lookup did not name one KNOWN
+airline.
+
 `src/yq_inclusion.py` refuses to load a row whose evidence is missing, outside
 this directory, lacks the `yq-check record` marker, or still has `____` in it. It
 also refuses a record that is for another source (its `# yq-check record:

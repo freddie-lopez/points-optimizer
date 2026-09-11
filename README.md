@@ -475,8 +475,14 @@ verdict other than `includes_yq` / `excludes_yq`, a future date, a duplicate
 the `yq-check record` marker or still has `____` blanks. The record must also be
 **for the row's source** (its title and program line name it), its **one verdict
 line must say the row's verdict** (a record that says `inconclusive` backs
-nothing), and it must record an itinerary lookup that was **KNOWN on the row's
-airline** (yq-check writes both lines). Independent statements that must agree,
+nothing), it must record an itinerary lookup that was **KNOWN on the row's
+airline** (yq-check writes both lines), and it must have been compared against a
+**nonzero modelled band**. With no band (or $0), a site total equal to the row
+figure is also what a fare with no carrier surcharge shows, so the check cannot
+tell `includes_yq` from `excludes_yq`: yq-check then prints no row, names the
+cabins and routes where the table does model a band, and writes
+`yq-check: NO VERDICT POSSIBLE` into the record, and the loader refuses any
+record carrying that marker or lacking a nonzero band line. Independent statements that must agree,
 so a verdict copied from another source's or airline's record, or typed
 differently from the one written after reading the airline's site, is refused
 rather than scored.

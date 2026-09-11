@@ -75,7 +75,8 @@ def test_the_record_asks_for_the_operator_and_the_total(tmp_path):
 def test_a_band_that_cannot_separate_the_answers_says_so(tmp_path):
     _, out, _ = run_yq(tmp_path, trips=tp.payload([tp.vs_direct("DL41")]))
     assert "NONE MODELLED for DL metal, so the site total cannot tell includes from excludes" in out
-    assert "no band: this check cannot show excludes_yq" in out
+    assert "THIS CHECK CANNOT BACK A VERDICT" in out
+    assert "includes_yq." not in out.split("THIS CHECK CANNOT BACK A VERDICT", 1)[1][:400]
 
 
 def _load(tmp_path, text):

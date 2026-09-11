@@ -30,7 +30,8 @@ def body(status="KNOWN", airline="VS", verdict="includes_yq", extra=""):
         "# yq-check record: virginatlantic, 2026-09-10\n\n## Seats.aero\n\n"
         "- program: Virgin Atlantic Flying Club (source virginatlantic)\n"
         f"- itinerary lookup status: {status}\n"
-        f"- checked airline (the award's KNOWN flight-number carrier): {airline}\n{extra}\n"
+        f"- checked airline (the award's KNOWN flight-number carrier): {airline}\n"
+        f"- modelled carrier surcharge band: $200-$350 (pt $275) one way (VS metal, cabin J)\n{extra}\n"
         "## virginatlantic.com\n\n"
         f"- the site shows this flight operated by {airline[:2]} itself, not a codeshare "
         "partner (yes / no): yes\n"
@@ -117,11 +118,17 @@ def run_yq(tmp_path, trips=None):
 
 
 @pytest.mark.parametrize("flight,airline", [("VS19", "VS"), ("DL41", "DL")])
-def test_yq_check_writes_the_known_airline_into_the_record_and_the_row(tmp_path, flight, airline):
+def test_yq_check_writes_the_known_airline_into_the_record(tmp_path, flight, airline):
     code, out, record = run_yq(tmp_path, trips=tp.payload([tp.vs_direct(flight)]))
     assert "- itinerary lookup status: KNOWN" in record
     assert f"- checked airline (the award's KNOWN flight-number carrier): {airline}" in record
-    assert f"virginatlantic,{airline},<VERDICT>,2026-09-11," in out
+
+
+def test_yq_check_on_vs_metal_prints_the_vs_row_template(tmp_path):
+    code, out, record = run_yq(tmp_path, trips=tp.payload([tp.vs_direct("VS19")]))
+    assert "virginatlantic,VS,<VERDICT>,2026-09-11," in out
+    # (A DL flight has no modelled band under Virgin Atlantic, so it prints no
+    # template at all: tests/test_yq_check_no_band.py.)
 
 
 def test_yq_check_with_no_single_known_airline_prints_no_row(tmp_path):

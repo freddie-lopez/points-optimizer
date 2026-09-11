@@ -247,6 +247,9 @@ class Capture:
         self.raw_path: Optional[Path] = None
         self.lookups: Dict[str, Any] = {}
         self.blocking_drift: List[str] = []
+        # yq-check only: why this check can back NO verdict ("" when it can).
+        self.no_verdict_reason = ""
+        self.banded_options: List[str] = []
 
 
 def _validate(args, command: str) -> Optional[str]:
@@ -668,7 +671,12 @@ def _yq_block(cap: "Capture", args, console: Console) -> Dict[str, str]:
     # the row figure plus the modelled band for the airline the lookup names.
     status, airline = _checked_airline(cap, args)
     band_text, with_band = "none - the lookup did not name one KNOWN airline", ""
-    if airline:
+    if not airline:
+        cap.no_verdict_reason = (
+            f"the itinerary lookup for cabin {letter} is {status}, not one KNOWN "
+            f"airline, and a verdict covers only the airline it was checked on"
+        )
+    else:
         _, est = _modelled_band(args, [airline])
         if est.is_known and est.amount_high > 0:
             band_text = f"{est.render()} one way ({airline} metal, cabin {letter})"
@@ -682,13 +690,25 @@ def _yq_block(cap: "Capture", args, console: Console) -> Dict[str, str]:
                 f"NONE MODELLED for {airline} metal, so the site total cannot tell "
                 f"includes from excludes"
             )
+        if not with_band:
+            # R4-1. With no nonzero band, a site total equal to the row figure is
+            # ALSO what a fare with no carrier surcharge shows: the comparison
+            # cannot tell includes_yq from excludes_yq, so it backs nothing.
+            cap.no_verdict_reason = (
+                f"no nonzero carrier surcharge band is modelled for {airline} metal "
+                f"under {program}, cabin {letter}, on this route, so a site total "
+                f"equal to the row figure is also what a fare with no carrier "
+                f"surcharge would show: the check cannot tell includes_yq from "
+                f"excludes_yq"
+            )
+            cap.banded_options = _banded_options(program, airline)
     fields["modelled carrier surcharge band"] = band_text
     fields["row figure + band"] = with_band or "n/a"
     console.print("")
     console.print("YQ CHECK - compare against the program's own site")
     for key, value in fields.items():
         console.print(f"  {key}: {escape(str(value))}")
-    for line in _decision_rule(source, airline, known and usd, with_band):
+    for line in _decision_rule(source, airline, known and usd, with_band, cap.no_verdict_reason):
         console.print(f"  {escape(line)}")
     return fields
 
@@ -703,11 +723,36 @@ OWN_AIRLINE_NAME = {
 }
 
 
-def _decision_rule(source: str, airline: str, row_usd, with_band: str) -> List[str]:
+def _banded_options(program: str, airline: str) -> List[str]:
+    """Where the surcharge table DOES model a nonzero band for this program on this airline."""
+    from src.surcharge import default_table
+
+    seen = []
+    for rule in default_table().rules:
+        if rule.program != program or rule.operating_carrier != airline:
+            continue
+        if not rule.amount_high or rule.amount_high <= 0:
+            continue
+        cabin = "any cabin" if rule.cabin == "*" else f"cabin {rule.cabin}"
+        region = "any route" if rule.route_region == "*" else f"{rule.route_region} routes"
+        text = f"{cabin} on {region}"
+        if text not in seen:
+            seen.append(text)
+    return seen
+
+
+def _decision_rule(
+    source: str, airline: str, row_usd, with_band: str, no_verdict_reason: str = ""
+) -> List[str]:
     """The rule, stated by the TOTAL the site shows for ONE adult on the same flight."""
     site = PROGRAM_SITE.get(source, "the program's own site")
     own = OWN_AIRLINE_NAME.get(source, "the program's own airline")
     row = f"${row_usd:,.2f}" if row_usd else "the row figure"
+    if no_verdict_reason:
+        return [
+            f"THIS CHECK CANNOT BACK A VERDICT: {no_verdict_reason}. Whatever {site} "
+            f"shows, record nothing from it.",
+        ]
     return [
         f"On {site}, find the SAME flight for ONE adult.",
         f"1. Confirm the site shows it OPERATED BY {airline or 'the airline above'} "
@@ -793,6 +838,11 @@ def _write_record(cap: "Capture", args, fields: Dict[str, str], today: date, war
     # KNOWS. The loader reads both lines; a record without one KNOWN airline
     # backs nothing.
     status, airline = _checked_airline(cap, args)
+    if cap.no_verdict_reason:
+        # R4-1: machine-readable. The loader refuses any record carrying it.
+        from src.yq_inclusion import NO_VERDICT_MARKER
+
+        lines += [f"- {NO_VERDICT_MARKER} - {cap.no_verdict_reason}"]
     lines += [
         f"- itinerary lookup status: {status}",
         "- checked airline (the award's KNOWN flight-number carrier): "
@@ -893,13 +943,22 @@ def run_yq_check(args, console: Console, read, today: date) -> int:
     # record's (or a record that says inconclusive) - so a pre-filled row that
     # is one line off can never be pasted in and scored.
     status, airline = _checked_airline(cap, args)
-    if not airline:
+    if cap.no_verdict_reason:
+        where = (
+            f" For {airline} metal the surcharge table models a band for: "
+            f"{'; '.join(cap.banded_options)} - run the check there."
+            if cap.banded_options
+            else (
+                " The surcharge table models no band for this program on this "
+                "airline at all, so no yq-check on it can settle the question."
+                if airline
+                else " Pick a flight the program's own airline operates."
+            )
+        )
         console.print(
-            f"[bold yellow]This check cannot back a verdict: the itinerary lookup "
-            f"for cabin {escape(args.cabin.upper())} is {escape(status)}, not one KNOWN "
-            f"airline, and a verdict covers only the airline it was checked on. "
-            f"Record nothing from it; pick a flight the program's own airline "
-            f"operates.[/bold yellow]"
+            f"[bold yellow]This check cannot back a verdict: "
+            f"{escape(cap.no_verdict_reason)}. Record nothing from it; no row is "
+            f"printed.{escape(where)}[/bold yellow]"
         )
         return code
     console.print(
