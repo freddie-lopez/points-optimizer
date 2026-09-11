@@ -1240,7 +1240,15 @@ def run_fixture(args, console: Console, sink=None) -> int:
     run = score_fixture(args, console)
     if sink is not None:
         sink.append(run)
-    return print_fixture_report(run, args, console)
+    print_fixture_report(run, args, console)
+    # The status is decided once, in `fixture_exit_code`; the literals below
+    # keep every exit code discoverable from this function's source
+    # (tests/test_exit_codes_are_documented.py reads `return N` here).
+    if run.exit_code == 4:
+        return 4
+    if run.exit_code == 3:
+        return 3
+    return 0
 
 
 def unfundable_reason(award) -> str:
@@ -1448,6 +1456,22 @@ def dispatch(args, console: Console, sink=None) -> int:
     RunRefusal per invocation that reaches one - the local UI's only view of a
     run, so the UI never re-implements a rule this function applies.
     """
+    return main(args, console, sink)
+
+
+def main(args=None, console: Optional[Console] = None, sink=None) -> int:
+    """
+    The CLI. With no arguments it parses sys.argv and prints to the terminal,
+    exactly as always; `dispatch(args, console, sink)` is this same body with
+    the parsed args, a console and a sink supplied (the local UI's entry).
+    """
+    if args is None:
+        args = build_parser().parse_args()
+    if console is None:
+        # Fixed width so the tables render identically in a terminal and in a
+        # captured report file. Widened from 170 at v3: the per-leg table gained
+        # a provenance column and 170 no longer fits it.
+        console = Console(width=190)
     try:
         trips_problems = trips_flag_problems(args)
         if trips_problems:
@@ -1593,13 +1617,6 @@ def dispatch(args, console: Console, sink=None) -> int:
     except FileNotFoundError as e:
         _refuse(console, sink, 1, "file", f"[red]Error: {e}[/red]")
         return 1
-
-
-def main() -> int:
-    # Fixed width so the tables render identically in a terminal and in a
-    # captured report file. Widened from 170 at v3: the per-leg table gained a
-    # provenance column and 170 no longer fits it.
-    return dispatch(build_parser().parse_args(), Console(width=190))
 
 
 if __name__ == "__main__":
