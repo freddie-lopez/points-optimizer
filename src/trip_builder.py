@@ -43,6 +43,7 @@ parser, or anything in the surcharge path.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -78,6 +79,14 @@ LIVE_ONLY_FLAG = (
 # directory: `--new-trip ../../../etc/whatever` is not a trip name.
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
+# FINDING M-3. A NAME THE APP CANNOT ADDRESS IS NOT A USABLE NAME. There was no
+# length limit at all: a 200-character name was written and then 404ed, because
+# the local UI addresses a trip through `/api/trips/<id>`, whose route allows
+# 121 characters; a ~300-character one raised ENAMETOOLONG from the filesystem
+# and surfaced as an unexpected error rather than a refusal. The limit is the
+# smallest thing in that chain, stated, and checked before anything is written.
+MAX_NAME_LENGTH = 120
+
 
 class TripBuilderError(ValueError):
     """A refusal. NO FILE IS EVER WRITTEN when this is raised."""
@@ -96,6 +105,13 @@ def validate_name(name: str) -> str:
     text = (name or "").strip()
     if not text:
         raise TripBuilderError("--new-trip needs a NAME.")
+    if len(text) > MAX_NAME_LENGTH:
+        raise TripBuilderError(
+            f"--new-trip: that name is {len(text)} characters. The longest name "
+            f"this tool can address is {MAX_NAME_LENGTH}: a longer one is written "
+            f"and then cannot be opened or run, which is worse than refusing it. "
+            f"No file has been written."
+        )
     if not _SAFE_NAME.match(text) or ".." in text:
         raise TripBuilderError(
             f"--new-trip {name!r} is not a usable fixture name. Use letters, "
@@ -155,8 +171,16 @@ def validate_cash(value: str, flag: str) -> float:
             f"{flag}: {value!r} is not a number. A cash price is the one figure "
             f"this builder writes and it is not being guessed."
         ) from None
-    if amount != amount or amount in (float("inf"), float("-inf")):
-        raise TripBuilderError(f"{flag}: {value!r} is not a finite amount.")
+    # M-1: refused HERE, before anything is written, and by the same rule the
+    # loader applies - so a fixture this builder writes can always be scored.
+    from src import config
+
+    unscoreable = config.unscoreable_cash_reason(amount)
+    if unscoreable:
+        raise TripBuilderError(
+            f"{flag}: {unscoreable} Refused rather than written into a fixture "
+            f"that every later run would crash on."
+        )
     if amount <= 0:
         raise TripBuilderError(
             f"{flag}: a cash price of {amount} is refused. Zero is not a price - "
@@ -410,13 +434,28 @@ def write_fixture(
 
     directory = Path(directory or FIXTURE_DIR)
     path = directory / f"{fixture['id']}.json"
-    if path.exists() and not force:
-        raise TripBuilderError(
-            f"{path} already exists and --force was not given. Refusing to "
-            f"overwrite: the file may hold captures nobody can reproduce."
-        )
     directory.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(fixture, indent=2) + "\n")
+    body = json.dumps(fixture, indent=2) + "\n"
+    # FINDING M-2. EXCLUSIVE CREATE, not "check then write". A one-shot CLI
+    # cannot race itself; the local UI is a threaded server, and two creates of
+    # one name both passed the exists() check and both reported "Wrote ...",
+    # with one trip silently overwriting the other. The kernel decides who wins.
+    if force:
+        path.write_text(body)
+    else:
+        try:
+            with open(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644),
+                      "w", encoding="utf-8") as f:
+                f.write(body)
+        except FileExistsError:
+            raise TripBuilderError(
+                f"{path} already exists and --force was not given. Refusing to "
+                f"overwrite: the file may hold captures nobody can reproduce."
+            ) from None
+        except OSError as e:
+            raise TripBuilderError(
+                f"{path} could not be written ({e.strerror}). Nothing was written."
+            ) from None
 
     try:
         load_trip_fixture(path)

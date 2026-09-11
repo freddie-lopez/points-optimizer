@@ -9,17 +9,25 @@ from src.models import CashOption, Leg, MandatoryFee, PointsCandidate, PointsPro
 
 
 def _finite_amount(value, what: str) -> float:
-    """A money amount that is a real, finite number - or a TripFixtureError."""
-    import math
+    """
+    A money amount that is a real, finite, SCOREABLE number - or a
+    TripFixtureError.
+
+    M-1: a fixture written before this rule existed (or by hand) can carry an
+    amount whose points-equivalent overflows. That used to reach the scorer and
+    come back as an OverflowError traceback; it is now a load refusal, which
+    every caller already renders as one clean line - "CANNOT LOAD" in the UI's
+    trip list, `Error: ...` and exit 1 from the CLI.
+    """
+    from src import config
 
     try:
         amount = float(value)
     except (TypeError, ValueError) as e:
         raise TripFixtureError(f"{what} is {value!r}, which is not a number.") from e
-    if not math.isfinite(amount):
-        raise TripFixtureError(
-            f"{what} is {value!r}, which is not a finite amount of money."
-        )
+    unscoreable = config.unscoreable_cash_reason(amount)
+    if unscoreable:
+        raise TripFixtureError(f"{what} is {value!r}: {unscoreable}")
     return amount
 
 

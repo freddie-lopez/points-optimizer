@@ -104,6 +104,16 @@ def display_path(p: Path) -> str:
         return str(p)
 
 
+def _loads_as_a_trip(path: Path) -> bool:
+    from src.trip_loader import load_trip_fixture
+
+    try:
+        load_trip_fixture(path)
+        return True
+    except Exception:  # noqa: BLE001 - an unloadable file is listed, not hidden
+        return False
+
+
 def path_arg(p: Path) -> str:
     """A path for an argv: relative to the working directory when it is inside
     it (so "Equivalent command" reads the way it would be typed), else absolute."""
@@ -339,15 +349,26 @@ class Engine:
     def _trip_files(self) -> Dict[str, Path]:
         """id -> path for every fixture file in the trips directory. `*_answer.json`
         (acceptance ANSWER files) are excluded; nothing else is hidden."""
-        from src.trip_builder import _SAFE_NAME
+        from src.trip_builder import MAX_NAME_LENGTH, _SAFE_NAME
 
         out: Dict[str, Path] = {}
         if not self.trips_dir.is_dir():
             return out
         for p in sorted(self.trips_dir.glob("*.json")):
-            if p.name.endswith("_answer.json") or not p.is_file():
+            if not p.is_file():
                 continue
             if not _SAFE_NAME.match(p.stem) or ".." in p.stem:
+                continue
+            if len(p.stem) > MAX_NAME_LENGTH:
+                # It could not be addressed in a URL; listing it would offer a
+                # trip that 404s. Names this long can no longer be written.
+                continue
+            if p.name.endswith("_answer.json") and not _loads_as_a_trip(p):
+                # M-3: the acceptance ANSWER files sit beside the fixtures and
+                # are not trips. They are recognised by FAILING TO LOAD as one,
+                # not by their name alone - a trip a user names "..._answer" is
+                # a trip, and hiding it while reporting "Wrote ..." is the app
+                # claiming something it then cannot show.
                 continue
             out[p.stem] = p
         return out

@@ -266,6 +266,48 @@ def cash_to_points_equivalent(cash_usd: float, cpp: float = CASH_VALUATION_CPP) 
     return int(round(cash_usd / cpp))
 
 
+def unscoreable_cash_reason(amount, cpp: float = CASH_VALUATION_CPP) -> str:
+    """
+    Why this cash amount cannot be carried through a fixture and scored, or "".
+
+    FINDING M-1. `validate_cash` bounded NaN and infinity, and nothing bounded
+    the finite values whose POINTS-EQUIVALENT is infinite: `1e308` is a finite
+    fare, and `cash_to_points_equivalent` divides it by 0.01, overflows to
+    `inf`, and `int(inf)` raises OverflowError - a traceback from the CLI, a
+    500 from the UI, and a fixture on disk that breaks every later run over that
+    directory. The rule is mechanical rather than a made-up ceiling: an amount
+    is refused only when it cannot survive the round trip a fixture makes it
+    take (write as JSON, read back, convert at the run's valuation).
+    """
+    import json as _json
+    import math as _math
+
+    try:
+        value = float(amount)
+    except (TypeError, ValueError):
+        return f"{amount!r} is not a number."
+    if not _math.isfinite(value):
+        return f"{amount!r} is not a finite amount."
+    try:
+        if _json.loads(_json.dumps(value)) != value:
+            return (
+                f"{value!r} does not survive being written to the fixture and "
+                f"read back unchanged."
+            )
+    except (ValueError, OverflowError):
+        return f"{value!r} cannot be written to a fixture as JSON."
+    if cpp <= 0:
+        return "the valuation is not positive."
+    equivalent = value / cpp
+    if not _math.isfinite(equivalent):
+        return (
+            f"{value!r} is too large to score: at {cpp * 100:.2f} cents per "
+            f"point its points-equivalent overflows, so no run could ever "
+            f"compare it against points."
+        )
+    return ""
+
+
 def points_to_cash_equivalent(points: int, cpp: float = CASH_VALUATION_CPP) -> float:
     """Convert points to their cash-equivalent at `cpp` cents per point."""
     return points * cpp
