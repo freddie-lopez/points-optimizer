@@ -2222,6 +2222,7 @@ def apply_apd(
             _add_apd_to_unscored_floor(result, amount, valuation_cpp)
             continue
 
+        before_apd = result.points_total_score_usd
         for attr in (
             "points_total_score_usd",
             "points_score_low_usd",
@@ -2231,6 +2232,7 @@ def apply_apd(
             value = getattr(result, attr)
             if value is not None and value != float("inf"):
                 setattr(result, attr, value + amount)
+        _restate_verdict_after_apd(result, before_apd, amount, valuation_cpp)
 
         # The head-to-head numbers are recomputed from the moved score rather
         # than left stale. A leg whose points side has grown by GBP 102 and
@@ -2259,6 +2261,35 @@ def apply_apd(
                     f"own APD. {result.verdict_reason}"
                 ).strip()
     return results
+
+
+def _restate_verdict_after_apd(
+    result: LegResult, before: float, amount: float, valuation_cpp: float
+) -> None:
+    """
+    F-3. THE VERDICT SENTENCE QUOTES THE SCORE IT WAS DECIDED ON.
+
+    `evaluate_leg` writes "Points path scores $280.00 vs $482.00 cash" before
+    APD exists; APD then moves the score to $418.11 - the figure the table, the
+    margin and the trip total all use - and the sentence kept the cleaner
+    $280.00. A reason that quotes a smaller points cost than the one scored is
+    an understatement with a verdict attached. The sentence is restated with
+    the scored figure and names the duty that is in it.
+    """
+    if before is None or before == float("inf"):
+        return
+    after = result.points_total_score_usd
+    cash = result.cash_total_score_usd
+    parts = f"(points ${before:,.2f} + UK APD ${amount:,.2f})"
+    result.verdict_reason = result.verdict_reason.replace(
+        f"Points path scores ${before:,.2f} vs ${cash:,.2f} cash.",
+        f"Points path scores ${after:,.2f} vs ${cash:,.2f} cash {parts}.",
+    ).replace(
+        f"Cash is cheaper: ${cash:,.2f} vs ${before:,.2f} on points at "
+        f"{valuation_cpp * 100:.1f}cpp.",
+        f"Cash is cheaper: ${cash:,.2f} vs ${after:,.2f} on points at "
+        f"{valuation_cpp * 100:.1f}cpp {parts}.",
+    )
 
 
 def leg_points_demand(result: LegResult, wallet: Wallet) -> Dict[str, int]:

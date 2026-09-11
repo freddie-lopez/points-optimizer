@@ -126,7 +126,7 @@ not known.
 is below $36.00.
 
 B4 - LON->MRY, Jan 27 2027, one-way, economy, 1 adult
-  Verdict: POINTS - Points path scores $280.00 vs $482.00 cash.
+  Verdict: POINTS - Points path scores $418.11 vs $482.00 cash (points $280.00 + UK APD $138.11).
   Cash: $482 British Airways (American, Iberia, Finnair) LHR-SFO nonstop 11:45am-2:55pm, 11h10
   Points: United LHR-SFO nonstop (badge 27.6k pts)
         UR 28,000 -> United MileagePlus 28,000 @ 1:1 [Chase Sapphire Preferred]

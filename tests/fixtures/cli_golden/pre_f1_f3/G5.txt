@@ -58,10 +58,10 @@ LIVE TRIP MODE - points from Seats.aero, cash from captures
 ┃     ┃                              ┃ Cheapest ┃ Cash as pts ┃                      ┃       ┃           ┃ Surc… ┃  Score ┃  Score ┃ Provenance                 ┃                            ┃
 ┃ Leg ┃ What                         ┃     cash ┃     (@1cpp) ┃ Best points path     ┃ Poin… ┃ Surcharge ┃ sour… ┃ points ┃   cash ┃ points | cash              ┃ Verdict                    ┃
 ┡━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ B1  │ MRY->MAD                     │  $395.00 │      39,500 │ no live data         │     - │         - │ -     │      - │ $395.… │ none: API FAILED | unknown │ PAY CASH (no live pts dat… │
-│ B2  │ MAD->AMS                     │   $44.00 │       4,400 │ no live data         │     - │         - │ -     │      - │ $44.00 │ none: API FAILED | unknown │ PAY CASH (no live pts dat… │
-│ B3  │ AMS->LON                     │   $76.00 │       7,600 │ no live data         │     - │         - │ -     │      - │ $76.00 │ none: API FAILED | unknown │ PAY CASH (no live pts dat… │
-│ B4  │ LON->MRY                     │  $482.00 │      48,200 │ no live data         │     - │         - │ -     │      - │ $482.… │ none: API FAILED | unknown │ PAY CASH (no live pts dat… │
+│ B1  │ MRY->MAD                     │  $395.00 │      39,500 │ none - not a partner │     - │         - │ -     │      - │ $395.… │ none: API FAILED | unknown │ PAY CASH (no live pts dat… │
+│ B2  │ MAD->AMS                     │   $44.00 │       4,400 │ none - not a partner │     - │         - │ -     │      - │ $44.00 │ none: API FAILED | unknown │ PAY CASH (no live pts dat… │
+│ B3  │ AMS->LON                     │   $76.00 │       7,600 │ none - not a partner │     - │         - │ -     │      - │ $76.00 │ none: API FAILED | unknown │ PAY CASH (no live pts dat… │
+│ B4  │ LON->MRY                     │  $482.00 │      48,200 │ none - not a partner │     - │         - │ -     │      - │ $482.… │ none: API FAILED | unknown │ PAY CASH (no live pts dat… │
 │ B5  │ Novotel Madrid Center (Accor │  $747.83 │      74,783 │ none - not a partner │     - │         - │ -     │      - │ $747.… │ none | unknown             │ PAY CASH (no path)         │
 │ B6  │ NH City Centre Amsterdam     │  $635.09 │      70,071 │ none - not a partner │     - │         - │ -     │      - │ $700.… │ none | unknown             │ PAY CASH (no path)         │
 │ B7  │ Hilton London Hyde Park      │  $680.57 │      68,057 │ none - not a partner │     - │         - │ -     │      - │ $680.… │ none | unknown             │ PAY CASH (no path)         │

@@ -99,6 +99,51 @@ def _one(text: str, style: str = "") -> List[Seg]:
     return [Seg(text, style)]
 
 
+@dataclass
+class Line:
+    """One printed line, as the exact markup the terminal prints, tagged with
+    what it is about. `text` is what the terminal SHOWS: rich's own parse of
+    the markup, so an escaped bracket stays and a swallowed tag goes."""
+
+    markup: str
+    topic: str = ""
+
+    @property
+    def text(self) -> str:
+        from rich.text import Text
+
+        return Text.from_markup(self.markup).plain.strip("\n")
+
+    def to_json(self) -> Dict[str, str]:
+        from rich.text import Text
+
+        t = Text.from_markup(self.markup)
+        plain = t.plain
+        style = ""
+        if len(t.spans) == 1 and t.spans[0].start <= len(plain) - len(plain.lstrip("\n")) \
+                and t.spans[0].end >= len(plain.rstrip()):
+            style = str(t.spans[0].style)
+        return {"text": plain.strip("\n"), "style": style, "topic": self.topic}
+
+
+class LineSink:
+    """Stands in for a Console: records each print as a Line, tagged with the
+    current topic. The print_* bodies below run UNCHANGED against it, which is
+    what makes the recorded lines the terminal's own."""
+
+    def __init__(self):
+        self.lines: List[Line] = []
+        self.topic = ""
+
+    def print(self, *objects, **_kw) -> None:
+        self.lines.append(Line(" ".join(str(o) for o in objects), self.topic))
+
+
+def _topic(console, name: str) -> None:
+    if isinstance(console, LineSink):
+        console.topic = name
+
+
 def _taxes_are_what_is_unknown(r) -> bool:
     """True when the unknown on this leg's points side is the award's TAXES."""
     cand = getattr(r, "best_points", None)
@@ -263,6 +308,7 @@ def print_alternatives_one(r: LegResult, console: Console) -> bool:
     leg has no alternatives."""
     if not r.alternatives:
         return False
+    _topic(console, "alternatives")
     console.print(f"\n[bold cyan]{r.leg.id}[/bold cyan] - same-metal alternatives")
     for alt in r.alternatives:
         console.print(
@@ -395,6 +441,11 @@ def verdict_label(r: LegResult) -> List[Seg]:
             if _taxes_are_what_is_unknown(r)
             else ("WITHHELD (surch unknown)", "bold red")
         )
+    elif r.verdict == "cash (no points path)" and r.points_absence == "never_priced":
+        # F-1: "(no path)" is a claim about partnerships; this leg was never
+        # priced, which says nothing about them. Same verdict CODE, so the
+        # README table and the exit codes are unchanged.
+        word = ("PAY CASH (never priced)", "bold yellow")
     else:
         word = VERDICT_WORDS[r.verdict]
     if r.demoted_for_trip_balance:
@@ -417,6 +468,8 @@ def verdict_kind(r: LegResult) -> str:
         return "points"
     if r.verdict in ("cash (surcharge unknown)", VERDICT_APD_UNKNOWN):
         return "withheld"
+    if r.verdict == "cash (no points path)" and r.points_absence == "never_priced":
+        return "cash_qualified"
     if r.verdict in ("cash", "cash (no points path)"):
         return "cash"
     return "cash_qualified"
@@ -483,6 +536,17 @@ def _path_cells(r: LegResult):
         # The same falsehood on the unattributed path: the program is not
         # NAMED, which says nothing about whether it is a partner.
         return Cell([Seg("program NOT NAMED - no claim")], "unattributed"), Cell([Seg("-")], "none")
+    # F-1. THE `else` BELOW IS A CLAIM ABOUT PARTNERSHIPS, and two legs used to
+    # reach it that have earned no such claim: a leg whose live search FAILED
+    # (its verdict already says "no live pts data") and a leg that was NEVER
+    # PRICED (a --new-trip fixture scored offline, whose own detail line says
+    # "NOTHING is claimed about whether a UR transfer partner covers" it). The
+    # cell printed "none - not a partner" beside both - the recurring failure,
+    # "could not find out" shown as a finding, in a one-line table cell.
+    if r.verdict == VERDICT_NO_LIVE_DATA:
+        return Cell([Seg("no live data")], "no_live_data"), Cell([Seg("-")], "none")
+    if r.points_absence == "never_priced":
+        return Cell([Seg("never priced")], "never_priced"), Cell([Seg("-")], "none")
     return Cell([Seg("none - not a partner")], "no_partner"), Cell([Seg("-")], "none")
 
 
@@ -701,9 +765,12 @@ def print_leg_detail(results: List[LegResult], console: Console = None) -> None:
 
 def print_leg_detail_one(r: LegResult, console: Console) -> None:
     """One leg's detail block (the loop body of `print_leg_detail`)."""
+    _topic(console, "header")
     console.print(f"\n[bold cyan]{r.leg.id}[/bold cyan] - {r.leg.description}")
+    _topic(console, "verdict")
     console.print(f"  Verdict: [bold]{r.verdict.upper()}[/bold] - {r.verdict_reason}")
     if r.best_cash:
+        _topic(console, "cash")
         console.print(f"  Cash: {r.best_cash.label}")
         if r.best_cash.is_foreign:
             console.print(
@@ -714,16 +781,21 @@ def print_leg_detail_one(r: LegResult, console: Console) -> None:
         if r.best_cash.unavoidable_cash_note:
             console.print(f"        [yellow]! {r.best_cash.unavoidable_cash_note}[/yellow]")
     if r.mandatory_fees_usd:
+        _topic(console, "fees")
         console.print(
             f"  [yellow]Mandatory fees: {_money(r.mandatory_fees_usd)} - owed "
             f"whether you pay cash OR points, and included in BOTH totals.[/yellow]"
         )
     if r.best_points is not None and r.points_path:
+        _topic(console, "points")
         console.print(f"  Points: {r.best_points.label}")
+        _topic(console, "path")
         console.print(f"        {r.points_path.summary()}")
         if r.funding_plan:
+            _topic(console, "spend")
             console.print(f"        spend: {r.funding_plan.spend_summary()}")
         if r.points_path.stranded_points:
+            _topic(console, "stranded")
             console.print(
                 f"        stranded: {r.points_path.stranded_points:,} "
                 f"(within the unavoidable transfer increment)"
@@ -732,15 +804,18 @@ def print_leg_detail_one(r: LegResult, console: Console) -> None:
         # lines are ADDED under it, never swapped in for what the scorer
         # itself uses as the metal.
         if r.best_points.operating_carrier:
+            _topic(console, "legacy_metal")
             console.print(
                 f"        metal: {r.best_points.operating_carrier} "
                 f"(source: {r.best_points.carrier_source}), "
                 f"cabin {r.best_points.cabin}"
                 + _trips_metal_label(r.best_points.carrier_source)
             )
+        _topic(console, "metal")
         for line in metal_lines(r.best_points):
             console.print(f"        {escape(line)}")
     if r.surcharge is not None:
+        _topic(console, "surcharge")
         if r.surcharge.is_known:
             console.print(
                 f"  Surcharge: {r.surcharge.render()} "
@@ -763,14 +838,17 @@ def print_leg_detail_one(r: LegResult, console: Console) -> None:
                 "  [bold red]Surcharge: UNKNOWN - this is NOT $0.[/bold red]"
             )
             if r.break_even_surcharge_usd is not None:
+                _topic(console, "break_even")
                 console.print(
                     f"        [red]Break-even: points beat cash only if "
                     f"{_be_subject(r)} is below "
                     f"{_money(r.break_even_surcharge_usd)}.[/red]"
                 )
             if r.surcharge.notes:
+                _topic(console, "surcharge")
                 console.print(f"        [dim]{escape(r.surcharge.notes)}[/dim]")
     if r.verdict == "points" or r.verdict.startswith("cash"):
+        _topic(console, "margin")
         if r.has_points_path:
             if r.verdict == "points":
                 console.print(
@@ -782,8 +860,10 @@ def print_leg_detail_one(r: LegResult, console: Console) -> None:
                     f"  Margin: points cost {_money(r.margin_usd)} MORE than cash "
                     f"({r.margin_pct:.1f}% worse)"
                 )
+    _topic(console, "note")
     for note in r.leg.notes:
         console.print(f"  [dim]note: {escape(note)}[/dim]")
+    _topic(console, "flag")
     for flag in r.leg.data_flags:
         console.print(f"  [yellow]FLAG: {escape(flag)}[/yellow]")
     # v5 STEP 7. The APD line gets its own prefix, not "UNVERIFIED:".
@@ -792,7 +872,29 @@ def print_leg_detail_one(r: LegResult, console: Console) -> None:
     # uncorroborated Google badge would flatten the difference between "we
     # looked this up" and "somebody typed this".
     for prefix, w, style in leg_warning_lines(r):
+        _topic(console, "apd" if prefix == "APD" else "warning")
         console.print(f"  [{style}]{prefix}: {escape(w)}[/{style}]")
+
+
+def leg_detail_lines(r: LegResult) -> List[Line]:
+    """`print_leg_detail_one`'s lines, each tagged with its topic."""
+    sink = LineSink()
+    print_leg_detail_one(r, sink)
+    return sink.lines
+
+
+def live_detail_lines(r: LegResult) -> List[Line]:
+    """`print_live_leg_detail_one`'s lines ([] for a leg not queried)."""
+    sink = LineSink()
+    print_live_leg_detail_one(r, sink)
+    return sink.lines
+
+
+def alternatives_lines(r: LegResult) -> List[Line]:
+    """`print_alternatives_one`'s lines ([] for a leg with none)."""
+    sink = LineSink()
+    print_alternatives_one(r, sink)
+    return sink.lines
 
 
 def leg_warning_lines(r: LegResult) -> List[tuple]:
@@ -963,18 +1065,23 @@ def print_live_leg_detail_one(r: LegResult, console: Console) -> bool:
     if outcome is None or outcome.state is LiveQueryState.NOT_QUERIED:
         return False
 
+    _topic(console, "live_header")
     console.print(f"\n[bold cyan]{r.leg.id}[/bold cyan] {r.leg.description}")
     style = "red" if outcome.is_api_failure else "white"
+    _topic(console, "outcome")
     console.print(f"  [{style}]{outcome.render()}[/{style}]")
+    _topic(console, "coverage")
     if outcome.pagination_note:
         note_style = "red" if "INCOMPLETE" in outcome.pagination_note else "dim"
         console.print(
             f"  [{note_style}]coverage: {outcome.pagination_note}[/{note_style}]"
         )
 
+    _topic(console, "superseded")
     for line in supersession_lines(r.leg):
         console.print(f"  [yellow]{line}[/yellow]")
 
+    _topic(console, "date_shift")
     if r.leg.date_shifted:
         console.print(
             f"  [bold yellow]DATE SHIFTED to {r.leg.date_shifted_to}: an "
@@ -1005,11 +1112,14 @@ def _print_live_scoring_block(r: LegResult, console: Console) -> None:
         if r.leg.points_provenance is PointsProvenance.SNAPSHOT
         else "live award"
     )
+    _topic(console, "award")
     console.print(
         f"  {kind}: {cand.program}  {cand.cabin}  {cand.points:,} points"
     )
+    _topic(console, "metal")
     for line in metal_lines(cand):
         console.print(f"     {escape(line)}")
+    _topic(console, "taxes")
     whole_because = getattr(cand, "observed_taxes_whole_because", "") or ""
     if cand.surcharge_captured and whole_because.startswith("yq_included_verified:"):
         evidence = whole_because.split(":", 1)[1]
@@ -1072,6 +1182,7 @@ def _print_live_scoring_block(r: LegResult, console: Console) -> None:
         )
 
     if r.surcharge is not None and not r.surcharge.is_known:
+        _topic(console, "floor")
         floor = r.points_floor_usd
         taxes_clause = (
             f"+ the API's taxes of {_money(r.observed_taxes_usd)} "
@@ -1091,6 +1202,7 @@ def _print_live_scoring_block(r: LegResult, console: Console) -> None:
             f"carrier surcharge at its $0 floor - the least this can possibly cost)"
         )
         if r.break_even_surcharge_usd is not None:
+            _topic(console, "break_even")
             console.print(
                 (
                     f"     points win ONLY if its unknown taxes plus any carrier "
@@ -1101,11 +1213,13 @@ def _print_live_scoring_block(r: LegResult, console: Console) -> None:
                 )
                 + f"[bold]{_money(r.break_even_surcharge_usd)}[/bold]"
             )
+        _topic(console, "surcharge_unknown")
         console.print(
             f"     [bold red]surcharge UNKNOWN - this is NOT $0.[/bold red] "
             f"{escape(r.surcharge.notes)}"
         )
         if r.surcharge_cannot_change_verdict:
+            _topic(console, "inert")
             console.print(
                 "     [green]...and it does not matter here: the floor already "
                 "loses to cash, and a surcharge can only ADD to the points side. "
@@ -1113,6 +1227,7 @@ def _print_live_scoring_block(r: LegResult, console: Console) -> None:
             )
     # THE HONESTY INVARIANT: a live price never renders without its timestamp.
     if cand.source == LIVE_SOURCE:
+        _topic(console, "provenance")
         console.print(f"     [dim]provenance: {cand.source} - {escape(cand.source_note)}[/dim]")
 
 
@@ -1132,6 +1247,7 @@ def _print_other_lookups(r: LegResult, console: Console) -> None:
         and getattr(c, "metal", None) is not None
         and c.metal.status is not MetalStatus.NOT_LOOKED_UP
     ]
+    _topic(console, "other_lookup")
     for cand in others:
         console.print(
             f"  other live award {escape(str(cand.program))} {cand.cabin} "
@@ -1152,6 +1268,7 @@ def _print_flexible_findings(r: LegResult, console: Console) -> None:
     findings = r.leg.flexible_date_findings
     if not findings:
         return
+    _topic(console, "flexible")
     spec = r.leg.live_outcome.queried if r.leg.live_outcome else None
     window = f"+/-{spec.flex_days} days" if spec else "a flexible window"
     console.print(

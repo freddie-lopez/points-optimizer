@@ -1,6 +1,6 @@
-# scenario G1: Trip B offline
-# argv: --trip-fixture trip_b_europe.json --offline --balance UR=160000 --card Chase Sapphire Preferred --transfer-date 2026-09-15 --show-alternatives
-# exit: 0
+# scenario G8: exit 4, funding report forced overdrawn (SYNTHETIC)
+# argv: --trip-fixture trip_b_europe.json --offline --balance UR=160000 --card Chase Sapphire Preferred --transfer-date 2026-09-15
+# exit: 4
 
 TRIP B - Europe multi-city, Jan 15-27 2027
 One-way legs, economy, 1 adult on flights / 2 people on hotels. Real cash prices captured by Tsuki on 2026-09-07.
@@ -126,7 +126,7 @@ not known.
 is below $36.00.
 
 B4 - LON->MRY, Jan 27 2027, one-way, economy, 1 adult
-  Verdict: POINTS - Points path scores $418.11 vs $482.00 cash (points $280.00 + UK APD $138.11).
+  Verdict: POINTS - Points path scores $280.00 vs $482.00 cash.
   Cash: $482 British Airways (American, Iberia, Finnair) LHR-SFO nonstop 11:45am-2:55pm, 11h10
   Points: United LHR-SFO nonstop (badge 27.6k pts)
         UR 28,000 -> United MileagePlus 28,000 @ 1:1 [Chase Sapphire Preferred]
@@ -189,32 +189,35 @@ B7 - Hilton London Hyde Park, 4 nights, Queen Guest Room, GBP125.66/night
   FLAG: This leg is quoted in GBP, and its dollar figure is the least reliable number in the run: it is the largest single line, and the whole of it rests on one FX rate. That rate is 
 'sourced' (looked up 2026-09-08) - better than a placeholder, and still NOT vouched for by anyone. CONFIRM BEFORE TRUSTING.
 
-No same-metal alternatives were found. An alternative requires a CONFIRMED operating carrier and a surcharge row for another program on that same metal; data/surcharges.csv currently covers 
-each program on its OWN metal only.
 
+==============================================================================
+THIS TRIP CANNOT BE FUNDED FROM YOUR BALANCE.
+THIS PLAN CANNOT BE EXECUTED: it spends 200,000 UR against a balance of 160,000. No margin is quoted for a plan the balance cannot fund.
+The margin below is WITHHELD. Nothing is quoted for a plan the points do not exist for.
+==============================================================================
                                                                  TRIP B - Europe multi-city, Jan 15-27 2027: totals both ways                                                                 
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Measure                                                                                                                                                          ┃                   Value ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ Pay cash for everything                                                                                                                                          │               $3,126.11 │
-│ Optimizer's recommendation                                                                                                                                       │               $3,062.22 │
-│ Saving                                                                                                                                                           │                  $63.89 │
-│ Optimizer beats paying cash by                                                                                                                                   │ 2.04% - 11.03%  (badge) │
-│   low end = what is actually defensible                                                                                                                          │          2.04%  (badge) │
-│   high end = only if every unknown surcharge is $0                                                                                                               │         11.03%  (badge) │
-│   margin provenance                                                                                                                                              │                   badge │
-│   NO leg was scored against live availability. Every points price here is a Google Flights badge, of which exactly one has ever been corroborated. This is not a │        0 of 4 legs live │
-│ live margin.                                                                                                                                                     │                         │
-│ Points spent                                                                                                                                                     │                  28,000 │
-│   drawn from                                                                                                                                                     │               28,000 UR │
-│ Cash still owed                                                                                                                                                  │               $2,644.11 │
-│ Legs where points win                                                                                                                                            │                       1 │
-│ Legs with NO UR path at all                                                                                                                                      │                       3 │
-│ Legs where a UR partner exists but no                                                                                                                            │                       0 │
-│ award price was captured                                                                                                                                         │                         │
-│ Legs where a points path exists but its                                                                                                                          │                       1 │
-│ surcharge is UNKNOWN (NOT $0)                                                                                                                                    │                         │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴─────────────────────────┘
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Measure                                                                                      ┃                                                                                       Value ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Pay cash for everything                                                                      │                                                                                   $3,126.11 │
+│ Optimizer's recommendation                                                                   │                                                                                   $3,062.22 │
+│ Saving                                                                                       │                                                                                      $63.89 │
+│ Optimizer beats paying cash by                                                               │                                                                WITHHELD - PLAN NOT FUNDABLE │
+│   withheld because                                                                           │  THIS PLAN CANNOT BE EXECUTED: it spends 200,000 UR against a balance of 160,000. No margin │
+│                                                                                              │                                               is quoted for a plan the balance cannot fund. │
+│   margin provenance                                                                          │                                                                                       badge │
+│   NO leg was scored against live availability. Every points price here is a Google Flights   │                                                                            0 of 4 legs live │
+│ badge, of which exactly one has ever been corroborated. This is not a live margin.           │                                                                                             │
+│ Points spent                                                                                 │                                                                                      28,000 │
+│   drawn from                                                                                 │                                                                                   28,000 UR │
+│ Cash still owed                                                                              │                                                                                   $2,644.11 │
+│ Legs where points win                                                                        │                                                                                           1 │
+│ Legs with NO UR path at all                                                                  │                                                                                           3 │
+│ Legs where a UR partner exists but no                                                        │                                                                                           0 │
+│ award price was captured                                                                     │                                                                                             │
+│ Legs where a points path exists but its                                                      │                                                                                           1 │
+│ surcharge is UNKNOWN (NOT $0)                                                                │                                                                                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────┘
 
 NO leg was scored against live availability. Every points price here is a Google Flights badge, of which exactly one has ever been corroborated. This is not a live margin.
 
@@ -230,3 +233,6 @@ end assumes every unknown surcharge turns out to be $0, which is the assumption 
 
 Legs with NO points path at all (no partner exists): B5, B6, B7
 Legs where a points path exists but its carrier-imposed surcharge is UNKNOWN (NOT $0): B3
+
+THE RECOMMENDATION ABOVE CANNOT BE EXECUTED FROM YOUR BALANCE. THIS PLAN CANNOT BE EXECUTED: it spends 200,000 UR against a balance of 160,000. No margin is quoted for a plan the balance 
+cannot fund.
