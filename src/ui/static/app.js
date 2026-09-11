@@ -1036,6 +1036,12 @@
       leg.alternatives_lines.forEach(function (l) { add(al, lineP(l)); });
       add(d, al);
     }
+    var wl = linesByTopic(leg, ["note", "flag", "warning"]);
+    if (wl.length) {
+      var ws = section("Notes, flags and UNVERIFIED claims", "drawer-warnings");
+      wl.forEach(function (l) { add(ws, lineP(l)); });
+      add(d, ws);
+    }
     var rc = section("Reason codes", "drawer-reasons");
     if (leg.reasons.length) {
       var ul = el("ul");

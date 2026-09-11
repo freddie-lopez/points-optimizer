@@ -169,6 +169,76 @@ This choice decides verdicts: a leg that loses on points at 1cpp may win at 0.5c
 
 ---
 
+## Local UI
+
+A small web page over the same engine, for your own machine:
+
+```bash
+.venv/bin/python -m src.ui                      # opens http://127.0.0.1:8777/
+.venv/bin/python -m src.ui --wallet wallet.json --port 8777 --no-open
+```
+
+Run it from the repo root. It prints `Points optimizer UI: http://127.0.0.1:8777/  (Ctrl-C to stop)`
+and opens your browser unless you pass `--no-open`. `--port 0` picks any free
+port; a port that is already taken is an error, never a silent move to another
+one. The wallet defaults to `./wallet.json` when that file exists.
+
+**Every run in the page IS a CLI run.** The page builds a real
+`python -m src.main` argument list, sends it through the CLI's own parser and
+dispatch, and shows you the result - and the exact command, as "Equivalent
+command", so you can paste it into a terminal and get the same output. Every
+refusal, UNKNOWN, WITHHELD, UNVERIFIED and provenance label on the page is the
+CLI's own sentence; "CLI output" under each result is the full terminal text
+(the one difference: the masked key on the key line is replaced by
+`(masked key not sent to the browser)` - the source stays).
+
+What you can do: pick a trip and run it LIVE, REPLAY or OFFLINE; open any leg
+for everything the CLI knows about it; search one route; build a new trip (it is
+written to `tests/fixtures/trips/NAME.json` by the same builder `--new-trip`
+uses, one traveller, a cabin per leg); edit the wallet for the session.
+
+**What LIVE spends.** Before any LIVE trip run or search the page states the
+most it can spend and waits for you: a trip can spend up to 25 calls per flight
+leg (one per results page; one page is the only shape seen so far) plus the
+itinerary-lookup cap (default 10); a search up to 25. It also says how many of
+the trip's searches the 6-hour disk cache can answer right now (those are free).
+The counter in the top bar is "since launch" for today; Seats.aero also counts
+your other runs, which the page cannot see. The confirmation is checked by the
+server, not only by the page: it is single-use, lasts five minutes, and is
+bound to the trip file's bytes, the mode, the options and the wallet - change
+any of them and you are asked again. A single-route search is always LIVE and,
+exactly like the CLI search, does not use the disk cache.
+
+**A search has no verdict.** A single-route search has no cash price, so it
+cannot say POINTS or PAY CASH. It shows award space, whether your wallet can
+fund each award, and whether its taxes are trusted. "Score against a fare"
+starts a one-leg trip with the route filled in; type the fare you found.
+
+**REPLAY** offers only the manifests it finds itself: your snapshot directory's
+`MANIFEST.md` and each `tests/fixtures/seats_aero/*/MANIFEST.md` one level deep.
+The page sends a number from that list, never a path.
+
+**Results live in memory only** (the last 20 runs) and are gone when you stop
+the app. Copy the CLI output if you want to keep it. Wallet edits are held in
+memory for the session and never written to `wallet.json`. One run at a time:
+a second run while one is in progress is refused, because the call counter and
+caches are shared.
+
+**The threat model** is another website open in the same browser, and DNS
+rebinding. The app binds `127.0.0.1` only; every request must carry the exact
+`Host` `127.0.0.1:<port>` or `localhost:<port>`; every API request must carry a
+per-launch token that only the page itself receives (a page from an earlier
+launch is told to reload); every POST must come from the app's own origin; no
+cross-origin headers are ever sent; a strict Content-Security-Policy allows no
+inline script. The key never leaves the server: the transcript's key line is
+replaced, and any response that would contain the key or its mask is refused
+instead of sent. Local malware is out of scope - it could read `~/.zshrc`.
+
+**Keyboard and phone.** Table rows and search cells are focusable: Enter opens
+the detail panel, Esc closes it (and closes a confirmation). Below 720px the
+tables scroll inside their own frame, the detail panel becomes a full-screen
+sheet, and the top bar wraps. The page is dark only.
+
 ## Live Trip Mode (v3)
 
 **The one feature in v3.** Before it, the tool had two modes that could not meet:
