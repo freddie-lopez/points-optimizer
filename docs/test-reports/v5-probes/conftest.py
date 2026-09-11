@@ -15,6 +15,11 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
+# FIRST, before anything imports `src`: the main suite's conftest clears the key
+# and moves the key files away at import. Importing `src.config` before it lets
+# `load_env()` read the developer's real repo `.env` during collection.
+from tests.conftest import REAL_HOME as _REAL_HOME  # noqa: E402,F401
+
 from src.response_cache import content_hash  # noqa: E402
 from src.seats_client import PARSER_VERSION  # noqa: E402
 

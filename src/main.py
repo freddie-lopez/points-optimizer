@@ -736,6 +736,13 @@ def run_fixture(args, console: Console) -> int:
             print_replay_banner(console, replay_selection, manifest_hash, client)
         fixture, outcomes = apply_live(fixture, client, live_opts)
         print_live_banner(outcomes, live_opts, cache, console)
+        for leg_id, row_ver, meta_ver in getattr(client, "parser_version_disagreements", []):
+            console.print(
+                f"[bold red]  PARSER VERSION DISAGREEMENT on {leg_id}: the manifest "
+                f"row says {row_ver} but the snapshot itself says it was captured "
+                f"under {meta_ver}; it is being read by "
+                f"{client.current_parser_version}. Treat this leg as REPARSED.[/bold red]"
+            )
 
     results = evaluate_trip(
         legs=fixture.legs,
@@ -929,10 +936,10 @@ def run_search(args, console: Console) -> int:
             # awards. Reading it as "no award availability" turned a Qatar award
             # (reachable only indirectly) and an American award (not a UR
             # partner) into a claim that there was nothing on the route.
-            try:
-                awards = seats_client.search(args.origin, args.destination, date_range)
-            except Exception:  # noqa: BLE001 - the in-process cache answers this
-                awards = []
+            # What optimize() actually saw, recorded by it - NOT a second search:
+            # re-asking would reset the client's coverage line ("no API call
+            # made") on a run that made one.
+            awards = list(getattr(seats_client, "last_search_awards", None) or [])
             if not awards:
                 console.print(
                     "\n[yellow]Seats.aero returned no award availability for this "
@@ -942,8 +949,9 @@ def run_search(args, console: Console) -> int:
                 console.print(
                     f"\n[yellow]Seats.aero returned {len(awards)} award(s) for this "
                     f"route and date range, and NONE of them can be funded from the "
-                    f"wallet above. That is a finding about your transfer partners, "
-                    f"NOT about award space:[/yellow]"
+                    f"wallet above. That is a finding about THIS WALLET - its "
+                    f"transfer partners and its balances - NOT about award "
+                    f"space:[/yellow]"
                 )
                 for a in awards[:20]:
                     if getattr(a, "indirect_ur_path", ""):
@@ -952,6 +960,11 @@ def run_search(args, console: Console) -> int:
                         why = "the response named no program it could be attributed to"
                     elif a.ur_transferable is False:
                         why = "not a transfer partner of any currency you hold"
+                    elif a.ur_transferable is True:
+                        why = (
+                            "a transfer partner, but no fundable path: the balance "
+                            "(or the stranded-points limit) cannot cover it"
+                        )
                     else:
                         why = "no fundable transfer path from the wallet above"
                     console.print(

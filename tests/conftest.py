@@ -29,6 +29,17 @@ import tempfile as _tempfile
 
 REAL_HOME = _os.path.expanduser("~")
 _SESSION_HOME = _tempfile.mkdtemp(prefix="points-optimizer-test-home-")
+
+
+def _remove_session_home():
+    import shutil
+
+    shutil.rmtree(_SESSION_HOME, ignore_errors=True)
+
+
+import atexit as _atexit  # noqa: E402
+
+_atexit.register(_remove_session_home)
 _os.environ.pop("SEATS_AERO_KEY", None)
 _os.environ["POINTS_OPTIMIZER_ENV_FILE"] = _os.path.join(_SESSION_HOME, "absent.env")
 _os.environ["HOME"] = _SESSION_HOME

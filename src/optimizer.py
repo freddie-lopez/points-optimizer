@@ -327,6 +327,12 @@ def optimize(
         return []
 
     seen: Dict[str, Strategy] = {}
+    # Recorded for run_search, so "none fundable" can be told apart from "none
+    # returned" without asking the API (or its cache) a second time.
+    try:
+        seats_client.last_search_awards = list(awards)
+    except Exception:  # noqa: BLE001 - a stub that refuses attributes is fine
+        pass
 
     for award in awards:
         paths = find_transfer_paths(
@@ -353,6 +359,11 @@ def optimize(
             # the unsafe default, which would have survived flipping the field.
             # An object that cannot say whether it knows does not know.
             cash_known = getattr(award, "cash_component_known", False)
+            below_duty = _search_taxes_below_owed_uk_duty(trip, award) if cash_known else ""
+            if below_duty:
+                # The trip path's rule, applied here too: a UK-departure tax
+                # figure below the duty it must contain is incomplete.
+                cash_known = False
             cash_cost = award.cash_component if cash_known else 0.0
             total_value = points_cost * valuation_cpp + cash_cost
 
@@ -366,13 +377,18 @@ def optimize(
                 cash_cost_note=(
                     ""
                     if cash_known
-                    else getattr(award, "cash_component_note", "")
+                    else below_duty
+                    or getattr(award, "cash_component_note", "")
                     or "The cash component of this award is unknown."
                 ),
             )
 
+            # DEDUPLICATION USES THE RANKING RULE, not the raw total. Comparing
+            # `total_value` let a 52,000-point award with NO tax figure ($520 +
+            # an unknown) evict a 50,000-point one with $56 of known taxes ($556)
+            # - and the known award vanished before the ranking could put it first.
             key = f"{award.program}-{award.date}-{award.award_type}"
-            if key not in seen or strategy.total_value < seen[key].total_value:
+            if key not in seen or _strategy_rank(strategy) < _strategy_rank(seen[key]):
                 seen[key] = strategy
 
     results = list(seen.values())
@@ -382,14 +398,32 @@ def optimize(
     # taxes, and the summary named it the top strategy at "$0.00". Every
     # strategy whose cash is known ranks first, on its real total; the unknowns
     # follow, ordered by points only, and are printed as UNKNOWN - never $0.
-    results.sort(
-        key=lambda s: (
-            0 if s.cash_cost_known else 1,
-            s.total_value if s.cash_cost_known else 0.0,
-            s.points_cost,
-        )
-    )
+    results.sort(key=_strategy_rank)
     return results[:max_results]
+
+
+def _strategy_rank(s: "Strategy"):
+    """Known cash first, on its real total; unknown cash after, by points only."""
+    return (
+        0 if s.cash_cost_known else 1,
+        s.total_value if s.cash_cost_known else 0.0,
+        s.points_cost,
+    )
+
+
+def _search_taxes_below_owed_uk_duty(trip, award) -> str:
+    """The trip path's below-duty rule for a single-route search award."""
+    from types import SimpleNamespace
+
+    from src.live_trip import taxes_below_owed_uk_duty
+
+    leg = SimpleNamespace(
+        kind="flight",
+        origin=str(getattr(trip, "origin", "") or "").upper(),
+        destination=str(getattr(trip, "destination", "") or "").upper(),
+        date=award.date,
+    )
+    return taxes_below_owed_uk_duty(leg, award)
 
 
 # ---------------------------------------------------------------------------

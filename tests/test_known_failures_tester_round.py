@@ -253,3 +253,77 @@ def test_non_utf8_names_the_file(tmp_path):
 def test_bad_values_are_refused_at_load_not_at_scoring(tmp_path, cash, needle):
     msg = _load(tmp_path, _leg(**cash))
     assert needle in msg and "trip.json" in msg
+
+
+# ===========================================================================
+# Re-test round (docs/test-reports/known-failures.md, "Re-test")
+# ===========================================================================
+
+
+def _search(capsys, monkeypatch, rows, origin="SFO", dest="MAD", iso="2027-01-15",
+            balance="UR=160000"):
+    monkeypatch.setenv("SEATS_AERO_KEY", "test_key_not_a_real_one")
+    for i, r in enumerate(rows):
+        r["ID"] = f"r{i}"
+        r["Route"]["OriginAirport"], r["Route"]["DestinationAirport"] = origin, dest
+        r["Date"], r["ParsedDate"] = iso, f"{iso}T00:00:00Z"
+    return _cli(
+        ["--origin", origin, "--destination", dest, "--date", iso,
+         "--balance", balance, "--card", CSP],
+        capsys, lambda *a, **k: _resp(rows),
+    )
+
+
+def test_R1_dedup_does_not_let_an_unknown_evict_a_known_award(capsys, monkeypatch):
+    _, out = _search(capsys, monkeypatch, [
+        _row(source="united", cost="50000", taxes=5600, currency="USD", airlines="UA"),
+        _row(source="united", cost="52000", taxes=UNSET, currency="USD", airlines="UA"),
+    ])
+    assert "Top strategy cash cost: $56.00" in out
+    assert "no strategy on this search has a known cash cost" not in out
+
+
+def test_R2_search_mode_applies_the_below_duty_rule(capsys, monkeypatch):
+    _, out = _search(capsys, monkeypatch, [
+        _row(source="united", cost="35000", taxes=500, currency="USD", airlines="UA"),
+    ], origin="LHR", dest="SFO", iso="2027-01-27")
+    assert "Top strategy cash cost: $5.00" not in out
+    assert "INCOMPLETE" in out
+
+
+def test_R3_a_balance_shortfall_is_not_called_a_partner_finding(capsys, monkeypatch):
+    _, out = _search(capsys, monkeypatch, [
+        _row(source="united", cost="50000", taxes=5600, currency="USD", airlines="UA"),
+    ], balance="UR=1000")
+    assert "a transfer partner, but no fundable path" in out
+    assert "finding about your transfer partners" not in out
+
+
+def test_R4_the_unfundable_listing_does_not_search_twice(capsys, monkeypatch):
+    calls = []
+
+    def side(*a, **k):
+        calls.append(1)
+        return _resp([_row(source="american", cost="30000", taxes=5600,
+                           currency="USD", airlines="AA")])
+
+    monkeypatch.setenv("SEATS_AERO_KEY", "test_key_not_a_real_one")
+    _, out = _cli(
+        ["--origin", "SFO", "--destination", "MAD", "--date", "2027-01-15",
+         "--balance", "UR=160000", "--card", CSP],
+        capsys, side,
+    )
+    assert "NONE of them can be funded" in out
+    assert len(calls) == 1
+    assert "no API call made" not in out
+
+
+def test_R7_a_manifest_row_that_disagrees_with_its_snapshot_is_called_out(tmp_path, capsys):
+    from tests.test_from_snapshot import REPLAY_BASE, build_corpus, run_cli
+
+    manifest, snap = build_corpus(tmp_path, parser_version="2026-09-09.v5")
+    # Rewrite the manifest rows to CLAIM the current parser; the snapshots still
+    # say they were captured under the old one.
+    manifest.write_text(manifest.read_text().replace("2026-09-09.v5", PARSER_VERSION))
+    _, out = run_cli(REPLAY_BASE + ["--from-snapshot", str(manifest)], capsys)
+    assert "PARSER VERSION DISAGREEMENT" in " ".join(out.split())

@@ -686,6 +686,10 @@ def award_to_candidate(
 
 
 def _finding(leg: Leg, award: Award) -> FlexibleFinding:
+    # The same below-duty rule as a candidate: an off-date award with "$5.00 of
+    # taxes" on a UK departure is not listed as a known $5.00.
+    below_duty = taxes_below_owed_uk_duty(leg, award)
+    taxes_known = bool(award.cash_component_known) and not below_duty
     return FlexibleFinding(
         leg_id=leg.id,
         award_date=award.date,
@@ -693,10 +697,10 @@ def _finding(leg: Leg, award: Award) -> FlexibleFinding:
         program=award.program,
         cabin=award.award_type,
         points=award.cost,
-        taxes_amount=award.cash_component_source_amount,
+        taxes_amount=None if below_duty else award.cash_component_source_amount,
         taxes_currency=award.cash_component_currency,
-        taxes_usd=award.cash_component if award.cash_component_known else None,
-        taxes_known=award.cash_component_known,
+        taxes_usd=award.cash_component if taxes_known else None,
+        taxes_known=taxes_known,
         seats=award.seats_available,
         carriers=list(award.candidate_carriers),
         source_note=award.source_note,
