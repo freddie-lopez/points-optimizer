@@ -132,7 +132,16 @@ table.grid th { position: sticky; top: 0; background: var(--coal); text-align: l
 table.grid td { padding: 6px 10px; border-bottom: 1px solid var(--seam); vertical-align: middle; white-space: nowrap; }
 table.grid tr:last-child td { border-bottom: 0; }
 table.grid td.num, table.grid th.num { text-align: right; }
-table.grid tbody tr { cursor: pointer; }
+table.grid tbody tr { cursor: pointer; background: var(--coal); }
+/* The legs table is wider than the window: the leg id and the VERDICT - the
+   answer - are pinned while the middle scrolls. */
+table.grid td.pin-left, table.grid td.pin-right { background: inherit; }
+table.grid th.pin-left, table.grid th.pin-right { background: var(--coal); z-index: 3; }
+table.grid .pin-left { position: sticky; left: 0; z-index: 2; }
+table.grid .pin-right { position: sticky; right: 0; z-index: 2; }
+table.grid .pin-left::after, table.grid .pin-right::after { content: ""; position: absolute; top: 0; bottom: 0; width: 1px; background: var(--seam); }
+table.grid .pin-left::after { right: 0; }
+table.grid .pin-right::after { left: 0; }
 table.grid tbody tr:hover { background: var(--ash); }
 table.grid tbody tr[aria-selected="true"] { background: var(--ash); box-shadow: inset 3px 0 0 var(--oxblood); }
 .legid { font: 500 12px var(--mono); color: var(--smoke); }
@@ -276,7 +285,7 @@ td.cab.sel { background: rgba(122,22,32,.22); }
         <div class="tscroll" data-testid="legs-table-scroll">
           <table class="grid" data-testid="legs-table" id="legs-table">
             <thead><tr>
-              <th>Leg</th><th>What</th><th class="num">Cash</th><th class="num">Cash as pts</th><th>Best points path</th><th class="num">Points</th><th class="num">Surcharge</th><th>Surch. source</th><th class="num">Score points</th><th class="num">Score cash</th><th>Provenance points | cash</th><th>Verdict</th>
+              <th class="pin-left">Leg</th><th>What</th><th class="num">Cash</th><th class="num">Cash as pts</th><th>Best points path</th><th class="num">Points</th><th class="num">Surcharge</th><th>Surch. source</th><th class="num">Score points</th><th class="num">Score cash</th><th>Provenance points | cash</th><th class="pin-right">Verdict</th>
             </tr></thead>
             <tbody id="legs-body"></tbody>
           </table>
@@ -571,9 +580,9 @@ td.cab.sel { background: rgba(122,22,32,.22); }
       add(what, el("span", "sub2", l.when));
       var sur = el("td", "num mono");
       if (l.sur.u) { sur.appendChild(unknownChip()); } else { sur.textContent = l.sur.t; if (l.sur.t === "-") { sur.className += " dim"; } }
-      var vd = el("td"); vd.setAttribute("data-testid", "verdict-" + l.id); vd.appendChild(verdictChip(l.verdict));
+      var vd = el("td", "pin-right"); vd.setAttribute("data-testid", "verdict-" + l.id); vd.appendChild(verdictChip(l.verdict));
       add(tr,
-        el("td", "legid", l.id), what,
+        el("td", "legid pin-left", l.id), what,
         el("td", "num mono", l.cash), el("td", "num mono dim", l.cashPts),
         el("td", l.hotel ? "dim" : "", l.path), el("td", "num mono" + (l.points === "-" ? " dim" : ""), l.points),
         sur, el("td", "dim", l.src),

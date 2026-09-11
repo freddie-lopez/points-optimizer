@@ -255,3 +255,17 @@ pre.echo { margin: 0; padding: 10px; background: var(--ink); border: 1px solid v
 .form > .btn { justify-self: start; }
 td .sub2 { min-width: 22ch; }
 .wallet-rows > .btn { justify-self: start; }
+
+/* The legs table is wider than any sensible window: the leg id and the verdict
+   are pinned so the answer is never the part that scrolled away (M-5). */
+table.grid tbody tr { background: var(--coal); }
+table.grid td.pin-left, table.grid td.pin-right { background: inherit; }
+table.grid th.pin-left, table.grid th.pin-right { background: var(--coal); }
+table.grid .pin-left { position: sticky; left: 0; z-index: 2; }
+table.grid .pin-right { position: sticky; right: 0; z-index: 2; }
+table.grid th.pin-left, table.grid th.pin-right { z-index: 3; }
+table.grid .pin-left::after, table.grid .pin-right::after {
+  content: ""; position: absolute; top: 0; bottom: 0; width: 1px; background: var(--seam);
+}
+table.grid .pin-left::after { right: 0; }
+table.grid .pin-right::after { left: 0; }

@@ -803,6 +803,14 @@
     ["verdict", "Verdict", ""]
   ];
 
+  /* The leg id and the VERDICT - the answer - stay put while the middle of the
+     table scrolls sideways. */
+  function stickyClass(name) {
+    if (name === "leg") { return " pin-left"; }
+    if (name === "verdict") { return " pin-right"; }
+    return "";
+  }
+
   function verdictChip(cell) {
     var first = cell.segments[0] || { text: "" };
     var kind = cell.kind;
@@ -846,7 +854,7 @@
     var wrap = tid(el("div", "tscroll"), "legs-table-scroll");
     var t = tid(el("table", "grid"), "legs-table");
     var thead = el("thead"); var hr = el("tr");
-    LEG_COLS.forEach(function (c) { add(hr, el("th", c[2], c[1])); });
+    LEG_COLS.forEach(function (c) { add(hr, el("th", c[2] + stickyClass(c[0]), c[1])); });
     add(thead, hr); add(t, thead);
     var tb = el("tbody");
     run.legs.forEach(function (leg) {
@@ -856,7 +864,7 @@
       LEG_COLS.forEach(function (c) {
         var name = c[0];
         var cell = leg.cells[name];
-        var td = el("td", c[2] + (["cash", "cash_pts", "points", "surcharge", "score_points", "score_cash", "provenance"].indexOf(name) >= 0 ? " mono" : "") + (name === "leg" ? " legid" : ""));
+        var td = el("td", c[2] + (["cash", "cash_pts", "points", "surcharge", "score_points", "score_cash", "provenance"].indexOf(name) >= 0 ? " mono" : "") + (name === "leg" ? " legid" : "") + stickyClass(name));
         tid(td, name === "verdict" ? "verdict-" + leg.id : "cell-" + leg.id + "-" + name);
         td.setAttribute("data-kind", cell.kind);
         add(td, cellContent(name, cell, leg));
@@ -864,7 +872,14 @@
       });
       var open = function () { S.legSel = leg.id; renderTrips(); focusDrawer(); };
       tr.addEventListener("click", open);
-      tr.addEventListener("keydown", function (e) { if (e.key === "Enter") { open(); } });
+      tr.addEventListener("keydown", function (e) {
+        if (e.key !== "Enter" && e.key !== " ") { return; }
+        // The default action would fire on whatever has focus AFTER this
+        // handler - which is the drawer's close button - and shut the drawer
+        // with the same keypress that opened it.
+        e.preventDefault();
+        open();
+      });
       add(tb, tr);
     });
     add(t, tb); add(wrap, t);
@@ -1260,7 +1275,11 @@
         add(bx, l1, l2, l3); add(td, bx);
         var open = function () { q.sel = { row: ri, cabin: c }; renderSearch(); focusDrawer(); };
         td.addEventListener("click", open);
-        td.addEventListener("keydown", function (e) { if (e.key === "Enter") { open(); } });
+        td.addEventListener("keydown", function (e) {
+          if (e.key !== "Enter" && e.key !== " ") { return; }
+          e.preventDefault();
+          open();
+        });
         add(tr, td);
       });
       add(tb, tr);
