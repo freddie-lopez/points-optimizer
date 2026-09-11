@@ -253,6 +253,10 @@ SCENARIOS: Dict[str, Scenario] = {
                  transport="stub", needs_key=True, note="search, none fundable"),
         Scenario("G12", ["--trip-fixture", "trip_b_europe.json", "--offline"],
                  note="no wallet (exit 2)"),
+        Scenario("G14", ["--trip-fixture", str(G7_FIXTURE), *WALLET],
+                 transport="stub", needs_key=True,
+                 note="the never-priced/2-traveller fixture LIVE: one leg answered "
+                      "off its own date, one never priced (M-6)"),
         Scenario("G13", ["--trip-fixture", "trip_b_europe.json", *WALLET,
                          "--from-snapshot", "snapshots/MANIFEST.md"],
                  before="G4", prepare=_drop_one_snapshot,

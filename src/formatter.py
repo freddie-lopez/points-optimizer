@@ -640,13 +640,41 @@ def print_leg_results(
     """Print one row per leg: cash, points, and the verdict."""
     console = console or Console()
 
+    cells = [leg_table_cells(r) for r in results]
+
+    # M-6. "PAY CASH (never priced)" (F-1) is the longest verdict label this
+    # table can carry - five characters longer than the "(no path)" it replaced.
+    # When rich cannot fit the table it shaves EVERY column by a character, and
+    # those five came out of the money columns: $2,400.00 was printed as
+    # "$2,400.…", which reads like a number nobody can check. Two floors stop
+    # that, and only where it happens:
+    #   - "What" asks for 12 characters whether or not it has them to show
+    #     ("SFO->LHR" is 8); that padding came out of columns that needed it,
+    #     so here it asks only for what it holds.
+    #   - the cheapest-cash column - the price the reader is actually being
+    #     asked to pay - keeps room for its widest figure, and the verdict
+    #     column, whose sentence is repeated in full under "Per-leg detail",
+    #     is the one that gives way.
+    # Both floors engage ONLY when that label is in the table: the rule for this
+    # round is that no other CLI output moves. The derived Score columns can
+    # still be shaved, which is older than this round and is filed, not fixed.
+    never_priced = any(
+        r.verdict == "cash (no points path)" and r.points_absence == "never_priced"
+        for r in results
+    )
+    what_floor, cash_floor = 12, None
+    if never_priced and cells:
+        what_floor = min(what_floor, max(len(c.what.text) for c in cells))
+        cash_floor = max(len(c.cash.text) for c in cells)
+
     table = Table(title="Per-leg: cash vs points")
     # min_width, because rich starves the narrowest column first and the leg
     # ID is the one thing every other line of output refers back to. v3 added
     # a provenance column and squeezed it to zero width without this.
     table.add_column("Leg", style="cyan", no_wrap=True, min_width=3)
-    table.add_column("What", style="white", no_wrap=True, min_width=12)
-    table.add_column("Cheapest\ncash", justify="right", style="green", no_wrap=True)
+    table.add_column("What", style="white", no_wrap=True, min_width=what_floor)
+    table.add_column("Cheapest\ncash", justify="right", style="green", no_wrap=True,
+                     min_width=cash_floor)
     table.add_column("Cash as pts\n(@1cpp)", justify="right", style="green", no_wrap=True)
     table.add_column("Best points path", style="magenta", no_wrap=True)
     table.add_column("Points", justify="right", style="magenta", no_wrap=True)
@@ -663,8 +691,8 @@ def print_leg_results(
     table.add_column("Provenance\npoints | cash", no_wrap=True)
     table.add_column("Verdict", style="bold", no_wrap=True)
 
-    for r in results:
-        table.add_row(*leg_table_cells(r).row_markup())
+    for c in cells:
+        table.add_row(*c.row_markup())
 
     console.print(table)
 

@@ -1,0 +1,157 @@
+# scenario G14: the never-priced/2-traveller fixture LIVE: one leg answered off its own date, one never priced (M-6)
+# argv: --trip-fixture tests/fixtures/cli_golden/inputs/g7_never_priced_couple.json --balance UR=160000 --card Chase Sapphire Preferred --transfer-date 2026-09-15
+# exit: 0
+Seats.aero key: gold…789   (source: environment)
+
+g7_never_priced_couple
+Built by --new-trip on 2026-09-11: 2 flight leg(s), 0 hotel leg(s), 1 traveller(s), cabin J (business). Leg L2 edited by hand to 2 travellers (golden scenario G7).
+Source: user_entered_via_new_trip. Cash prices are what the user typed; nothing here was captured from a booking page by this tool.
+
+Wallet (supplied at runtime - nothing is assumed)
+  UR: 160,000   valued at 1.00 cents/point
+  cards: Chase Sapphire Preferred
+
+Transfer date: 2026-09-15 (ratios and bonuses are looked up on THIS date, not on the travel date - the ratio that applies is the one in force when you transfer)
+
+==============================================================================
+FX rates used (table as of 2026-09-08):
+  1 EUR = 1.1620 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-07 (4 days old)   [BOOKING-SITE IMPLIED: back-derived from the Novotel Madrid dual-currency quote ($747.81 / EUR643.57 = 
+1.1620). One booking page on one date - NOT a market rate.]
+  1 GBP = 1.3540 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-08 (3 days old)   [SOURCED on 2026-09-08. Replaces the 1.2700 placeholder, which had no source and understated the London 
+hotel by about $42. A sourced rate still goes stale - confirm before trusting.]
+  1 CAD = 0.7256 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-08 (3 days old)   [SOURCED on 2026-09-08. Added so the captured CAD 44.60 tax on the real SFO-MAD Aeroplan award can be 
+scored instead of carried as an unknown. Confirm before trusting.]
+  !! FX RATES REQUIRE CONFIRMATION. EUR is back-derived from a single hotel quote; GBP and CAD were looked up on a date and go stale. Every foreign-currency total below inherits that 
+uncertainty.
+  !! Supply a rate with --fx GBP=1.36 to take responsibility for it and clear the marker.
+==============================================================================
+
+Valuation: cash is scored at 1.00 cents per point ($1.00 cash = 100 points-equivalent). Points and cash are ranked on this single yardstick.
+
+Data problems flagged, NOT silently fixed
+  - THIS FIXTURE CARRIES NO POINTS PRICES AT ALL. It was built by --new-trip, which refuses to write a points_candidates key - not an empty one, none. The only way any leg here can be scored
+on points is --live (real Seats.aero award space) or --from-snapshot (a committed replay of one). A hand-written points price is a badge number wearing a capture's clothes, and quoting those
+is the bug this whole project exists to stop. If you add a points_candidates key by hand, this sentence is no longer true of this file and should come out with it.
+
+==============================================================================
+LIVE TRIP MODE - points from Seats.aero, cash from captures
+  legs queried: 2   answered with awards: 2   answered with NO award space: 0   API/budget failures: 0   answered but UNREADABLE: 0
+  served from the disk cache: 0 of 2
+  Seats.aero budget: 998 of 1,000 calls remaining today
+  snapshots: snapshots
+  manifest:  snapshots/MANIFEST.md
+  flex-days: 0   refresh: False   cache-ttl: default
+  itinerary lookups (--trips auto, cap 10): 1 live award(s) - 0 request(s) sent, 0 served from the disk cache, 0 replayed from a snapshot
+    operating airline known 0, ambiguous 0, NOT KNOWN 0, NOT LOOKED UP 1, NOT RECORDED 0 (0 of those not looked up or not recorded are gaps in this run; the rest cannot change the answer)
+  Seats.aero calls spent this run: 2 search + 0 trips
+  [trips parser UNVERIFIED against a real Seats.aero response - built from the published schema only]
+  CASH IS FROM SCREENSHOTS AND ALWAYS WILL BE. There is no cash-price API in scope. Hotels are manual - Seats.aero is flights-only.
+==============================================================================
+
+                                                                                     Per-leg: cash vs points                                                                                  
+┏━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━
+┃     ┃          ┃  Cheapest ┃ Cash as p… ┃                           ┃       ┃           ┃ Surch.  ┃   Score ┃    Score ┃ Provenance                                  ┃                      
+┃ Leg ┃ What     ┃      cash ┃    (@1cpp) ┃ Best points path          ┃ Poin… ┃ Surcharge ┃ source  ┃  points ┃     cash ┃ points | cash                               ┃ Verdict              
+┡━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━
+│ L1  │ SFO->LHR │ $2,400.00 │    240,000 │ Air Canada Aeroplan @ 1:1 │ 50,0… │    $32.36 │ captur… │ $532.36 │ $2,400.… │ live | user_entered_via_new_trip 2026-09-11 │ POINTS               
+│ L2  │ LHR->SFO │ $1,850.00 │    185,000 │ never priced              │     - │         - │ -       │       - │ $1,850.… │ none | user_entered_via_new_trip 2026-09-11 │ PAY CASH (never price
+└─────┴──────────┴───────────┴────────────┴───────────────────────────┴───────┴───────────┴─────────┴─────────┴──────────┴─────────────────────────────────────────────┴──────────────────────
+
+Per-leg detail
+
+L1 - SFO->LHR, Jan 15 2027, one-way, business, 1 adult
+  Verdict: POINTS - Points path scores $532.36 vs $2,400.00 cash.
+  Cash: SFO->LHR Jan 15 2027, entered by the user
+  Points: LIVE Air Canada Aeroplan SFO-LHR Y 50,000 pts (9 seats)
+        UR 50,000 -> Air Canada Aeroplan 50,000 @ 1:1 [Chase Sapphire Preferred]
+        spend: 50,000 UR
+        operating airline: NOT LOOKED UP - Air Canada Aeroplan levies no carrier surcharge whatever the metal, so the metal cannot change this answer. Nothing is known about which airline 
+flies it; the possible carriers are AC, LH, UA, VL.
+  Surcharge: $32.36  via captured from source
+        source: seats_aero_live
+        Taxes CAD 44.60 converted at 0.7256 = $32.36. CONFIRM BEFORE TRUSTING: the CAD rate is sourced, sourced 2026-09-08 and now 3 days old; this dollar figure inherits that. Observed in 
+the SFO-MAD capture of 2026-09-08. OPERATING METAL AMBIGUOUS: AC, LH, UA, VL are all possible operating carriers on this segment. No single metal is confirmed, so the surcharge model must 
+resolve them together or return unknown. Air Canada Aeroplan levies no carrier-imposed surcharge as a matter of PROGRAM POLICY, which is metal-independent, so there is nothing to stack on 
+top of the API's tax figure and it can be taken as the complete carrier-side cash cost. GOVERNMENT TAXES AND AIRPORT CHARGES BEYOND WHAT SEATS.AERO REPORTS ARE STILL NOT MODELLED. Fetched 
+2026-09-11 09:30:00+00:00, snapshot L1_SFO_LHR_2027-01-15_<STAMP>.json.
+  Margin: points save $1,867.64 (77.8% of the cash price)
+  UNVERIFIED: Surcharge note: Taxes CAD 44.60 converted at 0.7256 = $32.36. CONFIRM BEFORE TRUSTING: the CAD rate is sourced, sourced 2026-09-08 and now 3 days old; this dollar figure 
+inherits that. Observed in the SFO-MAD capture of 2026-09-08. OPERATING METAL AMBIGUOUS: AC, LH, UA, VL are all possible operating carriers on this segment. No single metal is confirmed, so 
+the surcharge model must resolve them together or return unknown. Air Canada Aeroplan levies no carrier-imposed surcharge as a matter of PROGRAM POLICY, which is metal-independent, so there 
+is nothing to stack on top of the API's tax figure and it can be taken as the complete carrier-side cash cost. GOVERNMENT TAXES AND AIRPORT CHARGES BEYOND WHAT SEATS.AERO REPORTS ARE STILL 
+NOT MODELLED. Fetched <TIMESTAMP>, snapshot L1_SFO_LHR_2027-01-15_<STAMP>.json.
+  UNVERIFIED: Points price for LIVE Air Canada Aeroplan SFO-LHR Y 50,000 pts (9 seats) is UNVERIFIED (seats_aero_live). Taxes CAD 44.60 converted at 0.7256 = $32.36. CONFIRM BEFORE TRUSTING:
+the CAD rate is sourced, sourced 2026-09-08 and now 3 days old; this dollar figure inherits that. Observed in the SFO-MAD capture of 2026-09-08. OPERATING METAL AMBIGUOUS: AC, LH, UA, VL are
+all possible operating carriers on this segment. No single metal is confirmed, so the surcharge model must resolve them together or return unknown. Air Canada Aeroplan levies no 
+carrier-imposed surcharge as a matter of PROGRAM POLICY, which is metal-independent, so there is nothing to stack on top of the API's tax figure and it can be taken as the complete 
+carrier-side cash cost. GOVERNMENT TAXES AND AIRPORT CHARGES BEYOND WHAT SEATS.AERO REPORTS ARE STILL NOT MODELLED. Fetched <TIMESTAMP>, snapshot 
+L1_SFO_LHR_2027-01-15_<STAMP>.json.
+  UNVERIFIED: CABIN DISAGREEMENT on L1: the leg says J and the award being scored (LIVE Air Canada Aeroplan SFO-LHR Y 50,000 pts (9 seats)) says Y. UK APD is charged on the leg's cabin here 
+(J); if the award is really flown in Y the duty differs. Fix the fixture rather than trusting this line.
+
+L2 - LHR->SFO, Jan 29 2027, one-way, business, 2 adults
+  Verdict: CASH (NO POINTS PATH) - NO AWARD PRICE WAS CAPTURED FOR THIS LEG and none was fetched, so the points side was never priced. NOTHING is claimed about whether a UR transfer partner 
+covers LHR->SFO - that question was never reached. Score it with --live or --from-snapshot, or add a captured award price to the fixture.
+  Cash: LHR->SFO Jan 29 2027, entered by the user
+  APD: UK AIR PASSENGER DUTY on L2: this leg DEPARTS GB for US. ADDED to the points-side cash total: GBP 244.00 x 2 = GBP 488.00 = $660.75 per the standard rate. Band B chosen because HMRC 
+bands by distance from London to the DESTINATION COUNTRY'S CAPITAL: Washington DC, 3665 miles. APD is owed on award tickets too and does not care which program or which airline; the captured
+CASH fare already contains it, which is why it is added to the points side only. Source: https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty. The GBP->USD conversion 
+above is marked [CONFIRM BEFORE TRUSTING]; this APD figure inherits that uncertainty.
+
+Live award data, per leg
+
+L1 SFO->LHR, Jan 15 2027, one-way, business, 1 adult
+  Seats.aero returned 1 award(s) for SFO->LHR on 2027-01-15 (1 on the leg's own date, 0 on other dates).
+  coverage: single page: the response carried NO count / hasMore / cursor field, so there was nothing to follow. If Seats.aero is in fact paginating this endpoint by another mechanism, this 
+result is page one only - that has NOT been ruled out
+  live award: Air Canada Aeroplan  Y  50,000 points
+     operating airline: NOT LOOKED UP - Air Canada Aeroplan levies no carrier surcharge whatever the metal, so the metal cannot change this answer. Nothing is known about which airline flies
+it; the possible carriers are AC, LH, UA, VL.
+     taxes from the API: $32.36 - taken as the COMPLETE carrier-side cash figure because this program levies no carrier surcharge as a matter of policy.
+     Government taxes and airport charges beyond what Seats.aero reports are still owed and are NOT modelled. A $0 carrier surcharge is not a $0 ticket.
+     provenance: seats_aero_live - Taxes CAD 44.60 converted at 0.7256 = $32.36. CONFIRM BEFORE TRUSTING: the CAD rate is sourced, sourced 2026-09-08 and now 3 days old; this dollar figure 
+inherits that. Observed in the SFO-MAD capture of 2026-09-08. OPERATING METAL AMBIGUOUS: AC, LH, UA, VL are all possible operating carriers on this segment. No single metal is confirmed, so 
+the surcharge model must resolve them together or return unknown. Air Canada Aeroplan levies no carrier-imposed surcharge as a matter of PROGRAM POLICY, which is metal-independent, so there 
+is nothing to stack on top of the API's tax figure and it can be taken as the complete carrier-side cash cost. GOVERNMENT TAXES AND AIRPORT CHARGES BEYOND WHAT SEATS.AERO REPORTS ARE STILL 
+NOT MODELLED. Fetched <TIMESTAMP>, snapshot L1_SFO_LHR_2027-01-15_<STAMP>.json.
+
+L2 LHR->SFO, Jan 29 2027, one-way, business, 2 adults
+  Seats.aero returned 1 award(s) for LHR->SFO on 2027-01-29 (0 on the leg's own date, 1 on other dates).
+  coverage: single page: the response carried NO count / hasMore / cursor field, so there was nothing to follow. If Seats.aero is in fact paginating this endpoint by another mechanism, this 
+result is page one only - that has NOT been ruled out
+  FLEXIBLE-DATE FINDINGS for L2 (searched +/-0 days; these are NOT scored)
+    2027-01-27  Virgin Atlantic Flying Club  J  60,000 + GBP 450.00   2 seats   offset(-2)
+       Cash for 2027-01-27 has NOT been captured. The cash price on this leg is for 2027-01-29 and is NOT a comparison for this award. To score it, capture the cash fare for 2027-01-27 and 
+add it to the fixture with that date on the cash option.
+    Why not simply score these against this leg's cash price? Because a flexible search takes the MINIMUM over a window on the points side while cash stays a SINGLE FIXED DRAW, and award 
+space is released on low-demand dates that also carry low cash fares. The bias runs in favour of points and grows with the window.
+
+                                              g7_never_priced_couple: totals both ways                                               
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┓
+┃ Measure                                                                                                        ┃            Value ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━┩
+│ Pay cash for everything                                                                                        │        $4,250.00 │
+│ Optimizer's recommendation                                                                                     │        $2,382.36 │
+│ Saving                                                                                                         │        $1,867.64 │
+│ Optimizer beats paying cash by                                                                                 │   43.94%  (live) │
+│   margin provenance                                                                                            │             live │
+│   1 of 2 flight legs scored against live Seats.aero availability (L1). Cash is from captures, as it always is. │ 1 of 2 legs live │
+│ Points spent                                                                                                   │           50,000 │
+│   drawn from                                                                                                   │        50,000 UR │
+│ Cash still owed                                                                                                │        $1,882.36 │
+│ Legs where points win                                                                                          │                1 │
+│ Legs with NO UR path at all                                                                                    │                0 │
+│ Legs whose points side was NEVER PRICED                                                                        │           1 (L2) │
+│ (no award data - NOT a claim about partners)                                                                   │                  │
+│ Legs where a UR partner exists but no                                                                          │                0 │
+│ award price was captured                                                                                       │                  │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴──────────────────┘
+
+ Residue: what is left in each account afterwards  
+┏━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━┳━━━━━━┓
+┃ Currency ┃ Starting ┃  Spent ┃ Remaining ┃ Note ┃
+┡━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━╇━━━━━━┩
+│ UR       │  160,000 │ 50,000 │   110,000 │      │
+└──────────┴──────────┴────────┴───────────┴──────┘
+
+Legs whose points side was NEVER PRICED (no award price captured and none fetched - this says NOTHING about whether a partner covers them): L2

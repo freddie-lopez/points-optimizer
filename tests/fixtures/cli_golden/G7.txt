@@ -32,14 +32,14 @@ Data problems flagged, NOT silently fixed
 on points is --live (real Seats.aero award space) or --from-snapshot (a committed replay of one). A hand-written points price is a badge number wearing a capture's clothes, and quoting those
 is the bug this whole project exists to stop. If you add a points_candidates key by hand, this sentence is no longer true of this file and should come out with it.
 
-                                                                                   Per-leg: cash vs points                                                                                    
-┏━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃     ┃              ┃  Cheapest ┃ Cash as pts ┃                  ┃        ┃           ┃ Surch. ┃  Score ┃     Score ┃ Provenance                                  ┃                         ┃
-┃ Leg ┃ What         ┃      cash ┃     (@1cpp) ┃ Best points path ┃ Points ┃ Surcharge ┃ source ┃ points ┃      cash ┃ points | cash                               ┃ Verdict                 ┃
-┡━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ L1  │ SFO->LHR     │ $2,400.00 │     240,000 │ never priced     │      - │         - │ -      │      - │ $2,400.00 │ none | user_entered_via_new_trip 2026-09-11 │ PAY CASH (never priced) │
-│ L2  │ LHR->SFO     │ $1,850.00 │     185,000 │ never priced     │      - │         - │ -      │      - │ $1,850.00 │ none | user_entered_via_new_trip 2026-09-11 │ PAY CASH (never priced) │
-└─────┴──────────────┴───────────┴─────────────┴──────────────────┴────────┴───────────┴────────┴────────┴───────────┴─────────────────────────────────────────────┴─────────────────────────┘
+                                                                                 Per-leg: cash vs points                                                                                  
+┏━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃     ┃          ┃  Cheapest ┃ Cash as pts ┃                  ┃        ┃           ┃ Surch. ┃  Score ┃     Score ┃ Provenance                                  ┃                         ┃
+┃ Leg ┃ What     ┃      cash ┃     (@1cpp) ┃ Best points path ┃ Points ┃ Surcharge ┃ source ┃ points ┃      cash ┃ points | cash                               ┃ Verdict                 ┃
+┡━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ L1  │ SFO->LHR │ $2,400.00 │     240,000 │ never priced     │      - │         - │ -      │      - │ $2,400.00 │ none | user_entered_via_new_trip 2026-09-11 │ PAY CASH (never priced) │
+│ L2  │ LHR->SFO │ $1,850.00 │     185,000 │ never priced     │      - │         - │ -      │      - │ $1,850.00 │ none | user_entered_via_new_trip 2026-09-11 │ PAY CASH (never priced) │
+└─────┴──────────┴───────────┴─────────────┴──────────────────┴────────┴───────────┴────────┴────────┴───────────┴─────────────────────────────────────────────┴─────────────────────────┘
 
 Per-leg detail
 
