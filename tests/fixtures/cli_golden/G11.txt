@@ -1,0 +1,32 @@
+# scenario G11: search, none fundable
+# argv: --origin SFO --destination MAD --date 2027-01-15 --balance MR=100000
+# exit: 0
+No cards supplied. Card-dependent ratios (World of Hyatt from Chase UR) cannot be resolved and those transfers will find no ratio at all.
+Seats.aero key: gold…789   (source: environment)
+
+Route: SFO -> MAD
+Dates: 2027-01-15 to 2027-02-14
+Passengers: 1
+  MR: 100,000   valued at 1.00 cents/point
+  cards: (none supplied)
+
+==============================================================================
+FX rates used (table as of 2026-09-08):
+  1 EUR = 1.1620 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-07 (4 days old)   [BOOKING-SITE IMPLIED: back-derived from the Novotel Madrid dual-currency quote ($747.81 / EUR643.57 = 
+1.1620). One booking page on one date - NOT a market rate.]
+  1 GBP = 1.3540 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-08 (3 days old)   [SOURCED on 2026-09-08. Replaces the 1.2700 placeholder, which had no source and understated the London 
+hotel by about $42. A sourced rate still goes stale - confirm before trusting.]
+  1 CAD = 0.7256 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-08 (3 days old)   [SOURCED on 2026-09-08. Added so the captured CAD 44.60 tax on the real SFO-MAD Aeroplan award can be 
+scored instead of carried as an unknown. Confirm before trusting.]
+  !! FX RATES REQUIRE CONFIRMATION. EUR is back-derived from a single hotel quote; GBP and CAD were looked up on a date and go stale. Every foreign-currency total below inherits that 
+uncertainty.
+  !! Supply a rate with --fx GBP=1.36 to take responsibility for it and clear the marker.
+==============================================================================
+
+Seats.aero returned 1 award(s) for this route and date range, and NONE of them can be funded from the wallet above. That is a finding about THIS WALLET - its transfer partners and its 
+balances - NOT about award space:
+  Air Canada Aeroplan Y 50,000 on 2027-01-15: a transfer partner, but no fundable path: the balance (or the stranded-points limit) cannot cover it
+Seats.aero result coverage: single page: the response carried NO count / hasMore / cursor field, so there was nothing to follow. If Seats.aero is in fact paginating this endpoint by another 
+mechanism, this result is page one only - that has NOT been ruled out
+operating airline: NOT LOOKED UP - single-route search does not call the trips endpoint; use --trip-fixture or `python -m src.trips_tools capture`
+No strategies found.
