@@ -328,9 +328,61 @@ def _shape(src):
     return ast.dump(_Blank().visit(ast.parse(src)), include_attributes=False)
 
 
-@pytest.mark.parametrize("path", ["src/main.py", "src/snapshot_replay.py"])
-def test_the_rewording_changed_only_string_literals(path):
-    assert _shape(_git_show(ROUND4, path)) == _shape((ROOT / path).read_text())
+def _top_level_shapes(src):
+    """{name: string-blanked AST shape} for every top-level def and class."""
+    out = {}
+    for node in ast.parse(src).body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            out[node.name] = ast.dump(_Blank().visit(node), include_attributes=False)
+        elif isinstance(node, ast.ClassDef):
+            out["class " + node.name] = ast.dump(_Blank().visit(node), include_attributes=False)
+    return out
+
+
+# RE-SCOPED BY THE TESTER, UI ROUND (feature 2), after ruling on the coder's
+# report. The original probe pinned the WHOLE AST of src/main.py to round 4, so
+# that round 4's reword could be shown to have changed text only. The UI plan
+# (docs/plans/ui.md, decision D1, step 2) deliberately restructures main.py:
+# `main()`'s body becomes `dispatch(args, console, sink)`, and `run_fixture` /
+# `run_search` split into a scoring half and a printing half so the web UI runs
+# THE CLI'S OWN code instead of a second copy of the dispatch rules. Keeping the
+# whole-file pin would have meant either freezing that plan out or deleting the
+# probe.
+#
+# What the probe protected is now guarded three ways: the byte-identical CLI
+# goldens (tests/fixtures/cli_golden/, tests/test_cli_output_unchanged.py), the
+# help test below, and the narrowed structural check here - every round-4
+# definition must still exist with the same shape, except the three the plan
+# names, and the new top-level names must be the declared split and nothing
+# else. A later round that quietly restructures anything further turns this red
+# again.
+SPLIT_BY_THE_UI_PLAN = {"main", "run_fixture", "run_search"}
+ADDED_BY_THE_UI_PLAN = {
+    "dispatch", "score_fixture", "print_fixture_report", "search_route",
+    "print_search_report", "fixture_footer_lines", "fixture_exit_code",
+    "unfundable_reason", "none_fundable_header", "_key_source", "_plain", "_refuse",
+    "class FixtureRun", "class SearchRun", "class RunRefusal", "class FooterLine",
+}
+
+
+def test_snapshot_replay_is_still_round_4_with_only_its_strings_reworded():
+    assert _shape(_git_show(ROUND4, "src/snapshot_replay.py")) == \
+        _shape((ROOT / "src" / "snapshot_replay.py").read_text())
+
+
+def test_main_py_changed_only_by_the_dispatch_split_the_ui_plan_declares():
+    old = _top_level_shapes(_git_show(ROUND4, "src/main.py"))
+    new = _top_level_shapes((ROOT / "src" / "main.py").read_text())
+    missing = sorted(set(old) - set(new))
+    assert missing == [], f"round-4 definitions deleted from main.py: {missing}"
+    changed = sorted(name for name in old if old[name] != new[name])
+    assert set(changed) <= SPLIT_BY_THE_UI_PLAN, (
+        f"main.py changed outside the declared dispatch split: "
+        f"{sorted(set(changed) - SPLIT_BY_THE_UI_PLAN)}")
+    added = sorted(set(new) - set(old))
+    assert set(added) <= ADDED_BY_THE_UI_PLAN, (
+        f"main.py grew definitions the UI plan did not declare: "
+        f"{sorted(set(added) - ADDED_BY_THE_UI_PLAN)}")
 
 
 REWORDED_HELP = [
