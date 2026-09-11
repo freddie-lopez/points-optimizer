@@ -308,13 +308,20 @@ B4_VS = aid_for("B4", "vir")
 YQ_HEADER = "source,airline,verdict,verified_on,evidence,notes"
 
 
+# Round 5 (R4-1 fix): a record must carry exactly one nonzero band line, as
+# yq-check writes it for a J check on NA-EU VS metal. band=None omits the line.
+YQ_DEFAULT_BAND = "$200-$350 (pt $275) one way (VS metal, cabin J)"
+
+
 def yq_record_body(source="virginatlantic", verdict="includes_yq", airline="VS", *, title_source=None,
-                   status="KNOWN", checked=None, operated="yes", operated_code=None, extra=""):
+                   status="KNOWN", checked=None, operated="yes", operated_code=None, extra="",
+                   band=YQ_DEFAULT_BAND):
     checked = airline if checked is None else checked
     operated_code = airline if operated_code is None else operated_code
+    band_line = "" if band is None else f"- modelled carrier surcharge band: {band}\n"
     return (
         f"# yq-check record: {title_source or source}, 2026-09-10\n\n## Seats.aero\n\n"
-        f"- program: Virgin Atlantic Flying Club (source {source})\n{extra}"
+        f"- program: Virgin Atlantic Flying Club (source {source})\n{extra}{band_line}"
         f"- itinerary lookup status: {status}\n"
         f"- checked airline (the award's KNOWN flight-number carrier): {checked}\n\n"
         f"## site\n\n"

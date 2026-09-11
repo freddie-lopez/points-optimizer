@@ -1071,3 +1071,255 @@ NONE MODELLED, and have the loader refuse such a record.
 - **Round 1 (22), round 2 (7) and round 3 (none):** still closed. Their probes,
   updated as listed above where round 3 changed the contract, are green.
 - **Open:** R4-1 only.
+
+---
+
+# Re-test 5 (fix round 4: `34509a5..a8283da`, report `a8283da`)
+
+Tester pass, 2026-09-11. As in every round, I changed no application code and no
+test under `tests/`. Every probe runs behind the socket canary, and it recorded
+zero connection attempts.
+
+New probes are in `test_oa_r5_retest.py` (78 tests). The only change to existing
+probes is the `yq_record_body` helper in `conftest.py`; it is described below.
+
+Recorded state: **5 red / 569 green (574 probes)**, with the same red set under
+`python -O`. The five reds are the two new Low findings: R5-1 (3 probes) and
+R5-2 (2 probes).
+
+## The 15 red probes: helper only, confirmed
+
+**Before the change.** All 15 failed with one identical message: "has 0
+'modelled carrier surcharge band' lines; it needs exactly one". They are the 15
+the fix report lists.
+
+**The change.** `yq_record_body` gained a `band=` parameter:
+- Its default is the line yq-check writes for VS J on NA-EU,
+  `$200-$350 (pt $275) one way (VS metal, cabin J)`, placed in the Seats.aero
+  half.
+- `band=None` omits the line.
+
+No other probe changed.
+
+**After the change:** 496 of 496 green at HEAD, normal and `-O`.
+
+**The probes still guard what they guarded.** I copied the updated probes onto a
+clone at `34509a5`, the round-3 tree. They give exactly **1 red / 495 green**,
+and the red is the R4-1 probe, which matches Re-test 4's recorded state. So:
+- the new line hides nothing that was red;
+- it relaxes nothing that was green;
+- every refusal probe built on the helper still asserts its own reason with
+  `match=`. The band check is the last check in `_check_record_statements`, so
+  it cannot pre-empt any of them.
+
+**The new probes have teeth.** Run on `34509a5`, 58 of the first 74 new probes
+fail. The 16 that pass there are guards:
+- the multi-carrier and AMBIGUOUS refusals that D1 already made;
+- the cases that should load;
+- the notes case;
+- `trips_tools --help`.
+
+## Three label states, verified myself
+
+Setup:
+1. A scratch `git archive HEAD` export.
+2. A stubbed `capture` wrote an honest capture. It exited 0 with "CAPTURED CLEAN".
+3. The constants were then edited in source.
+
+| State | normal | `python -O` |
+|---|---|---|
+| committed tree | **1603 passed, 13 skipped** | **1603 passed, 13 skipped** |
+| capture present, not flipped | **1603 passed, 13 skipped** | - |
+| `TRIPS_SCHEMA_VERIFIED_BY` = the capture | **1594 passed, 22 skipped** | **1594 passed, 22 skipped** |
+| flipped + `TRIPS_TOTALTAXES_UNIT = "cents"` | **1593 passed, 23 skipped** | **1593 passed, 23 skipped** |
+
+These match the Coder's figures exactly. In the flipped-plus-cents export,
+`test_oa_r5_retest.py` gives the same 5 reds. The 3 probes that need a git
+checkout were deselected there.
+
+## New findings
+
+| # | Sev | Title | Probes |
+|---|---|---|---|
+| R5-1 | Low | The loader reads the band line as text. A band the surcharge table does not model for the record's own route and cabin backs a verdict | `test_oa_r5_retest.py::test_R5_1_a_band_line_the_surcharge_table_does_not_model_for_the_records_own_route_is_refused[...]` (3) |
+| R5-2 | Low | On a VS-metal check with no band, the WARNING tells Tsuki to "pick a flight on VS metal", which contradicts the new pointer | `test_oa_r5_retest.py::test_R5_2_a_vs_metal_check_with_no_band_is_not_told_to_pick_a_flight_on_vs_metal[...]` (2) |
+
+### R5-1. Low: the band line is trusted as text
+
+**Repro (stubbed):**
+1. Run yq-check on VS W, JFK-LHR. The record carries the
+   `- yq-check: NO VERDICT POSSIBLE - ...` marker and
+   `- modelled carrier surcharge band: NONE MODELLED for VS metal ...`.
+2. Fill the site half honestly.
+3. Make two edits to the Seats.aero half:
+   - delete the marker line;
+   - replace the band text with the J band from any J record,
+     `$200-$350 (pt $275) one way (VS metal, cabin J)`.
+
+   Editing the band to say "cabin W" also works.
+4. Type the row by hand. `yq_inclusion.load` returns
+   `("virginatlantic", "VS") -> includes_yq`, which D1 then applies to every VS
+   award at taxes only.
+
+The same happens for VS J on JFK-LOS (right cabin, but no NA-AF row).
+
+**What the loader skips.** The record states everything needed to catch this:
+- `- route: JFK->LHR on 2027-02-10, cabin W`;
+- the checked airline;
+- the program.
+
+`data/surcharges.csv` is committed, so the loader could recompute the band that
+yq-check's `_modelled_band` computed. That would let it refuse:
+- a record for which the table models no nonzero band;
+- optionally, a band line whose text differs from `est.render()`.
+
+It does neither. `_check_record_band` only looks for a `$` amount above zero.
+
+**Why Low.** It takes two deliberate edits to the tool-written half of the
+record, which the instructions never ask anyone to touch. An honest user who
+follows the tool cannot reach it. The D1 lines (lookup status, checked airline)
+are trusted as text in the same way. The band differs from them because it is
+cheap to verify from committed data, while those lines would need the capture.
+
+**Fix direction:** in `_check_record_band`, parse the record's route line,
+recompute the band, and refuse if it is not nonzero. One caveat is for the Coder
+to decide: if the table later drops a band, its old records would then be
+refused.
+
+### R5-2. Low: two remedies that disagree on a VS-metal check with no band
+
+**Repro (stubbed):** run yq-check on VS W, JFK-LHR, or on VS J, JFK-LOS.
+
+The output prints, and the record stores as `- WARNING:`, this line: "likely
+INCONCLUSIVE - pick a flight on VS metal (Virgin Atlantic Flying Club on VS metal
+has no nonzero surcharge row, so including and excluding it look the same)".
+
+**What is wrong.** The flight already is on VS metal. The new last line gives
+the correct remedy: "For VS metal the surcharge table models a band for: cabin J
+on NA-EU routes - run the check there". If Tsuki follows the first remedy, she
+picks another VS flight, which is likely W or J off NA-EU again. That spends 2
+more API calls and gets the same refusal.
+
+**Location:** `_inconclusive_warning` in `src/trips_tools.py`. It still says
+"pick a flight on {own} metal" when the lookup is KNOWN on the program's own
+metal and only the band is missing.
+
+**Fix direction:**
+- For own-metal-no-band, name where a band exists (`_banded_options`), or drop
+  the warning when `no_verdict_reason` already says it.
+- Keep the current text for the DL-metal and multi-carrier cases, where it is
+  right.
+
+**Why Low:** no money moves; it confuses the human step and wastes calls.
+
+## R4-1's class, attacked: what held up
+
+- **Tool side, 5 scenarios:** VS W JFK-LHR (no W row), VS J JFK-LOS (no NA-AF
+  row), DL single metal (no DL row under Virgin), KNOWN multi-carrier VS+DL, and
+  AMBIGUOUS VS|DL. Each one:
+  - prints no row and no `<VERDICT>`;
+  - prints "This check cannot back a verdict ... no row is printed";
+  - writes exactly one marker line;
+  - writes a band line with **no `$` amount**, so the marker is not the only
+    guard.
+- **The same 5 records, filled honestly, then refused:**
+  - with both `includes_yq` and `excludes_yq` against a hand-typed row for every
+    airline that could plausibly be named (VS, and DL where relevant);
+  - with **only the marker deleted**, still refused because of the band line.
+- **The pointers are right:**
+  - VS: "cabin J on NA-EU routes - run the check there".
+  - DL: "no yq-check on it can settle the question".
+  - No single KNOWN airline: "Pick a flight the program's own airline operates".
+- **A KNOWN multi-carrier itinerary** is treated as "no single KNOWN airline":
+  - marker written, no row printed;
+  - checked airline `NONE - ...`;
+  - operated-by `NONE`;
+  - refused for a VS row and for a DL row.
+- **A band-bearing J check** on another NA-EU route (BOS-MAN) loads end to end
+  with `excludes_yq`. Re-test 4's JFK-LHR `includes_yq` probe is still green.
+- **Band line format:**
+  - Refused: missing, blank, `NONE MODELLED ...`, `none - ...`, `n/a`, `$0`,
+    `$0.00`, `$0-$0 (pt $0)`, `GBP 200-350`, `£200-£350`, `USD 200-350`,
+    `200-350`, `$-200`, `TBD`. Two band lines are refused even when both are
+    nonzero (tested in each half). A band line in another case counts as no band
+    line, which is fail-safe.
+  - Loads: the J band, `$ 200-$ 350`, `$1,200-$1,350`, trailing whitespace, and
+    CRLF (a CRLF record with `NONE MODELLED` is still refused).
+- **Currency:** the table's validation refuses non-USD rows, so the band yq-check
+  writes is always in `$`. A band in another currency is refused, which is
+  fail-safe.
+- **Marker:** refused in every tested form, each time with a **nonzero** band
+  present so that only the marker can refuse:
+  - any case;
+  - spacing or tabs around the dash and colon;
+  - leading whitespace;
+  - in either half;
+  - in a CRLF record.
+- **Cabin:** the row's notes are free text, and a verdict is keyed by (source,
+  airline) as D1(b) specifies. A J record whose row notes say "W" loads as
+  `("virginatlantic", "VS")`. The record's own cabin against its band line is
+  R5-1.
+- **Keys:** the key appears in none of the output, record or capture files, in
+  all 5 scenarios.
+
+## The rewording, checked
+
+- **Text only.** I blanked every string literal in `src/main.py` and
+  `src/snapshot_replay.py` at `34509a5` and at HEAD. The two ASTs are identical,
+  so no code changed and no exit-code line changed.
+- **`--help` for `src.main`.** HEAD's text equals `34509a5`'s with exactly the 8
+  listed rewordings applied, formatted unwrapped. Nothing else changed or was
+  dropped, and exit codes 0-4 are all still listed.
+- **`--help` for `src.main` and `src.trips_tools`** exits 0 and contains no
+  changelog text.
+- **Old-row refusal.** A manifest without the hash columns still:
+  - exits 1 with "CANNOT BE REPLAYED" and `content_hash_unknown`;
+  - says "nothing to check the file against", "UNKNOWN, never as 'matches'" and
+    "Re-fetch the leg".
+
+  The only thing dropped is the word "v5".
+- **Archived-budget refusal** still says "never cached and never archived",
+  "cannot exist" and "The manifest is corrupt". The only thing dropped is
+  "(finding H-1)".
+
+## Observations (not findings)
+
+- **The marker regex misses some spellings:** a double space inside the phrase,
+  another bullet (`*`), or no bullet. A record yq-check wrote with no band still
+  carries a band line with no `$`, so it is refused anyway; a probe pins this.
+  Given R5-1 (the marker can simply be deleted), this does not matter separately.
+- **A band whose low end is $0 but whose high end is above $0** (for example
+  `$0-$150`) loads. With a $0 low end, "row figure + band" starts at the row
+  figure, so includes and excludes overlap. This is not reachable today:
+  - no table row under a Seats.aero source has that shape (the smallest one-way
+    band is Flying Blue's $75-$125);
+  - multi-carrier resolution never reaches a record.
+
+  A rule of "low end above zero" would close it.
+- **The multi-carrier reason reads oddly:** "the itinerary lookup for cabin J is
+  KNOWN, not one KNOWN airline". It is correct but awkward; "names several
+  airlines (VS, DL)" would read better.
+- **A no-verdict yq-check exits 0**, the same as one that prints a row. A
+  wrapping script cannot tell the two apart; Tsuki runs it by hand, and the
+  output states it plainly.
+
+## Invariants, re-verified
+
+| Check | Result |
+|---|---|
+| suite, committed tree | 1603 passed / 13 skipped, normal and `-O`; the tree is clean after the run |
+| baseline red sets (v5 / adversarial / known-failures) | 19 / 40 / 0, identical by id |
+| header-only `yq_inclusion.csv` | nothing moves (the equivalence probes, exit code and headline are green) |
+| couple trip | WITHHELD, exit 3 |
+| `-O` guards | all three import-time edits still refuse |
+| network | 0 connection attempts across all 574 probes |
+| keys | none in any cache, snapshot, manifest, capture, record or `.raw.txt` file, or in stdout |
+| D29 (as ruled) | identical to master apart from the four reworded sentences |
+
+## Earlier findings
+
+- **Round 1 (22), round 2 (7) and round 3 (none):** still closed. Their probes
+  are green.
+- **R4-1:** closed. Its probe is green, and the class is verified above. The
+  only residue is the forged-edit path (R5-1) and the warning text (R5-2).
+- **Open:** R5-1 and R5-2, both Low.
