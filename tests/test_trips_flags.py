@@ -207,7 +207,7 @@ def test_a_429_on_the_first_lookup_stops_every_later_one():
     assert metal["B2"].reason_code == "HTTP_429"
     for leg in ("B3", "B4"):
         assert metal[leg].reason_code == "RATE_LIMITED_EARLIER"
-        assert "NOT LOOKED UP (Seats.aero rate-limited an earlier lookup in this run" in metal[leg].render()
+        assert "NOT LOOKED UP (Seats.aero rate-limited an earlier request in this run" in metal[leg].render()
     assert opts.metal_report.rate_limited
 
 

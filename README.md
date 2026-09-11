@@ -375,7 +375,7 @@ a finding about whether the award has flights.
 | `NOT_LOOKED_UP` | `TRIPS_OFF` | `--trips off` | `METAL_LOOKUP_MISSING` |
 | `NOT_LOOKED_UP` | `CAP_REACHED` | the per-run cap was reached | `METAL_LOOKUP_MISSING` |
 | `NOT_LOOKED_UP` | `BUDGET_EXHAUSTED` | the call counter is at 0; no request was made | `METAL_LOOKUP_MISSING` |
-| `NOT_LOOKED_UP` | `RATE_LIMITED_EARLIER` | an earlier lookup in this run got HTTP 429 | `METAL_LOOKUP_MISSING` |
+| `NOT_LOOKED_UP` | `RATE_LIMITED_EARLIER` | an earlier search or lookup in this run got HTTP 429 | `METAL_LOOKUP_MISSING` |
 | `NOT_LOOKED_UP` | `NO_AVAILABILITY_ID` | the availability row carried no id | `METAL_LOOKUP_MISSING` |
 | `NOT_LOOKED_UP` | `AVAILABILITY_ID_INVALID` | the id is not 10-64 letters and digits; no URL or filename is built from it | `METAL_LOOKUP_MISSING` |
 | `NOT_LOOKED_UP` | `TRANSPORT_HAS_NO_TRIPS` | the transport in use has no itinerary lookup | `METAL_LOOKUP_MISSING` |

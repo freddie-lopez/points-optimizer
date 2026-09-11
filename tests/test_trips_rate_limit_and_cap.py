@@ -66,6 +66,7 @@ def test_a_429_on_a_search_stops_every_trips_request():
     for leg in ("B2", "B3"):
         assert metal[leg].reason_code == "RATE_LIMITED_EARLIER"
         assert "HTTP 429 on a search earlier in this run" in metal[leg].render()
+        assert "rate-limited an earlier request in this run" in metal[leg].render()
     assert opts.metal_report.rate_limited
 
 

@@ -2574,7 +2574,7 @@ _METAL_REASON_PROSE = {
         "request was made ({detail})"
     ),
     "RATE_LIMITED_EARLIER": (
-        "NOT LOOKED UP (Seats.aero rate-limited an earlier lookup in this run: "
+        "NOT LOOKED UP (Seats.aero rate-limited an earlier request in this run: "
         "{detail})"
     ),
     "NOT_NEEDED_POLICY": (
