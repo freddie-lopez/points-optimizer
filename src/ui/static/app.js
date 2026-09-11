@@ -949,7 +949,10 @@
       var c = el("div", "cellm"); add(c, el("div", "label", pair[0]));
       var f = el("div", "figure");
       var cell = leg.cells[pair[1]];
-      if (cell.kind === "none" && pair[1] === "score_points") { add(f, el("span", "dim", "not scored")); }
+      if (cell.kind === "range" && pair[1] === "score_points") {
+        // Two numbers, drawn as two numbers. No midpoint anywhere.
+        add(f, el("span", "", cell.segments.map(function (s) { return s.text; }).join("").replace("-", " – ")));
+      } else if (cell.kind === "none" && pair[1] === "score_points") { add(f, el("span", "dim", "not scored")); }
       else { add(f, cellContent(pair[1], cell, leg)); }
       add(c, f); add(g, c);
     });

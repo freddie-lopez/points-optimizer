@@ -1577,34 +1577,7 @@ def evaluate_leg(
             )
 
     # ---- Verdict sensitivity -----------------------------------------------
-    # A surcharge estimate is a RANGE. If the verdict differs between the low and
-    # the high end, the recommendation is not settled and the tool says so rather
-    # than picking the midpoint and sounding confident.
-    if (
-        result.has_points_path
-        and result.surcharge is not None
-        and result.surcharge.is_range
-        and result.cash_total_score_usd != float("inf")
-    ):
-        wins_at_low = result.points_score_low_usd < result.cash_total_score_usd
-        wins_at_high = result.points_score_high_usd < result.cash_total_score_usd
-        if wins_at_low != wins_at_high:
-            result.verdict_sensitive = True
-            result.add_reason(
-                "VERDICT_SENSITIVE",
-                f"The verdict FLIPS inside the surcharge range: points score "
-                f"${result.points_score_low_usd:,.2f} at the low end and "
-                f"${result.points_score_high_usd:,.2f} at the high end, against "
-                f"${result.cash_total_score_usd:,.2f} cash. This recommendation is "
-                f"NOT settled - capture the real surcharge before booking.",
-                low=result.points_score_low_usd,
-                high=result.points_score_high_usd,
-                cash=result.cash_total_score_usd,
-            )
-            result.warnings.append(
-                "VERDICT SENSITIVE: the recommendation reverses inside the "
-                "surcharge estimate's own range. Do not treat it as settled."
-            )
+    set_verdict_sensitivity(result)
 
     # ---- Alternatives -------------------------------------------------------
     if show_alternatives and leg.kind == "flight" and result.best_points is not None:
@@ -1793,6 +1766,67 @@ def evaluate_trip(
 # ---------------------------------------------------------------------------
 # v5 Step 7: UK Air Passenger Duty. THE ONLY PLACE THIS MODULE TOUCHES IT.
 # ---------------------------------------------------------------------------
+
+
+def set_verdict_sensitivity(result: LegResult, apd_usd: float = 0.0) -> None:
+    """
+    Whether the verdict FLIPS inside the surcharge band, decided on the scores
+    AS THEY NOW STAND.
+
+    A surcharge estimate is a RANGE. If the verdict differs between the low and
+    the high end, the recommendation is not settled and the tool says so rather
+    than picking the midpoint and sounding confident.
+
+    FINDING H-1. This used to be decided once, inside `evaluate_leg`, BEFORE
+    `apply_apd` added UK Air Passenger Duty to both ends of the band. A LHR
+    departure whose points side wins at $1,030.38 and loses at $1,180.38 against
+    $1,150.00 cash - the straddle the marker exists for - was therefore reported
+    as a settled POINTS verdict, because before the duty both ends sat below the
+    fare. It is the F-3 shape one field along: a flag decided on figures that
+    are not the ones scored. So it is a function, it recomputes from the current
+    scores, and `apply_apd` calls it again after moving them. Re-deciding the
+    same answer changes nothing (the reason and the warning keep their place);
+    a changed answer replaces them rather than leaving figures that have moved.
+    """
+    flips = False
+    if (
+        result.has_points_path
+        and result.surcharge is not None
+        and result.surcharge.is_range
+        and result.cash_total_score_usd != float("inf")
+    ):
+        wins_at_low = result.points_score_low_usd < result.cash_total_score_usd
+        wins_at_high = result.points_score_high_usd < result.cash_total_score_usd
+        flips = wins_at_low != wins_at_high
+    if flips == result.verdict_sensitive:
+        return
+    result.reasons = [x for x in result.reasons if x.code != "VERDICT_SENSITIVE"]
+    result.warnings = [
+        w for w in result.warnings if not w.startswith("VERDICT SENSITIVE:")
+    ]
+    result.verdict_sensitive = flips
+    if not flips:
+        return
+    duty = (
+        f" UK Air Passenger Duty of ${apd_usd:,.2f} is counted in both ends."
+        if apd_usd
+        else ""
+    )
+    result.add_reason(
+        "VERDICT_SENSITIVE",
+        f"The verdict FLIPS inside the surcharge range: points score "
+        f"${result.points_score_low_usd:,.2f} at the low end and "
+        f"${result.points_score_high_usd:,.2f} at the high end, against "
+        f"${result.cash_total_score_usd:,.2f} cash.{duty} This recommendation is "
+        f"NOT settled - capture the real surcharge before booking.",
+        low=result.points_score_low_usd,
+        high=result.points_score_high_usd,
+        cash=result.cash_total_score_usd,
+    )
+    result.warnings.append(
+        "VERDICT SENSITIVE: the recommendation reverses inside the "
+        "surcharge estimate's own range. Do not treat it as settled."
+    )
 
 
 def _apd_cabin(result: LegResult) -> Tuple[str, str]:
@@ -2233,6 +2267,8 @@ def apply_apd(
             if value is not None and value != float("inf"):
                 setattr(result, attr, value + amount)
         _restate_verdict_after_apd(result, before_apd, amount, valuation_cpp)
+        # H-1: the band has MOVED, so ask again whether it straddles the fare.
+        set_verdict_sensitivity(result, apd_usd=amount)
 
         # The head-to-head numbers are recomputed from the moved score rather
         # than left stale. A leg whose points side has grown by GBP 102 and

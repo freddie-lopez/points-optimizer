@@ -447,6 +447,10 @@ def leg_json(r) -> Dict[str, Any]:
     cand = r.best_points
     cash = r.best_cash
     scoreable = r.has_points_path and num(r.points_total_score_usd) is not None
+    # A leg whose verdict FLIPS inside the surcharge band has a RANGE, not a
+    # point estimate: the terminal prints "$a-$b" there, so the page is not
+    # given the midpoint it would otherwise draw as the answer.
+    sensitive = bool(r.verdict_sensitive)
     be = num(r.break_even_surcharge_usd) if r.break_even_surcharge_usd is not None else None
     surcharge = None
     if r.surcharge is not None:
@@ -498,9 +502,9 @@ def leg_json(r) -> Dict[str, Any]:
             "cash_usd": num(r.cash_usd) if cash is not None else None,
             "cash_pts": r.cash_as_points_equivalent if cash is not None else None,
             "points_required": r.points_required if (cand is not None and r.points_path) else None,
-            "score_points": num(r.points_total_score_usd) if scoreable else None,
-            "score_low": num(r.points_score_low_usd) if scoreable and r.verdict_sensitive else None,
-            "score_high": num(r.points_score_high_usd) if scoreable and r.verdict_sensitive else None,
+            "score_points": num(r.points_total_score_usd) if scoreable and not sensitive else None,
+            "score_low": num(r.points_score_low_usd) if scoreable and sensitive else None,
+            "score_high": num(r.points_score_high_usd) if scoreable and sensitive else None,
             "floor": num(r.points_floor_usd) if r.points_floor_usd is not None else None,
             "break_even": be,
             "break_even_subject": (

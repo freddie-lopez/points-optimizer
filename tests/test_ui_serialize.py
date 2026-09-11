@@ -75,8 +75,12 @@ def test_no_clean_number_where_the_cli_shows_none(payloads, name):
         if cells["cash"]["kind"] == "unknown":
             assert leg["numbers"]["cash_usd"] is None
             assert leg["numbers"]["cash_pts"] is None
-        if cells["score_points"]["kind"] in ("floor", "break_even", "none"):
+        if cells["score_points"]["kind"] in ("floor", "break_even", "none", "range"):
             assert leg["numbers"]["score_points"] is None
+        if cells["score_points"]["kind"] == "range":
+            # A range is two numbers, and the midpoint is not one of them.
+            assert leg["numbers"]["score_low"] is not None
+            assert leg["numbers"]["score_high"] is not None
         if leg["verdict"]["chip"] == "withheld":
             assert leg["numbers"]["score_points"] is None
     h = payload["headline"]
