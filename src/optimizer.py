@@ -46,6 +46,12 @@ VERDICT_AWARD_UNATTRIBUTED = "cash (award unattributed)"
 # An award in a program the wallet reaches only INDIRECTLY (UR -> BA Avios ->
 # combine into Qatar / Finnair Avios). Not scored, and NOT "no points path".
 VERDICT_INDIRECT_PATH = "cash (indirect path not scored)"
+# A FLIGHT leg for more than one traveller. Award prices are per seat, and
+# nothing in the scorer multiplies points, award taxes or the balance ceiling by
+# the party size, or checks seats against it - so a couple's leg was scored as
+# ONE seat of points against the party's cash and could print a false POINTS
+# win. Until party pricing is modelled, such a leg is not scored at all.
+VERDICT_PARTY_NOT_PRICED = "cash (multi-traveller points not priced)"
 
 
 def _fmt_usd(x: float) -> str:
@@ -366,6 +372,12 @@ def optimize(
                 cash_known = False
             cash_cost = award.cash_component if cash_known else 0.0
             total_value = points_cost * valuation_cpp + cash_cost
+            apd_floor = 0.0 if cash_known else _search_uk_duty_floor(trip, award)
+            if apd_floor:
+                # An UNKNOWN cash side still has a known floor on a UK departure:
+                # the duty is owed on the ticket. The displayed ">=" total is a
+                # floor, and a floor that leaves out a certain tax is not one.
+                total_value += apd_floor
 
             strategy = Strategy(
                 award=award,
@@ -377,9 +389,17 @@ def optimize(
                 cash_cost_note=(
                     ""
                     if cash_known
-                    else below_duty
-                    or getattr(award, "cash_component_note", "")
-                    or "The cash component of this award is unknown."
+                    else (
+                        below_duty
+                        or getattr(award, "cash_component_note", "")
+                        or "The cash component of this award is unknown."
+                    )
+                    + (
+                        f" The total shown is a FLOOR that includes UK Air "
+                        f"Passenger Duty of ${apd_floor:,.2f}, owed on this ticket."
+                        if apd_floor
+                        else ""
+                    )
                 ),
             )
 
@@ -409,6 +429,21 @@ def _strategy_rank(s: "Strategy"):
         s.total_value if s.cash_cost_known else 0.0,
         s.points_cost,
     )
+
+
+def _search_uk_duty_floor(trip, award) -> float:
+    """Per-passenger UK APD owed on this award's ticket, or 0.0 if none/unknown."""
+    from types import SimpleNamespace
+
+    from src.live_trip import uk_duty_per_passenger_usd
+
+    leg = SimpleNamespace(
+        kind="flight",
+        origin=str(getattr(trip, "origin", "") or "").upper(),
+        destination=str(getattr(trip, "destination", "") or "").upper(),
+        date=award.date,
+    )
+    return uk_duty_per_passenger_usd(leg, award) or 0.0
 
 
 def _search_taxes_below_owed_uk_duty(trip, award) -> str:
@@ -850,11 +885,18 @@ def evaluate_leg(
     blocked_partner_candidates: List[str] = []
     unattributed_candidates: List[PointsCandidate] = []
     indirect_candidates: List[PointsCandidate] = []
+    party_candidates: List[PointsCandidate] = []
     # The cash context each candidate was scored against, keyed by id(cand), so
     # the winner's own date's fare can become the leg's reported cash.
     cash_context: Dict[int, Tuple[float, Optional[CashOption], Optional[date]]] = {}
 
     for cand in leg.points_candidates:
+        # MULTI-TRAVELLER FLIGHT LEGS ARE NOT PRICED. Checked first: no other
+        # rule below knows the party size, so anything they conclude about this
+        # candidate would be a one-seat conclusion about a party's trip.
+        if leg.kind == "flight" and int(getattr(leg, "travelers", 1) or 1) > 1:
+            party_candidates.append(cand)
+            continue
         # FINDING M-5. A RESPONSE THAT NAMED NO PROGRAM IS A DATA FAILURE, NOT A
         # FACT ABOUT CHASE'S PARTNER LIST.
         #
@@ -1253,9 +1295,14 @@ def evaluate_leg(
             result.verdict_reason = (
                 f"Cash is cheaper: ${result.cash_total_score_usd:,.2f} vs at least "
                 f"${result.points_floor_usd:,.2f} on points at "
-                f"{valuation_cpp * 100:.1f}cpp. The carrier-imposed surcharge is "
-                f"UNKNOWN, but it can only ADD to the points side, so cash wins "
-                f"whatever it turns out to be. Do NOT burn points here."
+                f"{valuation_cpp * 100:.1f}cpp. "
+                + (
+                    "The TAXES on this award are UNKNOWN"
+                    if _candidate_taxes_unknown(result.best_points)
+                    else "The carrier-imposed surcharge is UNKNOWN"
+                )
+                + ", but it can only ADD to the points side, so cash wins "
+                "whatever it turns out to be. Do NOT burn points here."
             )
             result.margin_usd = result.points_floor_usd - result.cash_total_score_usd
             result.margin_pct = (
@@ -1326,6 +1373,25 @@ def evaluate_leg(
                 f"({'; '.join(blocked_partner_candidates)}), but every transfer "
                 f"path was blocked by the balance ceiling or the stranded-points "
                 f"constraint. This is a constraint, not a missing partner."
+            )
+        elif party_candidates:
+            result.verdict = VERDICT_PARTY_NOT_PRICED
+            result.add_reason(
+                "PARTY_PRICING_UNVERIFIED",
+                f"{len(party_candidates)} points option(s) on a flight leg for "
+                f"{leg.travelers} travellers were not scored: award prices are per "
+                f"seat and multi-traveller pricing is not modelled.",
+                travelers=leg.travelers,
+            )
+            result.verdict_reason = (
+                f"Pay cash BY DEFAULT, not by finding. This flight leg is for "
+                f"{leg.travelers} travellers and every award price here is for ONE "
+                f"seat; the tool does not yet multiply points, award taxes or the "
+                f"balance by the party size, or check that {leg.travelers} seats "
+                f"are open. Scoring one seat of points against the party's cash "
+                f"could print a points win that does not exist, so nothing is "
+                f"scored. Price it by hand: {leg.travelers} x the points, "
+                f"{leg.travelers} x the taxes, against the party's total cash."
             )
         elif indirect_candidates:
             best_indirect = min(indirect_candidates, key=lambda c: c.points)
@@ -1881,19 +1947,26 @@ def _add_apd_to_unscored_floor(
     if cash == float("inf") or result.points_floor_usd < cash:
         return
     # The duty alone makes points lose: the unknown is now INERT, exactly as in
-    # the unknown-surcharge case where the floor already loses.
+    # the unknown-surcharge case where the floor already loses. Also reached when
+    # the leg was ALREADY a certain "cash" before the duty: its sentence quoted
+    # the pre-duty floor and must be rewritten, not left beside the new one.
     result.surcharge_cannot_change_verdict = True
-    if result.verdict == "cash (surcharge unknown)":
+    if result.verdict in ("cash (surcharge unknown)", "cash"):
         result.verdict = "cash"
         result.margin_usd = result.points_floor_usd - cash
         result.margin_pct = (result.margin_usd / cash * 100) if cash else 0.0
+        what = (
+            "the award's other taxes are UNKNOWN"
+            if _candidate_taxes_unknown(result.best_points)
+            else "the carrier-imposed surcharge is UNKNOWN"
+        )
         result.verdict_reason = (
             f"Cash is cheaper: ${cash:,.2f} vs at least "
             f"${result.points_floor_usd:,.2f} on points at "
             f"{valuation_cpp * 100:.1f}cpp, INCLUDING UK Air Passenger Duty of "
-            f"${amount:,.2f} that is owed on the award ticket too. The rest of the "
-            f"cash that comes with the award is UNKNOWN, but it can only ADD, so "
-            f"cash wins whatever it turns out to be. Do NOT burn points here."
+            f"${amount:,.2f} that is owed on the award ticket too. Beyond that, "
+            f"{what}, but that can only ADD, so cash wins whatever it turns out "
+            f"to be. Do NOT burn points here."
         )
 
 
@@ -2491,6 +2564,8 @@ def trip_totals(
         # but can carry an indirect-only award AND an unattributed one; keyed on
         # the verdict, whichever branch won the elif hid the other from the trip
         # block - and an unattributed award may be a DIRECT partner's.
+        "legs_party_pricing_unverified": len(_legs_with(results, "PARTY_PRICING_UNVERIFIED")),
+        "legs_party_pricing_unverified_ids": _legs_with(results, "PARTY_PRICING_UNVERIFIED"),
         "legs_indirect_path_unverified": len(_legs_with(results, "INDIRECT_PATH_UNVERIFIED")),
         "legs_indirect_path_unverified_ids": _legs_with(results, "INDIRECT_PATH_UNVERIFIED"),
         "legs_award_unattributed": len(_legs_with(results, "PROGRAM_UNATTRIBUTED")),

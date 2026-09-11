@@ -11,6 +11,7 @@ from src.optimizer import (
     VERDICT_APD_UNKNOWN,
     VERDICT_AWARD_UNATTRIBUTED,
     VERDICT_INDIRECT_PATH,
+    VERDICT_PARTY_NOT_PRICED,
 )
 
 
@@ -272,6 +273,9 @@ def print_leg_results(
             )
             path_desc = f"{_ind.program} (indirect, not scored)"
             pts = f"{_ind.points:,}"
+        elif r.verdict == VERDICT_PARTY_NOT_PRICED:
+            path_desc = f"priced for ONE seat - {r.leg.travelers} travelling"
+            pts = "-"
         elif r.verdict == VERDICT_AWARD_UNATTRIBUTED:
             # The same falsehood on the unattributed path: the program is not
             # NAMED, which says nothing about whether it is a partner.
@@ -345,6 +349,8 @@ def print_leg_results(
             # and not "no path".
             VERDICT_INDIRECT_PATH:
                 "[bold yellow]PAY CASH (indirect, not scored)[/bold yellow]",
+            VERDICT_PARTY_NOT_PRICED:
+                "[bold yellow]PAY CASH (party of N not priced)[/bold yellow]",
             # WAY (10). A GOVERNMENT departure tax is owed and its size is not
             # known, so the points side cannot be scored. Deliberately worded
             # like the surcharge-unknown cell above and deliberately NOT the
@@ -1045,6 +1051,14 @@ def print_trip_totals(
             "[red]Legs where a points path exists but its\n"
             "surcharge is UNKNOWN (NOT $0)[/red]",
             f"[red]{int(totals['legs_surcharge_unknown'])}[/red]",
+        )
+    if totals.get("legs_party_pricing_unverified"):
+        table.add_row(
+            "[bold yellow]Flight legs for 2+ travellers - points NOT\n"
+            "scored (award prices are per seat)[/bold yellow]",
+            f"[bold yellow]{int(totals['legs_party_pricing_unverified'])} "
+            f"({', '.join(totals.get('legs_party_pricing_unverified_ids') or [])})"
+            f"[/bold yellow]",
         )
     # Counted at trip level since v3 (way ten) and never PRINTED there - a
     # counter nobody sees is not an answer to "what does the trip do with it".

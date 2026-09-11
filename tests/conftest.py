@@ -28,6 +28,13 @@ import os as _os
 import tempfile as _tempfile
 
 REAL_HOME = _os.path.expanduser("~")
+# Children get a temporary HOME. On a Python that finds packages in the per-user
+# site directory (pip --user; ~/Library/Python/X.Y on macOS), that directory is
+# derived from HOME - so pin it to the REAL one first, or every subprocess test
+# would fail with ModuleNotFoundError for a reason that has nothing to do with it.
+import site as _site  # noqa: E402
+
+_os.environ.setdefault("PYTHONUSERBASE", _site.getuserbase())
 _SESSION_HOME = _tempfile.mkdtemp(prefix="points-optimizer-test-home-")
 
 

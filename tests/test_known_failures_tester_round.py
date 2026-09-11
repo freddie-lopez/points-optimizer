@@ -327,3 +327,129 @@ def test_R7_a_manifest_row_that_disagrees_with_its_snapshot_is_called_out(tmp_pa
     manifest.write_text(manifest.read_text().replace("2026-09-09.v5", PARSER_VERSION))
     _, out = run_cli(REPLAY_BASE + ["--from-snapshot", str(manifest)], capsys)
     assert "PARSER VERSION DISAGREEMENT" in " ".join(out.split())
+
+
+# ===========================================================================
+# Manager review (runs/points-optimizer/manager-review-known-failures.md)
+# ===========================================================================
+
+
+def _trip_b_with_b1_travelers(tmp_path, travelers, cash_total, b1_rows):
+    """Trip B with B1 for N travellers, cash = the party's total, live rows on B1."""
+    from src.live_trip import LiveOptions, annotate_live_verdicts, apply_live
+    from src.optimizer import evaluate_trip, trip_totals
+    from src.ratio_manager import RatioManager
+    from src.response_cache import ResponseCache
+    from src.trip_loader import load_trip_fixture
+    from src.wallet import Wallet
+    from datetime import date
+
+    fixture = load_trip_fixture(ROOT / "tests" / "fixtures" / "trips" / "trip_b_europe.json")
+    for leg in fixture.legs:
+        if leg.id == "B1":
+            leg.travelers = travelers
+            for c in leg.cash_options:
+                c.amount = cash_total
+                c.amount_usd = 0.0
+
+    def side(*a, **k):
+        params = k.get("params") or {}
+        route = (params.get("origin_airport"), params.get("destination_airport"))
+        iso = ROUTES[route]
+        if route == ("SFO", "MAD"):
+            rows = [_row(origin="SFO", dest="MAD", iso=iso, **kw) for kw in b1_rows]
+        else:
+            rows = [_row(origin=route[0], dest=route[1], iso=iso)]
+        return _resp(rows)
+
+    client = SeatsClient(api_key="test_key")
+    client.clear_cache()
+    SeatsClient.reset_call_budget()
+    cache = ResponseCache(cache_dir=tmp_path / "c", snapshot_dir=tmp_path / "s")
+    with patch("src.seats_client.requests.get", side_effect=side):
+        fixture, _ = apply_live(fixture, client, LiveOptions(live=True, flex_days=0, cache=cache))
+    rm = RatioManager(ROOT / "data" / "ratios.csv", ROOT / "data" / "bonuses.csv",
+                      ROOT / "data" / "programs.yaml")
+    wallet = Wallet(balances={"UR": 160000}, cards=[CSP])
+    results = annotate_live_verdicts(evaluate_trip(
+        fixture.legs, ratios_manager=rm, wallet=wallet,
+        transfer_date=date(2026, 9, 15), today=date(2026, 9, 10)))
+    totals = trip_totals(results, wallet)
+    buf = StringIO()
+    from src.formatter import print_leg_results, print_trip_totals
+
+    con = Console(file=buf, width=240, no_color=True)
+    print_leg_results(results, console=con)
+    print_trip_totals(totals, console=con)
+    return next(r for r in results if r.leg.id == "B1"), totals, buf.getvalue()
+
+
+def test_M1_a_couples_flight_leg_is_never_scored_as_one_seat(tmp_path):
+    """
+    The manager's repro: B1 for 2, cash $790 for the couple, United 50,000 + $56.
+    Master printed POINTS, "beats paying cash by 6.65%". One seat of points was
+    scored against two seats of cash.
+    """
+    b1, totals, out = _trip_b_with_b1_travelers(
+        tmp_path, 2, 790.0,
+        [dict(source="united", cost="50000", taxes=5600, currency="USD", airlines="UA")],
+    )
+    assert b1.verdict == "cash (multi-traveller points not priced)"
+    assert not b1.has_points_path
+    assert totals["legs_where_points_win"] == 0
+    assert totals["legs_party_pricing_unverified_ids"] == ["B1"]
+    assert "priced for ONE seat" in out
+    assert any(x.code == "PARTY_PRICING_UNVERIFIED" for x in b1.reasons)
+
+
+def test_M1_a_single_traveller_leg_is_unaffected(tmp_path):
+    b1, _, _ = _trip_b_with_b1_travelers(
+        tmp_path, 1, 395.0,
+        [dict(source="united", cost="30000", taxes=5600, currency="USD", airlines="UA")],
+    )
+    assert b1.has_points_path
+
+
+def test_M1_search_with_two_passengers_names_no_top_strategy(capsys, monkeypatch):
+    monkeypatch.setenv("SEATS_AERO_KEY", "test_key_not_a_real_one")
+    rows = [_row(source="united", cost="50000", taxes=5600, currency="USD", airlines="UA")]
+    _, out = _cli(
+        ["--origin", "SFO", "--destination", "MAD", "--date", "2027-01-15",
+         "--balance", "UR=160000", "--card", CSP, "--passengers", "2"],
+        capsys, lambda *a, **k: _resp(rows),
+    )
+    assert "PRICED FOR ONE SEAT" in out
+    assert "Top strategy" not in out
+
+
+def test_S1_an_inert_taxes_unknown_leg_quotes_the_post_duty_floor(tmp_path):
+    """
+    Aeroplan CAD 44.60 on LHR is below the duty: taxes unknown, floor = points +
+    APD, and at 50,000 points cash is certain. The sentence must quote the floor
+    WITH the duty and say TAXES, not "carrier-imposed surcharge".
+    """
+    b4, _, _ = _run_trip_b(dict(source="aeroplan", cost="50000"), tmp_path)
+    assert b4.verdict == "cash"
+    assert f"${b4.points_floor_usd:,.2f}" in b4.verdict_reason
+    assert "$500.00" not in b4.verdict_reason
+    assert "carrier-imposed surcharge is UNKNOWN" not in b4.verdict_reason
+    assert b4.margin_usd == pytest.approx(b4.points_floor_usd - b4.cash_total_score_usd)
+
+
+def test_S2_search_floor_includes_the_owed_uk_duty(capsys, monkeypatch):
+    _, out = _search(capsys, monkeypatch, [
+        _row(source="united", cost="35000", taxes=500, currency="USD", airlines="UA"),
+    ], origin="LHR", dest="SFO", iso="2027-01-27")
+    assert ">= $350.00" not in out
+    assert ">= $488.11" in out
+
+
+def test_S4_a_relocation_variable_is_named_on_a_live_run(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("SEATS_AERO_KEY", "test_key_not_a_real_one")
+    _, out = _cli(
+        ["--trip-fixture", "trip_b_europe.json", "--balance", "UR=160000",
+         "--card", CSP, "--transfer-date", "2026-09-15"],
+        capsys, lambda *a, **k: _resp([]),
+    )
+    # The harness sets all three; a live run must say they are in effect.
+    assert "POINTS_OPTIMIZER_CACHE_DIR is set" in out

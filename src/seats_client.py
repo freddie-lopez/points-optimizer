@@ -278,7 +278,10 @@ class SeatsSource:
 
 
 _OBSERVED = "Observed in the SFO-MAD capture of 2026-09-08."
-_OBSERVED_TRIP_B = "Observed in the live Trip B run of 2026-09-10."
+_OBSERVED_TRIP_B = (
+    "Reported observed in Tsuki's live Trip B run of 2026-09-10 (recorded in the "
+    "known-failures triage); no capture of that run is in this repo."
+)
 _DOCS = (
     "From Seats.aero's published source table "
     "(developers.seats.aero/reference/concepts-copy, read 2026-09-10). NOT yet "

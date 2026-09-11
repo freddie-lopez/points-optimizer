@@ -7,10 +7,10 @@ Plan: `docs/plans/known-failures.md`. Branch `fix/known-failures` (7 commits on
 
 | | before (master) | after |
 |---|---|---|
-| sandbox, `pytest -q` | 799 passed, 13 skipped | **891 passed, 13 skipped** |
-| sandbox, `python -O -m pytest -q` | same | **891 passed, 13 skipped** |
-| **simulated Mac** (below) | **10 failed, 798 passed, 4 skipped** | **899 passed, 4 skipped** |
-| v5-probes red / green | 19 / 79 (sandbox), **21 / 77 under Mac conditions** | 19 / 79 both |
+| sandbox, `pytest -q` | 799 passed, 13 skipped | **925 passed, 13 skipped** (final) |
+| sandbox, `python -O -m pytest -q` | same | **925 passed, 13 skipped** (final) |
+| **simulated Mac** (below) | **10 failed, 798 passed, 4 skipped** | see "Final state" below |
+| v5-probes red / green | 19 / 79 (sandbox), **21 / 77 under Mac conditions** | 19 / 79 both (final) |
 | adversarial-probes red / green | 40 / 38 | 40 / 38 (same red SET, diffed by id) |
 
 **The simulated Mac reproduces the triage's numbers exactly** - 10 failed, 798
@@ -110,3 +110,24 @@ corpus puts $32.36 of taxes on LHR, below the GBP 102 duty; the Tester agrees an
 added a $224.63 variant that still passes). Tester probes: 98/98 green.
 
 Final state: sandbox 919 passed / 13 skipped (same under `-O`); simulated Mac (v5 folder name, exported key, warm cache, qatar tax-0 corpus) 928 passed / 4 skipped.
+
+## Manager review round (manager-review-known-failures.md: Ship with fixes)
+
+- **Must-fix 1 (Critical, pre-existing):** a flight leg for 2+ travellers is no
+  longer scored - verdict `cash (multi-traveller points not priced)`, reason
+  `PARTY_PRICING_UNVERIFIED` (way ten: counted, `legs_party_pricing_unverified`,
+  printed). Search with `--passengers > 1` prints the per-seat list under a
+  "PRICED FOR ONE SEAT" banner and names no top strategy (and skips `--html`).
+  Real party pricing waits on decision D1.
+- Should-fix done: the certain-cash sentence quotes the post-APD floor and says
+  TAXES when taxes are the unknown; search floors include owed UK APD; README
+  documents the tax rules, the party rule, REPARSED and the env vars; live runs
+  name any `POINTS_OPTIMIZER_*` relocation in effect; the below-duty note states
+  its adult/non-connecting assumption; `PYTHONUSERBASE` is pinned to the real
+  user base before HOME moves; the "observed in Trip B" notes say where that
+  claim comes from; the v5 probe corpus was repaired (v5-probes back to master's
+  19-red set).
+- Not done here: committing Tsuki's real corpus (must happen on his Mac); the
+  `last_search_awards` side channel stays (documented).
+- Two Tester probes (`test_kf_retest.py::test_the_below_duty_rule_is_per_passenger_on_a_two_traveller_leg`)
+  now error: they score a 2-traveller leg, which Must-fix 1 forbids.

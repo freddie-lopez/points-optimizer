@@ -405,6 +405,37 @@ When a partner exists but **no award price was captured**, the tool reports a
 An empty award search distinguishes "no availability" from "the API was never
 reached". Conflating those is how a tool reports a network failure as fact.
 
+### Tax figures the tool will not believe
+
+A live award's taxes are treated as **UNKNOWN - never $0 -** and the leg is
+reported as a floor plus a break-even instead of a score, when:
+
+- the Seats.aero source is `singapore`, `qatar` or `turkish` (Seats.aero
+  documents "Taxes and surcharges are not available for this mileage program").
+  **KrisFlyer is a direct 1:1 UR partner, so KrisFlyer awards will show a floor,
+  never a POINTS verdict**, until a captured tax figure can be supplied;
+- the figure is exactly 0 on an available cabin (the payload writes 0 into every
+  cabin it has no data for), missing, negative, or in a currency with no FX rate;
+- the award departs the UK and the figure is **below the UK Air Passenger Duty**
+  for its cabin (the duty belongs inside it). Assumes an adult who is not on an
+  onward connection; the duty's exemptions are not modelled.
+
+When a UK departure's taxes are unknown, the duty is added to the floor (it is
+owed whatever else is), and the break-even is quoted after it.
+
+Flight legs for **2+ travellers** are not scored at all: award prices are per
+seat and party pricing is not modelled yet.
+
+Replays of snapshots captured under an earlier parser print **REPARSED** - the
+same bytes can now give a different answer, by design.
+
+### Test-harness environment variables
+
+`POINTS_OPTIMIZER_ENV_FILE`, `POINTS_OPTIMIZER_CACHE_DIR` and
+`POINTS_OPTIMIZER_SNAPSHOT_DIR` relocate the repo key file, the runtime cache and
+the snapshot archive. The test suite sets them so child processes never touch
+real state. If one is set in your shell, live runs print it in the banner.
+
 ### The PAY CASH sub-states are distinct
 
 Every verdict the code can produce is listed here;
@@ -420,6 +451,7 @@ Every verdict the code can produce is listed here;
 | `cash (surcharge unknown)` | A fundable path exists and cannot be scored, because the carrier surcharge **or the award's taxes** are unknown. Reported with a floor and a break-even, never as $0. The table cell says which (`surch unknown` / `taxes unknown`). |
 | `cash (APD unknown)` | UK Air Passenger Duty is owed on this departure and its amount is unknown, so the points side cannot be scored. |
 | `cash (award unattributed)` | Seats.aero returned awards but named no program the tool can attribute. No claim about partners. |
+| `cash (multi-traveller points not priced)` | A FLIGHT leg for 2+ travellers. Award prices are per seat and party pricing (N x points, N x taxes, N seats open) is not modelled, so the points side is not scored. Price it by hand. |
 | `cash (indirect path not scored)` | The award's program is reachable only indirectly (Chase UR -> British Airways Avios -> combine into Qatar Privilege Club or Finnair Plus). The path and its conditions are printed; it is not scored, and it is not "no points path". |
 | `cash (no live points data)` | Live mode was asked and Seats.aero was not reached, or was reached and could not be read. Says NOTHING about award space. |
 

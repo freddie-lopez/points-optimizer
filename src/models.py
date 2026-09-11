@@ -322,6 +322,9 @@ REASON_CODES = frozenset(
         # apart from SURCHARGE_UNKNOWN so a reader - and the trip counters - can
         # tell a carrier's YQ from government taxes.
         "TAXES_UNKNOWN",
+        # A flight leg for more than one traveller: award prices are per seat and
+        # party pricing is not modelled, so its points options are not scored.
+        "PARTY_PRICING_UNVERIFIED",
         # v3 fix. The trip-level balance ceiling demoted this leg to cash
         # because earlier legs had already spent the shared balance.
         "TRIP_BALANCE_EXHAUSTED",
@@ -2108,6 +2111,9 @@ TRIP_LEVEL_ANSWERS = {
     ),
     "INDIRECT_PATH_UNVERIFIED": TripTreatment(
         COUNTED_AT_TRIP_LEVEL, totals_key="legs_indirect_path_unverified"
+    ),
+    "PARTY_PRICING_UNVERIFIED": TripTreatment(
+        COUNTED_AT_TRIP_LEVEL, totals_key="legs_party_pricing_unverified"
     ),
     "CARRIER_UNKNOWN": TripTreatment(
         DELIBERATELY_LEG_ONLY,

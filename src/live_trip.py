@@ -506,21 +506,8 @@ def taxes_below_owed_uk_duty(leg: Leg, award: Award) -> str:
     """
     if not award.cash_component_known:
         return ""
-    try:
-        from src import apd as apd_module
-
-        rates, bands = _apd_tables()
-        charge = apd_module.apd_for_leg(
-            leg,
-            cabin=award.award_type,
-            travelers=1,
-            on=award.date or leg.date,
-            rates=rates,
-            bands=bands,
-        )
-    except Exception:  # noqa: BLE001 - a table problem is reported by apply_apd
-        return ""
-    if charge is None or not charge.is_known:
+    charge = _uk_duty_charge(leg, award)
+    if charge is None:
         return ""
     duty = float(charge.total_usd)
     figure = float(award.cash_component)
@@ -529,10 +516,40 @@ def taxes_below_owed_uk_duty(leg: Leg, award: Award) -> str:
     return (
         f"Seats.aero reported taxes of ${figure:,.2f} on this award, which departs "
         f"the UK. UK Air Passenger Duty of ${duty:,.2f} per passenger "
-        f"(GBP {charge.rate_gbp:,.2f}) is owed on this ticket and belongs INSIDE "
-        f"that figure, so a figure smaller than the duty is INCOMPLETE. The taxes "
-        f"on this award are UNKNOWN - not ${figure:,.2f}."
+        f"(GBP {charge.rate_gbp:,.2f}) is owed on this ticket for an adult who is "
+        f"not continuing on a connection, and belongs INSIDE that figure - so a "
+        f"figure smaller than the duty is taken as INCOMPLETE. (The duty's "
+        f"exemptions - under-16s in economy, under-2s, onward connections on one "
+        f"ticket - are not modelled.) The taxes on this award are UNKNOWN - not "
+        f"${figure:,.2f}."
     )
+
+
+def _uk_duty_charge(leg, award):
+    """The known per-passenger APD charge for this award's cabin, or None."""
+    try:
+        from src import apd as apd_module
+
+        rates, bands = _apd_tables()
+        charge = apd_module.apd_for_leg(
+            leg,
+            cabin=award.award_type,
+            travelers=1,
+            on=award.date or getattr(leg, "date", None),
+            rates=rates,
+            bands=bands,
+        )
+    except Exception:  # noqa: BLE001 - a table problem is reported by apply_apd
+        return None
+    if charge is None or not charge.is_known:
+        return None
+    return charge
+
+
+def uk_duty_per_passenger_usd(leg, award):
+    """Per-passenger UK APD in USD for this award, or None if not owed / unknown."""
+    charge = _uk_duty_charge(leg, award)
+    return float(charge.total_usd) if charge is not None else None
 
 
 def award_to_candidate(

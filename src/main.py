@@ -573,6 +573,7 @@ def build_live(args, console: Console):
     )
     client = SeatsClient(getattr(args, "api_key", None))
     print_key_banner(console, client.key_resolution)
+    print_relocation_banner(console)
     return client, opts, cache
 
 
@@ -653,6 +654,30 @@ def build_replay(args, console: Console, fixture):
         allow_badge_fallback=bool(getattr(args, "allow_badge_fallback", False)),
     )
     return transport, opts, selection, manifest_hash
+
+
+RELOCATION_VARS = (
+    "POINTS_OPTIMIZER_ENV_FILE",
+    "POINTS_OPTIMIZER_CACHE_DIR",
+    "POINTS_OPTIMIZER_SNAPSHOT_DIR",
+)
+
+
+def print_relocation_banner(console: Console) -> None:
+    """
+    Name every POINTS_OPTIMIZER_* relocation that is in effect. They exist so the
+    test suite can keep children away from real state; set in a user's shell,
+    they silently change which key file a run reads and where it caches and
+    archives - so a run that is affected by one says so.
+    """
+    import os
+
+    for var in RELOCATION_VARS:
+        if os.environ.get(var):
+            console.print(
+                f"[bold yellow]  {var} is set: {os.environ[var]} (overrides the "
+                f"default location for this run)[/bold yellow]"
+            )
 
 
 def print_replay_banner(console: Console, selection, manifest_hash, transport) -> None:
@@ -983,6 +1008,18 @@ def run_search(args, console: Console) -> int:
         style = "red" if "INCOMPLETE" in note else "dim"
         console.print(f"[{style}]Seats.aero result coverage: {note}[/{style}]")
 
+    if int(args.passengers or 1) > 1 and results:
+        # Every price below is for ONE seat. Ranking and summarising them as the
+        # answer for a party would repeat the multi-traveller false win.
+        console.print(
+            f"\n[bold yellow]PRICED FOR ONE SEAT. You asked for {args.passengers} "
+            f"passengers; multi-traveller award pricing is not modelled (points, "
+            f"taxes and seat availability are all per seat here). The list below "
+            f"is per-seat information, NOT a recommendation for the party, and no "
+            f"top strategy is named.[/bold yellow]"
+        )
+        print_strategies(results, args.valuation_cpp, console)
+        return 0
     print_strategies(results, args.valuation_cpp, console)
     print_summary(results, human_cost=args.human_cost, console=console)
 
