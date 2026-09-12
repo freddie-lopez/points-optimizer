@@ -33,6 +33,29 @@ def _finite_amount(value, what: str) -> float:
         raise TripFixtureError(str(e)) from e
 
 
+def _price(value, what: str) -> float:
+    """A money amount that is being read AS A PRICE - R5-1. Same boundary, same
+    words as the builder: zero is silence, a negative fare is a broken figure,
+    and a boolean is not a dollar."""
+    from src import config
+
+    try:
+        return config.scoreable_price(value, what)
+    except config.UnscoreableNumber as e:
+        raise TripFixtureError(str(e)) from e
+
+
+def _points(value, what: str) -> int:
+    """An award price in points - R5-2. Refused here rather than dropped
+    silently, because a dropped one comes out as "none - not a partner"."""
+    from src import config
+
+    try:
+        return config.scoreable_points(value, what)
+    except config.UnscoreableNumber as e:
+        raise TripFixtureError(str(e)) from e
+
+
 def _count(value, what: str, default: int = 0) -> int:
     """
     A whole-number field that reaches arithmetic - a points price, a night
@@ -232,6 +255,15 @@ def load_trip_fixture(path: Path) -> TripFixture:
             data = json.load(f)
     except json.JSONDecodeError as e:
         raise TripFixtureError(f"{path.name} is not valid JSON: {e}") from e
+    except RecursionError as e:
+        # R5-4: `json.loads` recurses per level of nesting, so a deeply nested
+        # document exhausts the stack before any of this module's rules run.
+        # A malformed FILE is a load refusal like any other - not a traceback
+        # from the CLI and not a 500 from the UI.
+        raise TripFixtureError(
+            f"{path.name} is nested too deeply to read: the file has more levels "
+            f"of nesting than this tool can walk. It is not a trip fixture."
+        ) from e
     except UnicodeDecodeError as e:
         raise TripFixtureError(f"{path.name} is not UTF-8 text: {e}") from e
     except IsADirectoryError as e:
@@ -268,6 +300,10 @@ def load_trip_fixture(path: Path) -> TripFixture:
         ) from e
     except (TypeError, ValueError, AttributeError) as e:
         raise TripFixtureError(f"{path.name}: {e}") from e
+    except RecursionError as e:
+        raise TripFixtureError(
+            f"{path.name} is nested too deeply to read; it is not a trip fixture."
+        ) from e
 
 
 def _build_trip_fixture(data: dict) -> TripFixture:
@@ -281,7 +317,7 @@ def _build_trip_fixture(data: dict) -> TripFixture:
         cash_options = [
             CashOption(
                 label=c["label"],
-                amount=_finite_amount(c["amount"], f"leg {raw.get('id')!r} cash option amount"),
+                amount=_price(c["amount"], f"leg {raw.get('id')!r} cash option amount"),
                 currency=_currency(c.get("currency", "USD"), f"leg {raw.get('id')!r} cash option currency"),
                 notes=c.get("notes", ""),
                 unavoidable_cash_note=c.get("unavoidable_cash_note", ""),
@@ -299,7 +335,11 @@ def _build_trip_fixture(data: dict) -> TripFixture:
             PointsCandidate(
                 label=p["label"],
                 program=p["program"],
-                points=_count(p.get("points"), f"leg {raw.get('id')!r} points"),
+                points=(
+                    _points(p["points"], f"leg {raw.get('id')!r} points")
+                    if p.get("points") is not None
+                    else 0
+                ),
                 cash_surcharge=_finite_amount(
                     p.get("cash_surcharge", 0.0), f"leg {raw.get('id')!r} cash_surcharge"
                 ),
@@ -325,8 +365,8 @@ def _build_trip_fixture(data: dict) -> TripFixture:
                 # `cash_surcharge: 0.0` with no flag is silence, not a real zero.
                 surcharge_captured=bool(p.get("surcharge_captured", False)),
                 points_per_night=(
-                    _count(p["points_per_night"],
-                           f"leg {raw.get('id')!r} points_per_night")
+                    _points(p["points_per_night"],
+                            f"leg {raw.get('id')!r} points_per_night")
                     if p.get("points_per_night") is not None
                     else None
                 ),

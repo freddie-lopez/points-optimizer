@@ -1614,14 +1614,16 @@ def main(args=None, console: Optional[Console] = None, sink=None) -> int:
         kind = "key" if str(e).startswith("No Seats.aero API key found") else "value"
         _refuse(console, sink, 1, kind, f"[red]Error: {e}[/red]")
         return 1
-    except ArithmeticError as e:
+    except (ArithmeticError, RecursionError) as e:
         # THE BACKSTOP, and the reason this family can be closed rather than
         # patched again. Every number from outside is bounded where it enters
         # and every conversion the scorer performs refuses instead of raising
         # (see config's boundary comment) - but an overflow down a path nobody
         # has enumerated must still reach the reader as one line and exit 1,
         # never as a traceback and never as a 500 from the UI. ArithmeticError
-        # covers OverflowError and ZeroDivisionError alike.
+        # covers OverflowError and ZeroDivisionError alike; R5-4 widened it to
+        # RecursionError, which is the stack overflowing rather than a number,
+        # and which a 400-level-deep JSON document produces inside json.loads.
         _refuse(
             console, sink, 1, "value",
             f"[red]Error: this run could not be scored: {type(e).__name__}: "

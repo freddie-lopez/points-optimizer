@@ -77,7 +77,13 @@ class Wallet:
         lines = []
         for cur in sorted(self.balances):
             bal = self.balances[cur]
-            shown = "UNCONSTRAINED (balance not supplied)" if bal is None else f"{bal:,}"
+            from src import config
+
+            shown = (
+                "UNCONSTRAINED (balance not supplied)" if bal is None
+                else config.short_number(bal) if len(str(abs(bal))) > 30
+                else f"{bal:,}"
+            )
             cpp = self.valuation_of(cur)
             lines.append(f"  {cur}: {shown}   valued at {cpp * 100:.2f} cents/point")
         lines.append(f"  cards: {', '.join(self.cards) if self.cards else '(none supplied)'}")
@@ -194,12 +200,12 @@ def load_wallet(path: Path) -> Wallet:
         elif isinstance(val, bool):
             raise WalletError(f"Balance for {cur!r} must be a number or null.")
         elif isinstance(val, (int, float)):
+            from src import config
+
             try:
-                balances[str(cur)] = int(val)
+                balances[str(cur)] = config.scoreable_count(val, f"balance for {cur!r}")
             except (ValueError, OverflowError) as e:
-                raise WalletError(
-                    f"Balance for {cur!r} is not a number this tool can hold: {e}"
-                ) from e
+                raise WalletError(str(e)) from e
         else:
             raise WalletError(
                 f"Balance for {cur!r} must be a number or null, got {val!r}."
@@ -252,11 +258,23 @@ def wallet_from_flags(
         if amount == "":
             balances[cur] = None
             continue
+        # R5-3: a balance is an outside number like any other, and it is the
+        # one path `short_number` did not cover - `--balance UR=<401 digits>`
+        # printed 914 digits across the banner and the residue table. Same
+        # boundary, same shortening, same words.
+        from src import config
+
+        text = amount.replace(",", "").replace("_", "")
         try:
-            balances[cur] = int(amount.replace(",", "").replace("_", ""))
-        except ValueError:
+            balances[cur] = config.scoreable_count(
+                int(text), f"--balance {cur}"
+            )
+        except ValueError as e:
+            if isinstance(e, config.UnscoreableNumber):
+                raise WalletError(str(e)) from None
             raise WalletError(
-                f"--balance {raw!r}: {amount!r} is not a whole number of points."
+                f"--balance {raw!r}: {config.short_number(amount)} is not a "
+                f"whole number of points."
             ) from None
 
     valuation_cpp: Dict[str, float] = {}

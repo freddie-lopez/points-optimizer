@@ -9,9 +9,18 @@ was found by the Tester rather than by the suite.
 What has to hold is:
 
     NO NUMBER FROM OUTSIDE THIS PROCESS - a trip fixture, a Seats.aero
-    response, a snapshot, a wallet - CAN MAKE A RUN CRASH. Whatever it is,
+    response, a snapshot, a wallet - CAN MAKE A RUN CRASH, BE SCORED AS
+    SOMETHING IT IS NOT, OR REACH A PRINTED LINE UNREADABLE. Whatever it is,
     whatever it multiplies with, whatever currency it is in, the run either
-    scores or refuses in one line.
+    scores it or refuses in one line - and what is refused when the tool WRITES
+    a figure is refused when it READS one.
+
+Round 5 extended it rather than adding a second set of checks: the same
+boundary now carries the builder's own rule about what is not a price (zero,
+negative, a boolean, a figure that renders as $0.00), the rule that an award
+price of zero or less is refused instead of being dropped into a claim about
+partnerships, the wallet, and RecursionError - the stack overflowing rather
+than a number.
 
 That is what this file asserts, in four ways that do not depend on anybody
 having enumerated the arithmetic:
@@ -53,6 +62,10 @@ HOSTILE = [
     -(10 ** 400),
     0,
     -1,
+    -0.0,            # R5-1: negative zero printed as $-0.00
+    -50.0,           # R5-1: a negative fare fed the trip totals
+    1e-320,          # R5-1: a denormal that renders as $0.00
+    True,            # R5-1: a boolean scored as a dollar
 ]
 CURRENCIES = ["USD", "EUR", "GBP", "CAD"]
 ARGV_TAIL = ["--offline", "--balance", "UR=160000", "--card",
@@ -274,3 +287,159 @@ def test_the_cli_process_really_prints_one_line_and_no_traceback(tmp_path):
     assert proc.returncode == 1
     assert "Traceback" not in proc.stdout + proc.stderr
     assert len(proc.stdout.strip().splitlines()) <= 3, proc.stdout
+
+
+# =========================================================== the same boundary,
+# extended in round 5: what is refused at write is refused at read, nothing an
+# outside number can be reaches a printed line unreadable, and a malformed file
+# is a refusal rather than a traceback.
+
+
+NOT_A_PRICE = [0, -0.0, -50.0, True, 1e-320, "abc", None, float("nan")]
+IS_A_PRICE = [2400.0, 0.01, 367.0, 1e6]
+
+
+@pytest.mark.parametrize("value", NOT_A_PRICE + IS_A_PRICE)
+def test_what_the_builder_refuses_to_write_the_loader_refuses_to_read(value, tmp_path):
+    """R5-1's property, both directions. The builder's rule and the loader's
+    rule are the same function, so they cannot drift apart again."""
+    from src import trip_builder
+    from src.trip_loader import TripFixtureError, load_trip_fixture
+
+    write_reason = ""
+    try:
+        trip_builder.validate_cash(value, "--leg CASH_USD")
+        written_ok = True
+    except trip_builder.TripBuilderError as e:
+        written_ok, write_reason = False, str(e)
+
+    path = mutated(tmp_path, "trip_a_mry_nyc.json",
+                   next(p for p in numeric_paths(json.loads(
+                       (TRIPS / "trip_a_mry_nyc.json").read_text())) if p[-1] == "amount"),
+                   value, "USD")
+    read_reason = ""
+    try:
+        load_trip_fixture(path)
+        read_ok = True
+    except TripFixtureError as e:
+        read_ok, read_reason = False, str(e)
+
+    assert written_ok == read_ok, (
+        f"{value!r}: the builder {'accepts' if written_ok else 'refuses'} it and "
+        f"the loader {'accepts' if read_ok else 'refuses'} it")
+    if not written_ok:
+        # ... and in the same words, because it is the same rule: the sentence
+        # the shared rule produces appears verbatim in both messages.
+        rule = config.unscoreable_price_reason(
+            value.strip() if isinstance(value, str) else value)
+        assert rule, value
+        assert rule in write_reason, (rule, write_reason)
+        assert rule in read_reason, (rule, read_reason)
+
+
+@pytest.mark.parametrize("points", [0, -1, -42600, False])
+def test_an_award_price_that_is_not_a_price_never_becomes_a_partnership_claim(points, tmp_path):
+    """R5-2: it used to be dropped silently, and the leg then said "none - not a
+    partner" - a claim about transfer partnerships that nothing checked, on a
+    leg whose own file names a program."""
+    path = mutated(tmp_path, "trip_a_mry_nyc.json",
+                   next(p for p in numeric_paths(json.loads(
+                       (TRIPS / "trip_a_mry_nyc.json").read_text())) if p[-1] == "points"),
+                   points, "USD")
+    code, text = run_cli(path)
+    # The refusal EXPLAINS the claim it is preventing, so the phrase is looked
+    # for where it would be a claim: a cell in the per-leg table.
+    rows = [l for l in text.splitlines() if l.startswith("\u2502 A1")]
+    assert not any("not a partner" in r for r in rows), rows
+    assert code == 1 and "Error" in text
+
+
+def _digit_runs(text):
+    import re
+
+    return [m.group(0) for m in re.finditer(r"\d[\d,]{30,}", text.replace(" ", ""))]
+
+
+@pytest.mark.parametrize("balance", ["UR=" + "1" * 401, "UR=" + str(10 ** 400)])
+def test_no_wallet_number_reaches_a_printed_line_unshortened(balance, tmp_path):
+    """R5-3: the wallet was the one outside-number path short_number did not
+    cover, and it is printed twice - the banner and the residue table."""
+    from src import main as cli
+
+    buf = io.StringIO()
+    argv = ["--trip-fixture", str(TRIPS / "trip_a_mry_nyc.json"), "--offline",
+            "--balance", balance, "--card", "Chase Sapphire Preferred",
+            "--transfer-date", "2026-09-15"]
+    code = cli.dispatch(cli.build_parser().parse_args(argv), Console(file=buf, width=190), [])
+    out = buf.getvalue()
+    assert code in (1, 2), out[-300:]
+    assert _digit_runs(out) == [], "an unreadable number reached the screen"
+    assert "Traceback" not in out
+
+
+@pytest.mark.parametrize("source,path,value,currency",
+                         [c for c in CASES if c[2] in (10 ** 400, -(10 ** 400))][:40])
+def test_no_fixture_number_reaches_a_printed_line_unshortened(source, path, value,
+                                                              currency, tmp_path):
+    _, text = run_cli(mutated(tmp_path, source, path, value, currency))
+    assert _digit_runs(text) == [], text[-300:]
+
+
+def _malformed(tmp_path):
+    """Files that are not trip fixtures, in ways that are not about numbers."""
+    import sys as _sys
+
+    out = {}
+    deep = {"id": "deep", "legs": []}
+    node = deep
+    for _ in range(400):
+        node["notes"] = [{"deeper": {}}]
+        node = node["notes"][0]["deeper"]
+    limit = _sys.getrecursionlimit()
+    _sys.setrecursionlimit(20000)
+    try:
+        out["deeply_nested"] = json.dumps(deep)
+    finally:
+        _sys.setrecursionlimit(limit)
+    out["top_level_list"] = "[1, 2, 3]"
+    out["top_level_number"] = "42"
+    out["legs_is_a_string"] = json.dumps({"id": "x", "legs": "nope"})
+    out["leg_is_a_number"] = json.dumps({"id": "x", "legs": [7]})
+    out["truncated"] = '{"id": "x", "legs": ['
+    out["empty"] = ""
+    paths = {}
+    for name, text in out.items():
+        p = tmp_path / (name + ".json")
+        p.write_text(text)
+        paths[name] = p
+    return paths
+
+
+MALFORMED = sorted(_malformed(Path(__import__("tempfile").mkdtemp())))
+
+
+@pytest.mark.parametrize("name", MALFORMED)
+def test_a_malformed_file_is_one_line_not_a_traceback(name, tmp_path):
+    """R5-4 as a property: a file this tool cannot read is a refusal, whatever
+    is wrong with it. RecursionError is a RuntimeError, which is why the number
+    backstop did not cover the deeply nested one."""
+    code, text = run_cli(_malformed(tmp_path)[name])
+    assert code == 1, (code, text[-300:])
+    assert "Traceback" not in text
+    assert "Error" in text
+
+
+@pytest.mark.parametrize("name", MALFORMED)
+def test_a_malformed_file_is_a_cannot_load_row_not_a_500(name, tmp_path):
+    trips = tmp_path / "trips"
+    trips.mkdir()
+    (trips / (name + ".json")).write_bytes(_malformed(tmp_path)[name].read_bytes())
+    with running_server(trips_dir=trips) as c:
+        listing = c.get("/api/trips")
+        assert listing.status == 200, listing.text[:200]
+        (row,) = listing.json()
+        assert row["load_error"], row
+        assert "Traceback" not in row["load_error"]
+        assert c.get("/api/trips/" + name).status == 422
+        run = c.post("/api/trips/" + name + "/run", {"mode": "offline", "options": {}})
+    assert run.status == 200 and run.json()["exit_code"] == 1

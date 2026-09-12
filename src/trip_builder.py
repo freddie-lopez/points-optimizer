@@ -162,32 +162,26 @@ def validate_date(value: str, flag: str, today: Optional[date] = None) -> date:
     return parsed
 
 
-def validate_cash(value: str, flag: str) -> float:
-    # M-1: refused HERE, before anything is written, and by the same rule the
-    # loader applies - so a fixture this builder writes can always be scored.
+def validate_cash(value, flag: str) -> float:
+    """
+    A cash price the builder may write.
+
+    M-1 and R5-1: the rule is `config.unscoreable_price_reason`, which is the
+    same rule the LOADER applies - so what this refuses to write it refuses to
+    read, in the same words. There is no conversion of its own here: `str(value
+    or "")` mapped `0` and `False` to the empty string and reported them as "not
+    a number", which is the boundary being bypassed on the write side.
+    """
     from src import config
 
-    text = str(value or "").strip()
-    try:
-        amount = float(text)
-    except ValueError:
+    raw = value.strip() if isinstance(value, str) else value
+    reason = config.unscoreable_price_reason(raw)
+    if reason:
         raise TripBuilderError(
-            f"{flag}: {config.short_number(value)} is not a number. A cash price "
-            f"is the one figure this builder writes and it is not being guessed."
-        ) from None
-    unscoreable = config.unscoreable_cash_reason(amount)
-    if unscoreable:
-        raise TripBuilderError(
-            f"{flag}: {unscoreable} Refused rather than written into a fixture "
-            f"that every later run would crash on."
+            f"{flag}: {reason} A cash price is the one figure this builder "
+            f"writes, and it is not being guessed."
         )
-    if amount <= 0:
-        raise TripBuilderError(
-            f"{flag}: a cash price of {amount} is refused. Zero is not a price - "
-            f"it is silence, and this project has confused the two before. Omit "
-            f"the leg, or capture the real fare."
-        )
-    return amount
+    return float(raw)
 
 
 def validate_travelers(value) -> int:

@@ -297,12 +297,85 @@ class UnscoreableNumber(ValueError):
 # ---------------------------------------------------------------------------
 
 
+def unscoreable_price_reason(amount, cpp: float = CASH_VALUATION_CPP) -> str:
+    """
+    Why this amount is not a PRICE, or "".
+
+    FINDING R5-1. `trip_builder.validate_cash` refused zero and negatives in the
+    project's own words - "Zero is not a price, it is silence, and this project
+    has confused the two before" - and the LOADER had no such rule, so a
+    hand-edited fixture carrying `0`, `-0.0`, `-50.0`, `true` or `1e-320` was
+    SCORED on the figure: `$0.00` and `Cash is cheaper: $0.00 vs at least
+    $430.00`, a boolean rendered as a dollar, a fare that prints as zero. The
+    overflow boundary made the top of the number line safe; this is the bottom
+    of it, and the bottom is where this project's own failure mode lives.
+
+    The rule lives here rather than in the builder so that BOTH surfaces get it
+    in the same words: what is refused at write is refused at load.
+
+    A price is not the same thing as an amount. A $0.00 carrier surcharge is a
+    real, meaningful figure this codebase insists on printing; a $0.00 fare is
+    silence. So `unscoreable_cash_reason` still accepts zero, and only the
+    fields that are PRICES go through this.
+    """
+    base = unscoreable_cash_reason(amount, cpp)
+    if base:
+        return base
+    value = float(amount)
+    if value < 0:
+        return (
+            f"a cash price of {short_number(value)} is refused. A negative fare is "
+            f"not a discount - it is a broken figure, and it would feed the "
+            f"trip totals as one."
+        )
+    # `1e-320` is positive and renders as $0.00. Rounding to the cent is what
+    # the reader is shown, so that is what the rule is on.
+    if round(value, 2) == 0:
+        return (
+            f"a cash price of {short_number(value)} is refused. Zero is not a "
+            f"price "
+            f"- it is silence, and this project has confused the two before. "
+            f"Omit the leg, or capture the real fare."
+        )
+    return ""
+
+
 def scoreable_amount(value, what: str, cpp: float = CASH_VALUATION_CPP) -> float:
     """A money figure from outside, as a float this tool can score, or raise."""
     reason = unscoreable_cash_reason(value, cpp)
     if reason:
         raise UnscoreableNumber(f"{what}: {reason}")
     return float(value)
+
+
+def scoreable_price(value, what: str, cpp: float = CASH_VALUATION_CPP) -> float:
+    """A money figure that is being read AS A PRICE - a fare, a nightly rate."""
+    reason = unscoreable_price_reason(value, cpp)
+    if reason:
+        raise UnscoreableNumber(f"{what}: {reason}")
+    return float(value)
+
+
+def scoreable_points(value, what: str, cpp: float = CASH_VALUATION_CPP) -> int:
+    """
+    An award price in points, stated by a file or an API.
+
+    FINDING R5-2. A points price of `0` or `-42600` passed the count boundary
+    (both are finite and round-trip), was then dropped silently by the scorer,
+    and the leg reported "none - not a partner" - a claim about transfer
+    partnerships that nothing checked, on a leg whose own file names a program.
+    That is F-1's shape reached from another direction, so the value is refused
+    where it enters instead of being dropped where nobody can see it.
+    """
+    count = scoreable_count(value, what, cpp)
+    if count <= 0:
+        raise UnscoreableNumber(
+            f"{what}: an award price of {short_number(count)} is refused. It is "
+            f"not a price, and a silently dropped one makes the leg report "
+            f"\"none - not a partner\" - a claim about partnerships that "
+            f"nothing checked."
+        )
+    return count
 
 
 def scoreable_count(value, what: str, cpp: float = CASH_VALUATION_CPP) -> int:
@@ -384,6 +457,10 @@ def unscoreable_cash_reason(amount, cpp: float = CASH_VALUATION_CPP) -> str:
     import json as _json
     import math as _math
 
+    if isinstance(amount, bool):
+        # R5-1: `true` was read as $1.00. A boolean is not a dollar figure, and
+        # the count path has always said so.
+        return f"{amount!r} is not a number."
     try:
         value = float(amount)
     except (TypeError, ValueError):
