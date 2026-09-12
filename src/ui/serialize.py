@@ -127,7 +127,6 @@ def trip_run(out: Dict[str, Any], mode: str, trip_id: str, calls: Dict[str, int]
         "calls": {
             "this_run": _calls_this_run(mode, run, out),
             "since_launch": calls["since_launch"],
-            "spent_today": calls["spent_today"],
             "cap": calls["cap"],
         },
     }
@@ -622,8 +621,7 @@ def search_run(out: Dict[str, Any], req: Dict[str, Any], calls: Dict[str, int]) 
                   "from": req["from"], "to": req["to"]},
         "passengers": 1,
         "calls": {"this_run": {"search": int(out["calls_spent"]), "trips": 0},
-                  "since_launch": calls["since_launch"],
-                  "spent_today": calls["spent_today"], "cap": calls["cap"]},
+                  "since_launch": calls["since_launch"], "cap": calls["cap"]},
         "rows": [],
     }
     if isinstance(run, RunRefusal) or not isinstance(run, SearchRun):

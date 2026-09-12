@@ -164,6 +164,10 @@ def _handler_for(server: UIServer):
 
         def _send(self, status: int, body: bytes = b"", content_type: str = "",
                   api: bool = False) -> None:
+            # Logged BEFORE the response goes out, not after: a client that has
+            # already read the body would otherwise sometimes look at the log
+            # before this thread had written the line.
+            self._log(status)
             self.send_response(status)
             for name, value in SECURITY_HEADERS:
                 self.send_header(name, value)
@@ -174,7 +178,6 @@ def _handler_for(server: UIServer):
             self.end_headers()
             if body and self.command != "HEAD":
                 self.wfile.write(body)
-            self._log(status)
 
         def _send_text(self, status: int, text: str, content_type: str) -> None:
             if server.contains_key_material(text):
