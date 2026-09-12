@@ -490,3 +490,28 @@ suite inside an unpacked export with an outside interpreter (3,526 / 17 skipped,
 0 failed, no symlink), all 490 Tester probes, the four baseline probe
 directories compared by test id, and Chromium at 1440 px offline and LIVE with
 no page errors.
+
+---
+
+## Round 6 (coordinator's note)
+
+The Coder's session was stopped by Tsuki after it had committed the round-6 work
+but before it wrote up this section, so this note is the coordinator's, not the
+Coder's. What is on the branch:
+
+- `12076b1` **Fix R6-1 and R6-2: negative money, and a table that adds up.**
+- `a8918b5` **The README's Local UI section says what the app now does.**
+
+What I verified myself at `a8918b5`, rather than taking on trust:
+
+- Full suite: **3,568 passed / 13 skipped**, and the same under `-O`.
+- Probe red sets, by test id: v5 **19**, adversarial **40**, known-failures **0**
+  — each identical to the saved baseline; operating-airline **5**, which is
+  exactly the R5-1 / R5-2 pair Tsuki chose to leave open on feature 1.
+- The ui-probes suite and the unpacked-export run are for the Manager to
+  confirm; they were still running when this was written.
+
+Nothing else was added to the round. The two items filed across earlier rounds
+are still open by agreement: the derived Score columns truncate money exactly as
+the pre-UI CLI does, and the CLI's surcharge line still loses `[modeled]` to
+rich. Both need a round in which CLI output is allowed to move.
