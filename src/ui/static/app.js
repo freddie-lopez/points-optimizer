@@ -30,6 +30,8 @@
     runs: {},          // trip id -> [run JSON, newest last]
     runId: null,
     legSel: null,
+    // The testid of the element a drawer was opened from.
+    cameFrom: null,
     busy: false,
     busyStart: 0,
     busyText: "",
@@ -268,12 +270,12 @@
       var id = parts[0] === "trips" && parts[1] ? parts[1] : null;
       var rid = parts[2] === "run" && parts[3] ? parts[3] : null;
       if (id && id !== S.tripId) {
-        S.tripId = id; S.trip = null; S.tripError = null; S.legSel = null;
+        S.tripId = id; S.trip = null; S.tripError = null; S.legSel = null; S.cameFrom = null;
         S.runId = rid;
         loadTrip(id);
       } else {
         S.tripId = id;
-        if (rid !== S.runId) { S.legSel = null; }
+        if (rid !== S.runId) { S.legSel = null; S.cameFrom = null; }
         S.runId = rid;
       }
     }
@@ -624,7 +626,7 @@
       if (res.status === 200) {
         var run = res.body;
         (S.runs[id] = S.runs[id] || []).push(run);
-        S.legSel = null;
+        S.legSel = null; S.cameFrom = null;
         refreshState();
         if (S.tripId === id) { go("#trips/" + id + "/run/" + run.run_id); }
       } else {
@@ -915,7 +917,10 @@
         add(td, cellContent(name, cell, leg));
         add(tr, td);
       });
-      var open = function () { S.legSel = leg.id; renderTrips(); focusDrawer(); };
+      var open = function () {
+        openedFrom("leg-row-" + leg.id);
+        S.legSel = leg.id; renderTrips(); focusDrawer();
+      };
       tr.addEventListener("click", open);
       tr.addEventListener("keydown", function (e) {
         if (e.key !== "Enter" && e.key !== " ") { return; }
@@ -934,6 +939,34 @@
   function focusDrawer() {
     var x = document.querySelector(S.view === "search" ? "#drawer-search .x" : "#drawer-trips .x");
     if (x) { x.focus({ preventScroll: true }); }
+  }
+
+  // Closing re-renders the table, which DESTROYS the element focus came from,
+  // so focus fell to <body> and the reader's place in the table was gone - 18
+  // Tab presses back to the row they were reading. The opener records where it
+  // came from and the closer puts focus back on the rebuilt element. Mouse
+  // users see no ring: :focus-visible does not match a programmatic focus that
+  // follows a click.
+  function openedFrom(testid) { S.cameFrom = testid; }
+  function closeDrawer(render) {
+    var testid = S.cameFrom;
+    S.cameFrom = null;
+    render();
+    if (!testid) { return; }
+    var back = null;
+    var all = document.querySelectorAll("[data-testid]");
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].getAttribute("data-testid") === testid) { back = all[i]; break; }
+    }
+    if (back && back.focus) { back.focus({ preventScroll: true }); }
+  }
+  function closeLegDrawer() {
+    S.legSel = null;
+    closeDrawer(renderTrips);
+  }
+  function closeSearchDrawer() {
+    S.search.sel = null;
+    closeDrawer(renderSearch);
   }
 
   /* ----------------------------------------------------------- leg drawer */
@@ -961,7 +994,7 @@
     add(ttl, el("span", "legid", leg.id + "  "));
     if (leg.origin && leg.destination) { add(ttl, routeEl(leg.origin, leg.destination)); } else { add(ttl, leg.short); }
     add(ttl, "  · " + leg.date);
-    var x = btn("x", "×", function () { S.legSel = null; renderTrips(); });
+    var x = btn("x", "×", closeLegDrawer);
     x.setAttribute("aria-label", "Close detail");
     add(top, ttl, x);
     var chips = el("div", "chips");
@@ -1331,7 +1364,10 @@
         else if (cell.indirect_path) { add(l3, chip("indirect", "INDIRECT")); }
         else { add(l3, chip("notfund", "NOT FUNDABLE")); }
         add(bx, l1, l2, l3); add(td, bx);
-        var open = function () { q.sel = { row: ri, cabin: c }; renderSearch(); focusDrawer(); };
+        var open = function () {
+          openedFrom("cell-" + row.date + "-" + (row.source_code || "none") + "-" + c);
+          q.sel = { row: ri, cabin: c }; renderSearch(); focusDrawer();
+        };
         td.addEventListener("click", open);
         td.addEventListener("keydown", function (e) {
           if (e.key !== "Enter" && e.key !== " ") { return; }
@@ -1359,7 +1395,7 @@
     var ttl = el("div", "ttl");
     add(ttl, routeEl(run.route.origin, run.route.destination), "  · " + row.date + " · " +
       (row.program || "(program not named)") + " · " + q.sel.cabin);
-    var x = btn("x", "×", function () { q.sel = null; renderSearch(); });
+    var x = btn("x", "×", closeSearchDrawer);
     x.setAttribute("aria-label", "Close detail");
     add(top, ttl, x); add(head, top); add(d, head);
 
@@ -1613,8 +1649,8 @@
     if (e.key !== "Escape") { return; }
     if (!$("scrim").hidden) { closeConfirm(); return; }
     if (!$("wallet-scrim").hidden) { closeWallet(); return; }
-    if (S.view === "search" && S.search.sel) { S.search.sel = null; renderSearch(); return; }
-    if (S.legSel) { S.legSel = null; renderTrips(); }
+    if (S.view === "search" && S.search.sel) { closeSearchDrawer(); return; }
+    if (S.legSel) { closeLegDrawer(); }
   });
   $("scrim").addEventListener("click", function (e) { if (e.target === $("scrim")) { closeConfirm(); } });
   $("wallet-scrim").addEventListener("click", function (e) { if (e.target === $("wallet-scrim")) { closeWallet(); } });
