@@ -177,14 +177,50 @@ def validate_wallet(
 
 
 def load_wallet(path: Path) -> Wallet:
-    """Load a wallet from JSON. See data/wallet.example.json for the shape."""
+    """
+    Load a wallet from JSON. See data/wallet.example.json for the shape.
+
+    MAC-2: the wallet is the second file this tool reads from outside, and it
+    had the same problem the trip fixture had - a deeply nested one raised
+    RecursionError out of `json.loads`, which the CLI turned into "this run
+    could not be scored: RecursionError" and the UI's wallet panel did not catch
+    at all, on an interpreter with a small stack, and loaded perfectly well on
+    one with a large stack. So it comes through `config`'s shape boundary, the
+    same one the fixture loader uses, and the answer no longer depends on which
+    Python is reading it. The wallet's own shape is three levels deep
+    (document / `balances` / a value), so the shared limits are far above
+    anything real.
+    """
+    path = Path(path)
     try:
-        with open(path, "r") as f:
-            data = json.load(f)
+        size = path.stat().st_size
+    except OSError:
+        # Reported by the read below, which already has a clause for it.
+        size = 0
+    if size > config.MAX_INPUT_FILE_BYTES:
+        raise WalletError(
+            "Wallet file " + config.too_large_reason(str(path), size)
+        )
+    try:
+        # UTF-8 by NAME, not by locale: which bytes are a wallet is a rule, and
+        # the same file must read the same way on every machine.
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as e:
+        raise WalletError(f"Wallet file {path} is not UTF-8 text: {e}") from e
     except OSError as e:
         raise WalletError(f"Could not read wallet file {path}: {e}") from e
+    depth = config.json_nesting_depth(text)
+    if depth > config.MAX_JSON_NESTING_DEPTH:
+        raise WalletError("Wallet file " + config.too_deeply_nested_reason(str(path), depth))
+    try:
+        data = json.loads(text)
     except json.JSONDecodeError as e:
         raise WalletError(f"Wallet file {path} is not valid JSON: {e}") from e
+    except RecursionError as e:
+        # The backstop, with the same sentence the rule above would have given.
+        raise WalletError(
+            "Wallet file " + config.too_deeply_nested_reason(str(path), depth)
+        ) from e
 
     if not isinstance(data, dict):
         raise WalletError(f"Wallet file {path} must contain a JSON object.")
@@ -200,8 +236,6 @@ def load_wallet(path: Path) -> Wallet:
         elif isinstance(val, bool):
             raise WalletError(f"Balance for {cur!r} must be a number or null.")
         elif isinstance(val, (int, float)):
-            from src import config
-
             try:
                 balances[str(cur)] = config.scoreable_count(val, f"balance for {cur!r}")
             except (ValueError, OverflowError) as e:

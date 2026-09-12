@@ -33,14 +33,15 @@ import sys
 
 import pytest
 
-from src import trip_loader
+from src import config, trip_loader
+from src.config import json_nesting_depth
 from src.trip_loader import (
     MAX_FILE_BYTES,
     MAX_NESTING_DEPTH,
     TripFixtureError,
-    json_nesting_depth,
     load_trip_fixture,
 )
+from src.wallet import WalletError, load_wallet
 from tests._ui_harness import running_server
 from tests.test_no_external_number_can_crash_a_run import ROOT, TRIPS, run_cli
 
@@ -135,8 +136,7 @@ def test_the_refusal_is_the_same_at_every_recursion_limit(tmp_path, limit):
         sys.setrecursionlimit(was)
     assert str(refused.value) == (
         f"probe.json is nested {json_nesting_depth(path.read_text())} levels "
-        f"deep, and a trip fixture may be at most {MAX_NESTING_DEPTH}. It is "
-        f"not a trip fixture."
+        f"deep, and may be at most {MAX_NESTING_DEPTH}. It is not a trip fixture."
     )
 
 
@@ -231,8 +231,58 @@ def test_the_limits_are_named_constants_a_reader_can_find():
     being module constants, it is back to being an accident."""
     assert isinstance(MAX_NESTING_DEPTH, int) and MAX_NESTING_DEPTH >= 16
     assert isinstance(MAX_FILE_BYTES, int) and MAX_FILE_BYTES >= 1024 * 1024
+    assert MAX_NESTING_DEPTH == config.MAX_JSON_NESTING_DEPTH
+    assert MAX_FILE_BYTES == config.MAX_INPUT_FILE_BYTES
     source = (ROOT / "src" / "trip_loader.py").read_text()
     assert "MAX_NESTING_DEPTH = " in source and "MAX_FILE_BYTES = " in source
     # And the reasoning for each is beside it, not in a commit message.
     assert "NUMBER OF LEGS" in source and "deliberately NOT limited" in source
-    assert trip_loader.json_nesting_depth.__doc__
+    assert config.json_nesting_depth.__doc__
+    assert trip_loader.load_trip_fixture.__doc__
+
+
+# ------------------------------------------------- the other file read from
+# outside: the wallet had the same accident
+
+
+def test_a_deeply_nested_wallet_is_refused_by_the_rule_not_by_the_stack(tmp_path):
+    """
+    `--wallet` is the second file this tool reads from outside. Before MAC-2 a
+    deeply nested one raised RecursionError out of `json.loads` - which the CLI
+    reported as "this run could not be scored" and the UI's wallet panel did not
+    catch at all - on a small stack, and LOADED on a large one.
+    """
+    deep = {"balances": {"UR": 1}}
+    node = deep
+    for _ in range(READABLE_BUT_TOO_DEEP):
+        node["x"] = {}
+        node = node["x"]
+    path = tmp_path / "wallet.json"
+    path.write_text(dumps(deep))
+    messages = set()
+    for limit in (1000, 20000):
+        was = sys.getrecursionlimit()
+        sys.setrecursionlimit(limit)
+        try:
+            with pytest.raises(WalletError) as refused:
+                load_wallet(path)
+        finally:
+            sys.setrecursionlimit(was)
+        messages.add(str(refused.value))
+    assert len(messages) == 1, messages
+    assert "and may be at most 32." in messages.pop()
+
+
+def test_an_ordinary_wallet_still_loads(tmp_path):
+    path = tmp_path / "wallet.json"
+    path.write_text(json.dumps(
+        {"balances": {"UR": 160000}, "cards": ["Chase Sapphire Preferred"]}
+    ))
+    assert load_wallet(path).balances == {"UR": 160000}
+
+
+def test_a_wallet_that_is_not_utf8_is_a_refusal_not_a_locale_accident(tmp_path):
+    path = tmp_path / "wallet.json"
+    path.write_bytes(b'{"balances": {"UR\xff": 1}}')
+    with pytest.raises(WalletError, match="not UTF-8 text"):
+        load_wallet(path)

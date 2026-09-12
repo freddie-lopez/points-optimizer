@@ -5,6 +5,7 @@ Everything here is a named, single-source-of-truth constant. Nothing in this
 module should be duplicated as a magic number elsewhere in the codebase.
 """
 import os
+import re
 from datetime import date
 from pathlib import Path
 from typing import Dict, Optional
@@ -560,6 +561,69 @@ def points_to_cash_equivalent(points: int, cpp: float = CASH_VALUATION_CPP) -> f
         f"the cash-equivalent of {short_number(points)} points",
         f"{short_number(points)} points at {cpp * 100:.2f} cents per point",
     )
+
+
+# ---------------------------------------------------------------------------
+# THE SAME BOUNDARY, FOR SHAPE - MAC-2
+#
+# The section above says what a NUMBER from outside may be. This one says what
+# a FILE from outside may be shaped like, for the same reason and in the same
+# place: so the answer is a rule somebody wrote down, not whatever the
+# interpreter happens to do with its stack.
+#
+# `json.loads` recurses once per level of nesting, so a deeply nested document
+# raises RecursionError - on some interpreters. The same 400-level file is
+# refused in this sandbox and READ on Tsuki's macOS Python, whose scanner gets
+# further before the limit bites, which is how the suite came to pass on one
+# machine and fail on the other. Depth is checked here instead, before anything
+# parses, by SCANNING the text: the scan uses no stack of its own, so its answer
+# is a fact about the file.
+#
+# The limits are bounds, not ceilings anyone will meet. See each loader for what
+# its own shape actually measures (`trip_loader.MAX_NESTING_DEPTH`), and for why
+# counts inside the file - legs, keys - are deliberately not limited.
+# ---------------------------------------------------------------------------
+
+MAX_JSON_NESTING_DEPTH = 32
+MAX_INPUT_FILE_BYTES = 4 * 1024 * 1024
+
+# A JSON string literal, so quoted text cannot contribute brackets to the count.
+_JSON_STRING = re.compile(r'"(?:[^"\\]|\\.)*"', re.DOTALL)
+_NOT_A_BRACKET = re.compile(r"[^\[\]{}]+")
+
+
+def json_nesting_depth(text: str) -> int:
+    """
+    The deepest level of `[`/`{` nesting in this JSON text, counted WITHOUT
+    parsing it and WITHOUT recursing.
+
+    Brackets inside string literals are not nesting, so the literals are removed
+    first; everything that is not a bracket is then dropped, and what is left is
+    short enough to walk in Python whatever the file's size. Unbalanced text is
+    not this function's problem - it returns the deepest level it saw, and the
+    parser refuses the file for its own reasons afterwards.
+    """
+    brackets = _NOT_A_BRACKET.sub("", _JSON_STRING.sub("", text))
+    depth = deepest = 0
+    for ch in brackets:
+        if ch in "[{":
+            depth += 1
+            if depth > deepest:
+                deepest = depth
+        else:
+            depth -= 1
+    return deepest
+
+
+def too_deeply_nested_reason(what: str, depth: int, limit: int = MAX_JSON_NESTING_DEPTH) -> str:
+    """The ONE sentence a too-deeply-nested file gets, on every platform,
+    whether the rule caught it or a RecursionError backstop did."""
+    return f"{what} is nested {depth} levels deep, and may be at most {limit}."
+
+
+def too_large_reason(what: str, size: int, limit: int = MAX_INPUT_FILE_BYTES) -> str:
+    """The same, for a file too large to hold in memory to read."""
+    return f"{what} is {size:,} bytes, and may be at most {limit:,}."
 
 
 # ---------------------------------------------------------------------------
