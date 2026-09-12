@@ -34,6 +34,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from src import config, response_cache, seats_trips
+from src.formatter import print_copyable
 from src.models import DateRange, MetalStatus
 
 ROOT = Path(__file__).parent.parent
@@ -485,8 +486,8 @@ def run_capture(
     cap.raw_path = cap.path.with_suffix(".raw.txt")
     cap.path.write_text(text + "\n")
     cap.raw_path.write_text(raw_text)
-    console.print(f"[green]wrote {cap.path}[/green]")
-    console.print(f"[green]wrote {cap.raw_path}[/green]")
+    print_copyable(console, f"wrote {cap.path}", "green")
+    print_copyable(console, f"wrote {cap.raw_path}", "green")
 
     # -- the drift report ------------------------------------------------------
     cap.parsed = seats_trips.parse_trips_payload(cap.payload, cap.availability_id, cap.route)
@@ -518,7 +519,8 @@ def run_capture(
             f"verifies with no new call.[/bold red]"
         )
         for item in cap.blocking_drift:
-            console.print(f"[red]  - {escape(item)}[/red]")
+            # MAC-1: a drift item can name the capture's absolute path.
+            print_copyable(console, f"  - {item}", "red")
         if parsed.required_drift or parsed.envelope_error:
             console.print(
                 f"[yellow]Expected: once these files are committed, exactly one test "
@@ -543,7 +545,8 @@ def run_capture(
             f"Do NOT set TRIPS_SCHEMA_VERIFIED_BY to it.[/bold red]"
         )
         for item in cap.flip_problems:
-            console.print(f"[red]  - {escape(item)}[/red]")
+            # MAC-1: the label check names the directory and the file it read.
+            print_copyable(console, f"  - {item}", "red")
         console.print(
             "[yellow]Committing these files turns no test red; the label simply "
             "stays unverified.[/yellow]"
@@ -931,7 +934,9 @@ def run_yq_check(args, console: Console, read, today: date) -> int:
     if warning:
         console.print(f"[bold yellow]{escape(warning)}[/bold yellow]")
     record = _write_record(cap, args, fields, today, warning)
-    console.print(f"[green]wrote {record}[/green] - fill the ____ blanks from the site.")
+    print_copyable(
+        console, f"wrote {record} - fill the ____ blanks from the site.", "green"
+    )
     try:
         evidence = record.resolve().relative_to(ROOT.resolve()).as_posix()
     except ValueError:
@@ -967,12 +972,15 @@ def run_yq_check(args, console: Console, read, today: date) -> int:
         "the record's verdict line says includes_yq or excludes_yq, the Coder adds "
         "this row, with <VERDICT> replaced by that same word:"
     )
-    console.print(
-        escape(
-            f"  {source},{airline},<VERDICT>,{today.isoformat()},{evidence},"
-            f"{args.origin.upper()}-{args.destination.upper()} {args.cabin.upper()} "
-            f"{args.date}"
-        )
+    # MAC-1. THIS is the line the reader pastes into data/yq_inclusion.csv, and
+    # `evidence` is an absolute path whenever --record-dir is outside the tree:
+    # printed the ordinary way it folded mid-path on a long checkout, and a row
+    # pasted out of two lines is a different row.
+    print_copyable(
+        console,
+        f"  {source},{airline},<VERDICT>,{today.isoformat()},{evidence},"
+        f"{args.origin.upper()}-{args.destination.upper()} {args.cabin.upper()} "
+        f"{args.date}",
     )
     console.print(
         "An inconclusive check records nothing. The loader refuses a row whose "

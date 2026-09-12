@@ -11,6 +11,7 @@ from src import config
 from src.formatter import (
     export_html,
     print_alternatives,
+    print_copyable,
     print_fx_banner,
     print_leg_detail,
     print_leg_results,
@@ -459,11 +460,15 @@ def run_new_trip(args, console: Console, read=None):
         console.print(f"[cyan]{line}[/cyan]")
 
     path = trip_builder.write_fixture(fixture, force=bool(args.force))
-    console.print(f"[green]Wrote {path}[/green]")
-    console.print(
-        "[yellow]This fixture has NO points prices. Score it with:[/yellow]\n"
-        f"[yellow]  python -m src.main --trip-fixture {name}.json --live "
-        f"--balance UR=<n> --card \"<card>\"[/yellow]"
+    # MAC-1: the path that was written and the command to run it next are both
+    # lines a reader copies, so neither is allowed to fold at the width.
+    print_copyable(console, f"Wrote {path}", "green")
+    console.print("[yellow]This fixture has NO points prices. Score it with:[/yellow]")
+    print_copyable(
+        console,
+        f"  python -m src.main --trip-fixture {name}.json --live "
+        f"--balance UR=<n> --card \"<card>\"",
+        "yellow",
     )
     return 0, path
 
@@ -803,9 +808,13 @@ def print_relocation_banner(console: Console) -> None:
 
     for var in RELOCATION_VARS:
         if os.environ.get(var):
-            console.print(
-                f"[bold yellow]  {var} is set: {os.environ[var]} (overrides the "
-                f"default location for this run)[/bold yellow]"
+            # MAC-1: the value is a path, and a path folded mid-word names no
+            # directory the reader can check.
+            print_copyable(
+                console,
+                f"  {var} is set: {os.environ[var]} (overrides the default "
+                f"location for this run)",
+                "bold yellow",
             )
 
 

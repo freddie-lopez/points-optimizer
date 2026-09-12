@@ -27,6 +27,38 @@ from src.optimizer import (
 
 
 # ---------------------------------------------------------------------------
+# Lines that must arrive verbatim
+# ---------------------------------------------------------------------------
+
+
+def print_copyable(console: Console, text: str, style: str = "") -> None:
+    """
+    Print ONE line that has to arrive VERBATIM - a filesystem path, a command to
+    type, a CSV row the reader is told to paste - so it is NEVER broken across
+    two lines, at any console width and however long the path in it is.
+
+    MAC-1. `console.print` wraps at the console width and FOLDS a word longer
+    than the width, mid-word. Every console this tool prints to is 190 columns
+    wide, so nothing wraps until a line passes 190 characters - and the only
+    lines that do are the ones carrying an absolute path. On a checkout whose
+    tmp directory is long (macOS: /private/var/folders/9w/.../pytest-of-.../)
+    the yq-check row the reader is asked to paste into data/yq_inclusion.csv
+    arrived split down the middle of the evidence path. A row pasted out of two
+    lines is a different row, and a yq_inclusion row is the one thing in this
+    tool that decides whether a carrier surcharge is added to a score - so it is
+    not enough for the row to be correct when it is printed. It has to be
+    copyable.
+
+    rich's soft wrap is what that means mechanically: no wrapping, no cropping,
+    one printed line per logical line, whatever the width. The text is ESCAPED,
+    so a square bracket in a path stays a square bracket instead of being read
+    as markup, and colour comes from `style` rather than from markup inside the
+    text.
+    """
+    console.print(escape(text), style=style or None, soft_wrap=True, highlight=False)
+
+
+# ---------------------------------------------------------------------------
 # Builder primitives: text + rich style, never parsed back out of text
 # ---------------------------------------------------------------------------
 
@@ -996,8 +1028,9 @@ def print_live_banner(
                 "snapshot directory[/yellow]"
             )
         else:
-            console.print(f"  snapshots: {cache.snapshot_dir}")
-            console.print(f"  manifest:  {cache.manifest_path}")
+            # MAC-1: the manifest path is what `--from-snapshot` is given next.
+            print_copyable(console, f"  snapshots: {cache.snapshot_dir}")
+            print_copyable(console, f"  manifest:  {cache.manifest_path}")
         for warning in getattr(cache, "warnings", []):
             console.print(f"  [yellow]cache: {warning}[/yellow]")
     if opts is not None:
