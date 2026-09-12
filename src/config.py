@@ -322,12 +322,6 @@ def unscoreable_price_reason(amount, cpp: float = CASH_VALUATION_CPP) -> str:
     if base:
         return base
     value = float(amount)
-    if value < 0:
-        return (
-            f"a cash price of {short_number(value)} is refused. A negative fare is "
-            f"not a discount - it is a broken figure, and it would feed the "
-            f"trip totals as one."
-        )
     # `1e-320` is positive and renders as $0.00. Rounding to the cent is what
     # the reader is shown, so that is what the rule is on.
     if round(value, 2) == 0:
@@ -482,6 +476,18 @@ def unscoreable_cash_reason(amount, cpp: float = CASH_VALUATION_CPP) -> str:
             )
     except (ValueError, OverflowError):
         return f"{short_number(value)} cannot be written to a fixture as JSON."
+    # R6-1. NO MONEY FIELD IN THIS MODEL IS EVER NEGATIVE - not a fare, not a
+    # carrier surcharge, not a mandatory fee. A negative one was read as a
+    # discount that is not there: `mandatory_fees.amount: -500.0` scored a leg
+    # at $-133.00 with a cash-as-points of -13,300, and fed the trip totals.
+    # R5-1 caught it on fares only, because the clause lived in the PRICE rule;
+    # it belongs here, where every money field passes.
+    if value < 0:
+        return (
+            f"a money figure of {short_number(value)} is refused. A negative "
+            f"amount is not a discount - it is a broken figure, and it would "
+            f"feed the trip totals as one."
+        )
     if cpp <= 0:
         return "the valuation is not positive."
     equivalent = value / cpp

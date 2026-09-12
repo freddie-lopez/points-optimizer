@@ -2588,6 +2588,16 @@ def leg_has_no_partner(result: LegResult) -> bool:
     )
 
 
+def _cents(amount: float) -> float:
+    """A money figure as it is printed: to the cent. R6-2 - see `trip_totals`."""
+    if amount in (float("inf"), float("-inf")) or amount != amount:
+        return amount
+    # Formatted, not `round()`: this has to be the figure the table PRINTS, and
+    # `f"{x:,.2f}"` is what prints it. The two agree today; going through the
+    # formatter means they cannot stop agreeing.
+    return float(f"{amount:.2f}")
+
+
 def trip_totals(
     results: List[LegResult], wallet: Optional[Wallet] = None
 ) -> Dict[str, float]:
@@ -2606,8 +2616,21 @@ def trip_totals(
     # baseline is the fare for the day the trip actually says. Building the
     # baseline from an off-date fare would inflate the saving by exactly the
     # bias plan section 4.5 exists to prevent (finding H-5).
+    # R6-2. MONEY IS COUNTED IN CENTS, and every total below is a sum of the
+    # figures as they are PRINTED. The engine kept full precision and rounded
+    # only at the moment of printing, so four legs at $10.005 printed $10.01
+    # each and totalled $40.02: a table that disagreed with itself on the page,
+    # with nothing saying which figure to trust. A captured fare has two
+    # decimals, but an FX-converted one is sub-cent routinely (EUR 643.57 x
+    # 1.1620 = $747.828...), so this is reachable with real data.
+    #
+    # Rounding the PARTS and summing those is the only arrangement in which the
+    # printed table adds up; rounding the sum instead leaves the rows visibly
+    # disagreeing with it. On every committed trip the parts are already whole
+    # cents, so no figure this project has ever printed moves.
+    cents = _cents
     finite = [r for r in results if r.cash_baseline_usd != float("inf")]
-    all_cash = sum(r.cash_baseline_usd for r in finite)
+    all_cash = sum(cents(r.cash_baseline_usd) for r in finite)
 
     # A LEG NOBODY CAN PRICE IS EXCLUDED FROM BOTH SIDES AND COUNTED SEPARATELY.
     #
@@ -2621,13 +2644,14 @@ def trip_totals(
     # own version of pretending a missing number is zero.
     priceable = [r for r in results if r.winner_cost_usd != float("inf")]
     unpriced = [r for r in results if r.winner_cost_usd == float("inf")]
-    optimized = sum(r.winner_cost_usd for r in priceable)
+    optimized = sum(cents(r.winner_cost_usd) for r in priceable)
     # v1: the recommendation is a RANGE whenever any surcharge estimate is one.
     optimized_low = sum(
-        r.winner_cost_low_usd for r in priceable if r.winner_cost_low_usd != float("inf")
+        cents(r.winner_cost_low_usd) for r in priceable
+        if r.winner_cost_low_usd != float("inf")
     )
     optimized_high = sum(
-        r.winner_cost_high_usd
+        cents(r.winner_cost_high_usd)
         for r in priceable
         if r.winner_cost_high_usd != float("inf")
     )
@@ -2635,9 +2659,9 @@ def trip_totals(
         r.points_required for r in results if r.verdict == "points"
     )
     cash_still_owed = sum(
-        (r.points_surcharge_usd + r.mandatory_fees_usd)
+        cents(r.points_surcharge_usd + r.mandatory_fees_usd)
         if r.verdict == "points"
-        else r.cash_total_score_usd
+        else cents(r.cash_total_score_usd)
         for r in results
         if r.cash_total_score_usd != float("inf") or r.verdict == "points"
     )
