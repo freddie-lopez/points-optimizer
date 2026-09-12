@@ -1052,3 +1052,141 @@ So the manager can judge what is merely *unbroken so far*:
 | New: R5-2 unreadable points price → "not a partner" | Open (Medium, pre-existing) |
 | New: R5-3 401-digit wallet balance printed in full | Open (Low) |
 | New: R5-4 deep nesting → RecursionError / 500 | Open (Low) |
+
+---
+
+# Re-test 6 — the extended boundary, and cent-level arithmetic
+
+Against `d31e0c9` (two commits on `12d865d`), round 5 of
+`runs/points-optimizer/ui-fix-report-1.md`. New probes in
+`ui-probes/test_ui_o_retest6.py`.
+
+**546 probes: 2 red, 544 green.** Every probe from rounds 1–5 is green: R5-1,
+R5-2, R5-3 and R5-4 are closed. The two reds are **one Medium and one Low**, and
+neither is Critical or High.
+
+| Check | Result |
+|---|---|
+| `.venv/bin/python -m pytest -q -p no:cacheprovider` | **3530 passed, 13 skipped** (as claimed) |
+| the same under `-O` | **3530 passed, 13 skipped**, 1 warning |
+| the unpacked `git archive HEAD` export | **3526 passed, 17 skipped, 0 failed** (as claimed); skips = 4 APD gates + 9 live-snapshot gates + 4 git-only checks |
+| `test_ui_g_cli_parity.py` | 69 / 69 green |
+| v5 / adversarial / known-failures / operating-airline | **19 / 40 / 0 / 5 red — identical by id** |
+| working tree | clean apart from this report and the probe files |
+| network | nothing left the machine |
+
+## 1. The extended boundary, as a property
+
+**The write/read rule really is one rule.** I put 37 spellings through
+`trip_builder.validate_cash` (write) and `config.scoreable_price` (read) and
+compared both the verdict and the reason: `"2400"`, `" 2400 "`, `"+2400"`,
+`"2400\n"`, `"1e3"`, `"1_000"`, `"٣.٥"` and `"١٢٣"` are accepted by both (the
+last two are Python's `float()` reading Arabic-Indic digits — odd, but
+identical on both sides); `"2,400"`, `"$2400"`, `"0x10"`, `"abc"`, `""`,
+`"   "`, `nan`, `inf`, `None`, `[]`, `{}`, `True`, `False`, `0`, `-0.0`,
+`-50`, `0.004`, `1e-320` and `10**400` are refused by both, with the same
+reason (`O1`). The only difference is cosmetic: the builder strips a string
+before quoting it, so `"   "` is reported as `''` there and as `'   '` at load.
+
+**The price/amount split is right where it matters.** A `$0.00` carrier
+surcharge still prints on Trip B's B1 and B4 (`O2`); a `$0.00` fare is refused
+on both surfaces. `cash_surcharge` goes through the amount rule, fares and
+nightly rates through the price rule.
+
+**`scoreable_points` covers the live path too, by a different mechanism and
+correctly**: a Seats.aero row with `MileageCost` of `0`, `-50000`, `0.5` or `""`
+comes back as `none: UNREADABLE`, path `no live data`, exit 3 — not "not a
+partner", not a scored figure, not a crash (`O3`). And the fixture-side refusal
+names the claim the silence would have made (`O4`).
+
+**Nothing legal became illegal.** The three committed per-leg fixtures load and
+score unchanged, Trip B is still `2.04% - 11.03% (badge)` (`O5`), and the
+builder still accepts `0.01`, `1`, `2400`, `199999.99` while refusing `0`, `-1`
+and `0.004` (`O6`). One consequence worth stating rather than hiding: a fixture
+with *one* zero-points candidate is now refused **as a file**, rather than
+having that candidate dropped. That is the trade the fix makes — a dropped one
+produced "none - not a partner" — and I agree with it, but a hand-edited file
+that used to score will now refuse.
+
+**R5-3 and R5-4 are closed**: a 401-digit balance is a wallet refusal in words
+with no digits printed (`O7`), and a 400-level-deep fixture is "nested too
+deeply to read", exit 1, no traceback, no 500 (`O8`).
+
+## 2. New findings
+
+### Medium
+
+**R6-1 — a negative mandatory fee is a discount that is not there.**
+Probe `test_ui_o_retest6.py::test_O9` (RED).
+
+`mandatory_fees.amount` is read as an *amount*, not a *price*, so the R5-1 rule
+does not apply to it. A fixture carrying `{"label": "…", "amount": -500.0}`
+scores:
+
+```
+│ A1 │ MRY-JFK round trip │ $367.00 │ -13,300 │ … │ >= $-70.00 │ $-133.00 │
+```
+
+— a negative cash-as-points figure, a negative points floor and a **negative
+cash side**, which then feeds the trip totals. It is the same shape as the
+negative fare R5-1 closed, on the one money field that did not get the rule. A
+fee of `0.00` is fine and should stay fine (a stated "no resort fee" is a real
+figure); a *negative* one is not a figure, it is a broken one. The fix is to
+bound fees below at zero, not to route them through the price rule.
+
+### Low
+
+**R6-2 — a table of sub-cent figures does not add up on the page.**
+Probe `::test_O12` (RED).
+
+Four legs at `$10.005`: each row prints `$10.01`, and the total prints `$40.02`.
+The engine keeps full precision and rounds only when printing, so the printed
+total is two cents below the sum of the printed rows. On the committed trips the
+figures agree to the cent — I checked Trip A, Trip B and Trip C (`O10`) and the
+residue tables balance exactly (`O11`) — and a captured fare always has two
+decimals. But an **FX-converted** amount is sub-cent routinely (Trip B's
+`EUR 643.57 × 1.1620 = $747.828…`), so the general case is reachable with real
+data; it happens not to bite on the committed trips. Displayed foreign amounts
+and the figures behind them agree to the cent (`O13`).
+
+## 3. The invariant sweep
+
+All 544 other probes green, including: DOM parity for the recurring failure
+across every golden scenario (markers, unknown discipline, F-1, the headline
+qualifier, the drawer), the security suite and the cross-origin attacker page,
+spending and confirms (no call without a fresh matching confirm; the stated
+maximum holds under pagination, flex days and lookups), long-lived process
+state, couple trips WITHHELD at exit 3, the `-O` import guards, the phone and
+docked layouts with the pinned columns and focus restore, the CLI parity of 69
+invocations, and the transcript equalling the CLI's own output for the argv the
+page shows.
+
+## 4. Is this ready for the manager?
+
+**Yes.** Six rounds in, the thing this project exists to prevent — a failure
+reported as a finding — is defended at every layer I can reach, and I have
+tried: 546 probes, 69 CLI invocations diffed against the pre-UI tree, a real
+browser driving the real page, a hostile page on another origin, and five rounds
+of numbers designed to break the scorer. What is left is one Medium that needs a
+hand-edited fixture (a negative fee), one Low about rounding that needs sub-cent
+inputs, and three known items everyone has already agreed to defer. The
+qualification is the one I have made in every round and it has not moved:
+**nothing here has ever spoken to the real Seats.aero.** Every LIVE path is a
+stub, the trips parser is still UNVERIFIED against a real response, and the
+first real run on his Mac is the first time any of it meets the API it was
+written for. That is a risk about *the world*, not about this code, and no
+amount of testing here can close it — but the manager should sign off knowing
+the LIVE column of this report is synthetic from top to bottom.
+
+## Findings ledger
+
+| Finding | State |
+|---|---|
+| Round 1: H-1, M-1…M-6, L-1…L-4 | **Closed** |
+| Re-test 2: R2-1 … R2-4 | **Closed** |
+| Re-test 3: R3-1, R3-2, R3-3 | **Closed** |
+| Re-test 4: R4-1, R4-2 | **Closed** |
+| Re-test 5: R5-1 money the builder refuses; R5-2 points → "not a partner"; R5-3 wallet digits; R5-4 deep nesting | **Closed** |
+| New: R6-1 negative mandatory fee | Open (Medium) |
+| New: R6-2 sub-cent rounding on the page | Open (Low) |
+| Filed, agreed, unchanged | Score-column truncation; `[modeled]` swallowed by rich; F-2 (`0.00% (none)`, decision T4) |
