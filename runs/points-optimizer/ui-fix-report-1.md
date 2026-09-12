@@ -400,3 +400,93 @@ Full suite normally and under `-O` (3,190 / 13 skipped, identical), the same
 suite inside an unpacked export with an outside interpreter (3,186 / 17 skipped,
 0 failed), all 468 Tester probes, the four baseline probe directories compared
 by test id, and Chromium at 1440 px offline and LIVE with no page errors.
+
+---
+
+# Round 5 — against the re-test at `12d865d`
+
+Two Mediums, two Lows; 9 red probes. One commit on `565bafd`. Nothing here made
+a network call.
+
+| Suite | Before | After |
+|---|---|---|
+| `tests/` (mine) | 3,190 pass | **3,530 pass, 13 skipped** — identical under `-O` |
+| the same suite in an unpacked `git archive` export | 3,186 / 17 skipped | **3,526 pass, 17 skipped, 0 fail**, no symlink |
+| `docs/test-reports/ui-probes` | 481 pass / 9 red | **490 pass / 0 red** |
+| v5 / adversarial / known-failures / operating-airline | 19 / 40 / 0 / 5 red | **same sets, by id** |
+
+## The boundary, extended — not a second set of checks beside it
+
+Round 4's boundary made the **top** of the number line safe. Three of this
+round's four findings are the **bottom** of it, and the bottom is where this
+project's own failure mode lives: a number that is readable, finite and small,
+and still not a price.
+
+**R5-1 — what the builder refuses to write, the loader now refuses to read.**
+`validate_cash` refused zero, negatives and non-numbers in the project's own
+words; `trip_loader` had no such rule, so a hand-edited fixture carrying `0`,
+`-0.0`, `-50.0`, `true` or `1e-320` was *scored on the figure*: `$0.00`,
+`$-0.00`, a boolean rendered as a dollar, a fare that prints as zero, and a
+negative one feeding the trip totals. The rule is now
+`config.unscoreable_price_reason`, used by **both** surfaces — so the two cannot
+drift apart again, and the reader is told the same thing whichever surface they
+met it on. **A price is not the same thing as an amount**: a `$0.00` carrier
+surcharge is a real figure this codebase insists on printing, so only the fields
+that are *prices* go through it, and `unscoreable_cash_reason` still accepts
+zero. Booleans are not money anywhere. `validate_cash` also lost its own
+conversion: `str(value or "")` mapped `0` and `False` to the empty string and
+reported them as "not a number" — the boundary being bypassed on the write side.
+
+**R5-2 — a points price that is not a price never becomes a partnership claim.**
+`0` and `-42600` passed the count boundary (both finite, both round-trip), were
+then dropped silently by the scorer, and the leg reported **"none - not a
+partner"** — a claim about transfer partnerships that nothing checked, on a leg
+whose own file names a program. F-1's exact shape from another direction.
+`scoreable_points` refuses the value where it enters, and the refusal says what
+the silence would otherwise have become.
+
+**R5-3 — the wallet.** It was the one outside-number path `short_number` did not
+cover: `--balance UR=<401 digits>` printed **914 digits** across the banner and
+the residue table, and `/api/wallet` echoed it. Balances — from the flag and
+from the wallet file — now come in through `scoreable_count`, and are shortened
+where they are printed.
+
+**R5-4 — a stack overflowing rather than a number.** `RecursionError` is a
+`RuntimeError`, so round 4's backstop did not cover it and a 400-level-deep
+fixture was a traceback and a 500. The loader now reports it as what it is — a
+file too deeply nested to read — and the backstop covers it alongside
+`ArithmeticError`, because the property is about **what reaches the reader**,
+not about which builtin was raised.
+
+## The tests assert the extended property
+
+Extended in place, not duplicated beside it:
+
+* the hostile matrix carries the **bottom** of the number line as well as the
+  top (`-0.0`, `-50.0`, `1e-320`, `true`), across every numeric field walked out
+  of the committed fixtures, in every currency — 1,451 cases in that file now;
+* **what is refused at write is refused at read**: a paired test over twelve
+  money spellings asserts the builder and the loader accept and refuse exactly
+  the same values, and that the shared rule's sentence appears *verbatim* in
+  both messages;
+* **no outside number reaches a printed line unreadable**: no run of more than
+  thirty digits may appear in any CLI output, from a fixture field or from
+  `--balance`;
+* **no malformed file reaches the reader as a traceback**: seven files that are
+  not trip fixtures — only one of them about numbers — are each one line and
+  exit 1 in the CLI and a CANNOT LOAD row with a 422 and an exit-1 run in the
+  UI.
+
+## Still filed, not fixed
+
+Unchanged: the derived **Score** columns truncate money exactly as the pre-UI
+CLI does, and the CLI's surcharge line still loses `[modeled]` to rich. Both
+need a round in which CLI output may move.
+
+## Verification
+
+Full suite normally and under `-O` (3,530 / 13 skipped, identical), the same
+suite inside an unpacked export with an outside interpreter (3,526 / 17 skipped,
+0 failed, no symlink), all 490 Tester probes, the four baseline probe
+directories compared by test id, and Chromium at 1440 px offline and LIVE with
+no page errors.
