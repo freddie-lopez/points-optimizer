@@ -568,3 +568,150 @@ the argv the page shows.
 | L-2 swallowed `[modeled]` | **Closed in the UI** (`K18`); the CLI line is filed, verified still swallowed |
 | L-3 duplicate drawer testid | **Closed** |
 | L-4 cross-origin read of app.js | **Closed** (`K19`) |
+
+---
+
+# Re-test 3 — attacking the round-2 fixes
+
+Against `8b579ff` (five commits on `3f1ccfa`), round 2 of
+`runs/points-optimizer/ui-fix-report-1.md`. New probes in
+`ui-probes/test_ui_l_retest3.py` and `ui-probes/focus.js`.
+
+**441 probes: 4 red, 437 green.** Every probe from round 1 and re-test 2 is
+green — all four round-2 findings (R2-1 … R2-4) are closed. The four reds are
+new, and three of them are the same shape as the fix they sit next to: the guard
+is right and its edge is one step further out.
+
+| Check | Result |
+|---|---|
+| `.venv/bin/python -m pytest -q -p no:cacheprovider` | **2056 passed, 13 skipped** (as claimed) |
+| the same under `-O` | **2056 passed, 13 skipped**, 1 warning |
+| the suite inside a `git archive HEAD` export, run with an outside interpreter | **2052 passed, 4 failed** — see R3-1 |
+| `test_ui_g_cli_parity.py` | 69 / 69 green |
+| v5 / adversarial / known-failures / operating-airline | **19 / 40 / 0 / 5 red — every set identical by id** |
+| working tree | clean apart from this report and the probe files |
+| network | nothing left the machine |
+
+## New findings
+
+### Medium
+
+**R3-1 — two numbers that each pass the new bound still multiply into an
+OverflowError: a hotel leg's `nights × points_per_night`.**
+Probes `test_ui_l_retest3.py::test_L5[nights_x_points_per_night]` and
+`::test_L6[nights_x_points_per_night]` (RED); the other three product shapes
+(`travelers × cash`, `travelers × fee`, `travelers × points`) are green.
+
+R2-3 bounds each field **on its own**: `nights = 10**200` passes
+(`10**200 × 0.01` is finite), and so does `points_per_night = 10**200`. The
+scale multiplies them: `funding._score` does `points * _valuation(...)` on
+`nights × points_per_night = 10**400` and raises
+`OverflowError: int too large to convert to float`.
+
+* CLI: a traceback, exit 1.
+* UI: `500 {"error": "internal", "message": "Unexpected OverflowError; …"}`.
+
+Same class as M-1 and R2-3, one multiplication further along. The shape of a fix
+is presumably to bound the product the loader can already compute (nights ×
+points_per_night, travellers × the leg's figures) rather than each field alone —
+or to make `funding._score` refuse rather than raise.
+
+### Low
+
+**R3-2 — in a `git archive` export the suite fails four tests, because the
+portability tests themselves need `.git`.**
+Probe `::test_L3` (RED).
+
+`git archive HEAD` into a clean directory, run with an interpreter from outside
+the tree: **2052 passed, 4 failed**. All four failures are
+`tests/test_the_delivered_tree_is_portable.py`, and all four are
+`CalledProcessError: … not a git repository`: the tests shell out to
+`git ls-files`, `git archive`, `git status` and `git check-ignore`, and one also
+asserts `(ROOT / ".venv").exists()` — the two things a delivered copy does not
+have. The delivery is a git bundle, so in his normal flow (fetch into the
+existing clone) they pass; anyone running from an unpacked archive gets four red
+tests that say nothing about their tree. `pytest.skip` when
+`(ROOT / ".git").exists()` is false would keep the guard and lose the false
+alarm.
+
+Everything else in the export is portable: no symlinks, no `.venv`, no
+`/home/claude`, `/tmp/claude` or `/Users/` path in any shipped source (the only
+`/Users/...` is the synthetic string `test_no_changelog_in_user_output.py` uses
+as test data), no CRLF in any `.py`, no executable bits, 293 files. One CRLF
+file survives — `data/apd_bands.csv`, which has had CRLF since v5 (`c73d278`)
+and which `csv` reads correctly; the export run proves it.
+
+**R3-3 — the refusal prints the 401-digit number it says it will not print.**
+Probe `::test_L7` (RED).
+
+`config.unscoreable_count_reason` carefully shortens the number to
+`"a 401-digit number"`, and then `trip_loader._count` wraps it:
+
+```python
+raise TripFixtureError(f"{what} is {value!r}: {unscoreable}")
+```
+
+so the line the user actually sees is 401 digits followed by "…: a 401-digit
+number is too large to score…". The UI shows the same string in the trip list's
+CANNOT LOAD row. Cosmetic, and exactly the mistake the round-2 note says the
+guard avoids — the guard does; its caller does not. `_finite_amount` has the
+same `{value!r}` wrapper, which is harmless for a float and would not be for an
+int.
+
+## What I could not break in the round-2 fixes
+
+**R2-1 (the delivered tree).** The export carries no symlink, no `.venv`, no
+build-machine path in anything under `src/`, `tests/` or `data/`, and no CRLF in
+any Python file (`L1`, `L2`, `L4`). 2052 of 2056 tests pass in that export with
+an interpreter from outside it; the four that do not are R3-2 above, and none of
+them is product code.
+
+**R2-2 (the restated sentence).** On the case that found it — BA Avios on IB
+metal, band `$522.50–$1,045.00`, straddling $1,450 both before and after the
+$330.38 duty — the reason now quotes `$1,352.88` / `$1,875.38` and names the
+duty (`L10`). It is restated **in place**: `VERDICT_SENSITIVE` still sits before
+`ALTERNATIVE_UNPRICED` and `APD_ADDED` in the reason list, and the warning keeps
+its position among the leg's warnings. Re-deciding the same answer three times
+changes nothing at all — not the text, not the order, not the count (`L11`). A
+flag flipped off and then on again leaves exactly one reason and one warning
+(`L12`). No other reason or warning is touched when the sentence is rebuilt
+(`L13`). A leg with no APD gets no duty clause (`L14`). The drawer shows the same
+figures and the terminal's own warning line (`L15`).
+
+**R2-3 (numbers that reach arithmetic), apart from R3-1.** `travelers × cash`,
+`travelers × mandatory fee` and `travelers × points` are all clean; a count that
+cannot be scored is a one-line load refusal and exit 1, not a crash (`L9`); and
+the bound has not become a ceiling on award prices — `10**12` and `10**30` load
+and score, and a large number the CLI does print is printed in full (`L8`).
+
+**R2-4 (focus).** At 1440px and at 400px: Enter opens the drawer and focus lands
+on its close button; Esc returns focus to exactly the row it came from; the ×
+button does the same; focus is never left on an element that has been removed
+from the document or on one inside a `hidden` section — checked after a re-run
+with the drawer open, after a tab switch, and after a second Esc (`L16`–`L19`).
+No page errors in any of it. One observation, not a finding: at 400px the open
+sheet covers the top bar, so the tabs and the wallet chip are unreachable until
+it is closed — expected of a full-screen sheet, and Esc and × both close it.
+
+**Everything earlier still holds.** All 412 probes from round 1 and re-test 2
+pass: DOM parity for the recurring failure in every scenario (markers, unknown
+discipline, F-1, the headline qualifier), the security suite plus the
+cross-origin attacker page, spending (no call without a fresh matching confirm;
+the stated maximum holds with pagination, flex days and lookups), long-lived
+process state, couple trips WITHHELD at exit 3, the `-O` import guards, the
+phone layout and the pinned columns, the three-state wallet label (number /
+blank / absent), and the transcript equalling the CLI's own output for the argv
+the page shows.
+
+## Findings ledger
+
+| Finding | State |
+|---|---|
+| Round 1: H-1, M-1…M-6, L-1…L-4 | **Closed** (M-6 and L-2 with the two CLI-output items filed, unchanged and re-verified) |
+| Re-test 2: R2-1 `.venv` symlink | **Closed** — untracked, ignored without the slash, and the export proves it |
+| Re-test 2: R2-2 stale sensitivity figures | **Closed** — and the restatement survives ordering, idempotence and a double flip |
+| Re-test 2: R2-3 unbounded counts | **Closed for single fields**; open for a product: R3-1 |
+| Re-test 2: R2-4 Esc drops focus | **Closed** at both widths and through four ways of closing |
+| New: R3-1 `nights × points_per_night` | Open (Medium) |
+| New: R3-2 portability tests need `.git` | Open (Low) |
+| New: R3-3 refusal prints the whole number | Open (Low) |
