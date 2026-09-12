@@ -194,7 +194,12 @@ def load_wallet(path: Path) -> Wallet:
         elif isinstance(val, bool):
             raise WalletError(f"Balance for {cur!r} must be a number or null.")
         elif isinstance(val, (int, float)):
-            balances[str(cur)] = int(val)
+            try:
+                balances[str(cur)] = int(val)
+            except (ValueError, OverflowError) as e:
+                raise WalletError(
+                    f"Balance for {cur!r} is not a number this tool can hold: {e}"
+                ) from e
         else:
             raise WalletError(
                 f"Balance for {cur!r} must be a number or null, got {val!r}."
@@ -207,7 +212,10 @@ def load_wallet(path: Path) -> Wallet:
     valuations = data.get("valuation_cpp", {}) or {}
     if not isinstance(valuations, dict):
         raise WalletError("Wallet 'valuation_cpp' must be an object of currency -> cpp.")
-    valuation_cpp = {str(k): float(v) for k, v in valuations.items()}
+    try:
+        valuation_cpp = {str(k): float(v) for k, v in valuations.items()}
+    except (TypeError, ValueError, OverflowError) as e:
+        raise WalletError(f"Wallet 'valuation_cpp' has a value that is not a number: {e}") from e
 
     return Wallet(
         balances=balances,

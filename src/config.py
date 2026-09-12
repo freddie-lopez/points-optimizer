@@ -255,15 +255,97 @@ CASH_VALUATION_CPP: float = 0.01
 DEFAULT_VALUATION_CPP: float = CASH_VALUATION_CPP
 
 
+class UnscoreableNumber(ValueError):
+    """
+    A number this tool cannot put on its scale, named and explained.
+
+    A ValueError ON PURPOSE. `main` prints every ValueError as one red line and
+    exits 1, and the UI renders that as a refusal - so a number that cannot be
+    scored takes the path a bad date or a missing key already takes, instead of
+    arriving as an `OverflowError` traceback nobody can act on.
+    """
+
+
+# ---------------------------------------------------------------------------
+# THE BOUNDARY. Every number that comes from outside this process - a trip
+# fixture, a Seats.aero response, a snapshot, a wallet file - enters through
+# `scoreable_amount` or `scoreable_count`, and every conversion the scorer then
+# performs on it is total: it returns a number or raises UnscoreableNumber, and
+# never OverflowError.
+#
+# WHY IT IS A BOUNDARY AND NOT ANOTHER PATCH. Four rounds of this family (M-1,
+# R2-3, R3-1, R4-1/R4-2) were each one hole further along the same pipe: a field
+# was bounded, then a product of two bounded fields was not; a product was
+# bounded, then a conversion of a bounded product was not. The property that
+# actually has to hold is not "these shapes are refused" but:
+#
+#     NOTHING THAT REACHES THE OPTIMIZER CAN OVERFLOW, AND NOTHING THAT
+#     OVERFLOWS ANYWHERE REACHES THE READER AS A TRACEBACK.
+#
+# Three things hold it, and they are deliberately redundant:
+#   1. this boundary - a parsed number is finite and survives the fixture's own
+#      JSON round trip, so `inf` never enters;
+#   2. the conversions below (`cash_to_points_equivalent`,
+#      `points_to_cash_equivalent`, `convert_to_usd`) refuse instead of raising,
+#      so ANY product or conversion of accepted numbers - whatever combination
+#      of fields, rates, counts and run-time knobs produced it - is a refusal
+#      and not a crash. This is the one that closes the family: it does not
+#      depend on anybody having enumerated the multiplications;
+#   3. `main` and the UI treat ArithmeticError exactly as they treat ValueError,
+#      so an overflow down some path nobody has thought of is still one line and
+#      exit 1, never a traceback or a 500.
+# ---------------------------------------------------------------------------
+
+
+def scoreable_amount(value, what: str, cpp: float = CASH_VALUATION_CPP) -> float:
+    """A money figure from outside, as a float this tool can score, or raise."""
+    reason = unscoreable_cash_reason(value, cpp)
+    if reason:
+        raise UnscoreableNumber(f"{what}: {reason}")
+    return float(value)
+
+
+def scoreable_count(value, what: str, cpp: float = CASH_VALUATION_CPP) -> int:
+    """A whole-number field from outside, as an int this tool can score, or raise."""
+    reason = unscoreable_count_reason(value, cpp)
+    if reason:
+        raise UnscoreableNumber(f"{what}: {reason}")
+    return int(value)
+
+
+def _finite(value: float, what: str, inputs: str) -> float:
+    """`value`, or a refusal naming what was being computed from what."""
+    import math as _math
+
+    if not _math.isfinite(value):
+        raise UnscoreableNumber(
+            f"{what} is too large to score: {inputs} multiply past what a run "
+            f"can hold."
+        )
+    return value
+
+
 def cash_to_points_equivalent(cash_usd: float, cpp: float = CASH_VALUATION_CPP) -> int:
     """
     Convert a cash amount to its points-equivalent at `cpp` cents per point.
 
     At the default 1cpp: $367.00 -> 36,700 points.
+
+    Total: an amount whose quotient overflows is refused here rather than
+    reaching `int(inf)`, which raises OverflowError from inside the scorer.
     """
     if cpp <= 0:
         raise ValueError("valuation cpp must be positive")
-    return int(round(cash_usd / cpp))
+    try:
+        quotient = cash_usd / cpp
+    except OverflowError:
+        quotient = float("inf")
+    _finite(
+        quotient,
+        f"the points-equivalent of {short_number(cash_usd)}",
+        f"${short_number(cash_usd)} at {cpp * 100:.2f} cents per point",
+    )
+    return int(round(quotient))
 
 
 def short_number(value) -> str:
@@ -380,8 +462,21 @@ def unscoreable_count_reason(count, cpp: float = CASH_VALUATION_CPP) -> str:
 
 
 def points_to_cash_equivalent(points: int, cpp: float = CASH_VALUATION_CPP) -> float:
-    """Convert points to their cash-equivalent at `cpp` cents per point."""
-    return points * cpp
+    """
+    Convert points to their cash-equivalent at `cpp` cents per point.
+
+    Total, for the same reason as its opposite: `10 ** 400 * 0.01` raises
+    OverflowError rather than returning `inf`, so the refusal has to be here.
+    """
+    try:
+        product = points * cpp
+    except OverflowError:
+        product = float("inf")
+    return _finite(
+        product,
+        f"the cash-equivalent of {short_number(points)} points",
+        f"{short_number(points)} points at {cpp * 100:.2f} cents per point",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -588,7 +683,19 @@ def convert_to_usd(amount: float, currency: str) -> float:
         raise ValueError(
             f"No FX rate configured for {cur!r}. Add it to config.FX_RATES_TO_USD."
         )
-    return amount * FX_RATES_TO_USD[cur]
+    # R4-2: the bound taken when the file was read is on the number AS STATED,
+    # and what gets scored is that number times a rate. 1.6e306 EUR passes on
+    # its own and is `inf` once converted, so the converted figure is checked
+    # here - where the conversion happens and the rate is known.
+    try:
+        product = amount * FX_RATES_TO_USD[cur]
+    except OverflowError:
+        product = float("inf")
+    return _finite(
+        product,
+        f"{short_number(amount)} {cur} in USD",
+        f"{short_number(amount)} {cur} at {FX_RATES_TO_USD[cur]}",
+    )
 
 
 def is_placeholder_rate(currency: str) -> bool:

@@ -514,13 +514,19 @@ def _as_int(value: Any) -> Optional[int]:
     if isinstance(value, int):
         return value
     if isinstance(value, float):
-        return int(value)
+        # R4-1 as a class: `int(inf)` and `int(nan)` raise, and this parser's
+        # contract is that a value it cannot read becomes None, never a crash
+        # and never 0.
+        try:
+            return int(value)
+        except (ValueError, OverflowError):
+            return None
     text = str(value).strip().replace(",", "")
     if not text:
         return None
     try:
         return int(float(text))
-    except ValueError:
+    except (ValueError, OverflowError):
         return None
 
 

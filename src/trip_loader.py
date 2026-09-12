@@ -18,19 +18,19 @@ def _finite_amount(value, what: str) -> float:
     come back as an OverflowError traceback; it is now a load refusal, which
     every caller already renders as one clean line - "CANNOT LOAD" in the UI's
     trip list, `Error: ...` and exit 1 from the CLI.
+
+    R4-1: this used to do its own `float(value)` one line ABOVE the guard, in a
+    `try` that caught TypeError and ValueError - and `float(10 ** 400)` raises
+    OverflowError, so a huge int in a money field never reached the guard at
+    all. There is no conversion here now: `config.scoreable_amount` is the one
+    place a number from outside becomes a number this tool will score.
     """
     from src import config
 
     try:
-        amount = float(value)
-    except (TypeError, ValueError) as e:
-        raise TripFixtureError(
-            f"{what} is {config.short_number(value)}, which is not a number."
-        ) from e
-    unscoreable = config.unscoreable_cash_reason(amount)
-    if unscoreable:
-        raise TripFixtureError(f"{what}: {unscoreable}")
-    return amount
+        return config.scoreable_amount(value, what)
+    except config.UnscoreableNumber as e:
+        raise TripFixtureError(str(e)) from e
 
 
 def _count(value, what: str, default: int = 0) -> int:
@@ -42,8 +42,11 @@ def _count(value, what: str, default: int = 0) -> int:
     happily and then raised `OverflowError: int too large to convert to float`
     inside the scorer: a traceback from the CLI and a 500 from the UI, the exact
     class M-1 claimed to close. Same mechanical rule as the money one, and it is
-    not a ceiling on award prices: it refuses only a figure no run could ever
-    put on the scale beside a fare.
+    not a ceiling: it refuses only a figure no run could ever put on the scale
+    beside a fare.
+
+    R3-3: the reason already names the value, shortened; wrapping it in
+    `{value!r}` here is what put 401 digits back in front of the reader.
     """
     from src import config
 
@@ -54,17 +57,9 @@ def _count(value, what: str, default: int = 0) -> int:
             f"{what} is {config.short_number(value)}, which is not a whole number."
         )
     try:
-        count = int(value)
-    except (TypeError, ValueError, OverflowError) as e:
-        raise TripFixtureError(
-            f"{what} is {config.short_number(value)}, which is not a whole number."
-        ) from e
-    # R3-3: the reason already names the value, shortened. Wrapping it in
-    # `{value!r}` here is what put 401 digits back in front of the reader.
-    unscoreable = config.unscoreable_count_reason(count)
-    if unscoreable:
-        raise TripFixtureError(f"{what}: {unscoreable}")
-    return count
+        return config.scoreable_count(value, what)
+    except config.UnscoreableNumber as e:
+        raise TripFixtureError(str(e)) from e
 
 
 def _check_products(leg) -> None:
@@ -88,8 +83,9 @@ def _check_products(leg) -> None:
     from src import config
 
     where = f"leg {leg.id!r}"
-    nights = max(int(leg.nights or 0), 0)
-    party = max(int(leg.travelers or 1), 1)
+    # Both already came through the boundary above, as ints.
+    nights = max(leg.nights or 0, 0)
+    party = max(leg.travelers or 1, 1)
 
     def refuse(reason, what):
         # A product that has already overflowed to `inf` reports itself as "inf
@@ -157,22 +153,18 @@ def _travelers(value, leg_id) -> int:
         raise TripFixtureError(
             f"leg {leg_id!r} travelers is {config.short_number(value)}, not a count."
         )
+    # R2-3: the count multiplies every money figure on the leg (and APD is
+    # charged per passenger), so it comes in through the same boundary as the
+    # rest - no conversion of its own.
     try:
-        n = int(value)
-    except ValueError as e:
-        raise TripFixtureError(
-            f"leg {leg_id!r} travelers is {config.short_number(value)}, not a count."
-        ) from e
+        n = config.scoreable_count(value, f"leg {leg_id!r} travelers")
+    except config.UnscoreableNumber as e:
+        raise TripFixtureError(str(e)) from e
     if n < 1 or str(value).strip() != str(n):
         raise TripFixtureError(
             f"leg {leg_id!r} travelers is {config.short_number(value)}; a leg is "
             f"for at least 1 traveller."
         )
-    # R2-3: the count multiplies every money figure on the leg (and APD is
-    # charged per passenger), so it reaches arithmetic like the rest.
-    unscoreable = config.unscoreable_count_reason(n)
-    if unscoreable:
-        raise TripFixtureError(f"leg {leg_id!r} travelers: {unscoreable}")
     return n
 
 

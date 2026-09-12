@@ -1215,7 +1215,7 @@ def totaltaxes_unit_problems(unit: str, real_dir) -> List[str]:
                 continue
             try:
                 cost = int(str(row.get(f"{letter}MileageCost")).strip())
-            except ValueError:
+            except (ValueError, OverflowError):
                 continue
             row_taxes = row.get(f"{letter}TotalTaxes")
             for t in parsed.readable:
