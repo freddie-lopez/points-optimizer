@@ -100,9 +100,21 @@ def test_a_flip_the_duty_removes_is_not_left_claiming_one(rm):
 def test_the_marker_is_idempotent_and_keeps_its_place_when_nothing_changed(rm):
     r, _ = score(rm, leg("LHR", "JFK", 1150))
     before = (list(r.warnings), [x.detail for x in r.reasons], r.verdict_sensitive)
-    set_verdict_sensitivity(r, apd_usd=r.apd_added_usd)
-    set_verdict_sensitivity(r)
+    for _ in range(3):
+        set_verdict_sensitivity(r, apd_usd=r.apd_added_usd)
     assert (list(r.warnings), [x.detail for x in r.reasons], r.verdict_sensitive) == before
+
+
+def test_re_deciding_with_a_different_duty_restates_the_sentence_in_place(rm):
+    """R2-2: the flag is not the only thing the sentence depends on."""
+    r, _ = score(rm, leg("LHR", "JFK", 1150))
+    at = [i for i, x in enumerate(r.reasons) if x.code == "VERDICT_SENSITIVE"]
+    set_verdict_sensitivity(r)  # as if no duty were counted
+    assert r.verdict_sensitive is True
+    assert [i for i, x in enumerate(r.reasons) if x.code == "VERDICT_SENSITIVE"] == at
+    assert "UK Air Passenger Duty" not in next(
+        x.detail for x in r.reasons if x.code == "VERDICT_SENSITIVE")
+    assert len([w for w in r.warnings if w.startswith("VERDICT SENSITIVE:")]) == 1
 
 
 def test_the_ui_paints_the_sensitive_tag_on_that_leg(rm):

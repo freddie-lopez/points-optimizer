@@ -22,6 +22,7 @@ from src.models import (
     LegResult,
     PointsCandidate,
     Ratio,
+    Reason,
     Strategy,
     SurchargeEstimate,
     Transfer,
@@ -1784,9 +1785,17 @@ def set_verdict_sensitivity(result: LegResult, apd_usd: float = 0.0) -> None:
     as a settled POINTS verdict, because before the duty both ends sat below the
     fare. It is the F-3 shape one field along: a flag decided on figures that
     are not the ones scored. So it is a function, it recomputes from the current
-    scores, and `apply_apd` calls it again after moving them. Re-deciding the
-    same answer changes nothing (the reason and the warning keep their place);
-    a changed answer replaces them rather than leaving figures that have moved.
+    scores, and `apply_apd` calls it again after moving them.
+
+    FINDING R2-2. It then returned early when the FLAG did not change - which
+    also skipped the sentence, and the sentence quotes FIGURES. A band that
+    straddled the fare both before and after the duty kept a reason built from
+    the pre-APD numbers: both ends $330.38 low, and the duty not named, so the
+    "defensible low end" read better than the one actually scored. The same
+    failure the fix was written to close, one branch along. The reason is now
+    rebuilt from the current figures every time and compared; when it comes out
+    identical nothing is touched, so re-deciding the same answer on the same
+    numbers still leaves the reason and the warning exactly where they were.
     """
     flips = False
     if (
@@ -1798,35 +1807,51 @@ def set_verdict_sensitivity(result: LegResult, apd_usd: float = 0.0) -> None:
         wins_at_low = result.points_score_low_usd < result.cash_total_score_usd
         wins_at_high = result.points_score_high_usd < result.cash_total_score_usd
         flips = wins_at_low != wins_at_high
-    if flips == result.verdict_sensitive:
-        return
-    result.reasons = [x for x in result.reasons if x.code != "VERDICT_SENSITIVE"]
-    result.warnings = [
-        w for w in result.warnings if not w.startswith("VERDICT SENSITIVE:")
-    ]
     result.verdict_sensitive = flips
-    if not flips:
+    reason = warning = None
+    if flips:
+        duty = (
+            f" UK Air Passenger Duty of ${apd_usd:,.2f} is counted in both ends."
+            if apd_usd
+            else ""
+        )
+        reason = Reason(
+            code="VERDICT_SENSITIVE",
+            detail=(
+                f"The verdict FLIPS inside the surcharge range: points score "
+                f"${result.points_score_low_usd:,.2f} at the low end and "
+                f"${result.points_score_high_usd:,.2f} at the high end, against "
+                f"${result.cash_total_score_usd:,.2f} cash.{duty} This recommendation "
+                f"is NOT settled - capture the real surcharge before booking."
+            ),
+            data={
+                "low": result.points_score_low_usd,
+                "high": result.points_score_high_usd,
+                "cash": result.cash_total_score_usd,
+            },
+        )
+        warning = (
+            "VERDICT SENSITIVE: the recommendation reverses inside the "
+            "surcharge estimate's own range. Do not treat it as settled."
+        )
+    _restate(result.reasons, lambda x: x.code == "VERDICT_SENSITIVE", reason)
+    _restate(result.warnings, lambda w: w.startswith("VERDICT SENSITIVE:"), warning)
+
+
+def _restate(items: list, matches, replacement) -> None:
+    """Put `replacement` where the item `matches` picked out already was, so a
+    restated sentence does not move in the output; append it if there was none,
+    and drop the old one when there is no replacement. Identical text is left
+    alone entirely."""
+    at = next((i for i, x in enumerate(items) if matches(x)), None)
+    if at is None:
+        if replacement is not None:
+            items.append(replacement)
         return
-    duty = (
-        f" UK Air Passenger Duty of ${apd_usd:,.2f} is counted in both ends."
-        if apd_usd
-        else ""
-    )
-    result.add_reason(
-        "VERDICT_SENSITIVE",
-        f"The verdict FLIPS inside the surcharge range: points score "
-        f"${result.points_score_low_usd:,.2f} at the low end and "
-        f"${result.points_score_high_usd:,.2f} at the high end, against "
-        f"${result.cash_total_score_usd:,.2f} cash.{duty} This recommendation is "
-        f"NOT settled - capture the real surcharge before booking.",
-        low=result.points_score_low_usd,
-        high=result.points_score_high_usd,
-        cash=result.cash_total_score_usd,
-    )
-    result.warnings.append(
-        "VERDICT SENSITIVE: the recommendation reverses inside the "
-        "surcharge estimate's own range. Do not treat it as settled."
-    )
+    if replacement is None:
+        del items[at]
+    elif items[at] != replacement:
+        items[at] = replacement
 
 
 def _apd_cabin(result: LegResult) -> Tuple[str, str]:
