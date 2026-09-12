@@ -65,6 +65,9 @@ a { color: var(--ember); }
 .chip-withheld { border-color: var(--warn); color: var(--warn); background: repeating-linear-gradient(135deg, rgba(200,146,58,.16) 0 3px, transparent 3px 7px); }
 .chip-unknown { border: 1px dashed var(--unknown); color: var(--bone); }
 .chip-neutral { border-color: var(--seam); color: var(--smoke); }
+/* A surcharge nobody observed - modelled from the table. */
+.chip-modeled { border-color: var(--warn); color: var(--warn); }
+.chip-modeled .q { color: var(--smoke); }
 .chip-indirect { border-color: var(--warn); color: var(--bone); }
 .chip-exitwarn { border-color: var(--warn); color: var(--bone); }
 .chip-notfund { border-color: var(--seam); color: var(--smoke); }
@@ -257,7 +260,7 @@ td .sub2 { min-width: 22ch; }
 .wallet-rows > .btn { justify-self: start; }
 
 /* The legs table is wider than any sensible window: the leg id and the verdict
-   are pinned so the answer is never the part that scrolled away (M-5). */
+   are pinned so the answer is never the part that scrolled away. */
 table.grid tbody tr { background: var(--coal); }
 table.grid td.pin-left, table.grid td.pin-right { background: inherit; }
 table.grid th.pin-left, table.grid th.pin-right { background: var(--coal); }

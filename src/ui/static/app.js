@@ -13,6 +13,7 @@
 
   var TOKEN = (document.querySelector('meta[name="po-token"]') || {}).content;
   var CALLS_NOTE = "Seats.aero also counts your other runs today, which this tool cannot see.";
+  var CALLS_DAY_NOTE = "Calls since this server started; the daily budget beside it is Seats.aero's and resets at midnight.";
   var UNV_WORD = "unverified";
 
   var S = {
@@ -67,6 +68,12 @@
   }
   function isNum(x) { return typeof x === "number" && isFinite(x); }
   function fmtInt(n) { return isNum(n) ? Math.round(n).toLocaleString("en-US") : null; }
+  // The confirm dialog says which count is which, for the same reason.
+  function callsSentence(c) {
+    return "Calls since this server started: " + fmtInt(c.since_launch) +
+      ". Spent today against Seats.aero's daily budget: " + fmtInt(c.spent_today) +
+      " of " + fmtInt(c.cap) + " (it resets at midnight). " + CALLS_NOTE;
+  }
 
   /* rich style -> class (4.7 "Segments") */
   function styleClass(style) {
@@ -198,8 +205,13 @@
         add(calls, "this run: not measured · ");
       }
     }
-    add(calls, el("b", "", fmtInt(since)), " since launch / " + fmtInt(st.calls.cap));
-    calls.title = CALLS_NOTE;
+    // Two numbers, not one. "since launch" is what THIS server has spent
+    // and never resets; the budget it is spending is Seats.aero's daily one,
+    // which does reset at midnight. Showing "N since launch / 1,000" read as
+    // one number against the other and understated the server after midnight.
+    add(calls, el("b", "", fmtInt(since)), " since launch · ");
+    add(calls, el("b", "", fmtInt(st.calls.spent_today)), " of " + fmtInt(st.calls.cap) + " today");
+    calls.title = CALLS_DAY_NOTE + " " + CALLS_NOTE;
 
     var chips = clear($("wallet-chips"));
     var w = st.wallet;
@@ -557,8 +569,7 @@
     var why = b.flight_legs + " flight-leg search" + (b.flight_legs === 1 ? "" : "es") +
       " × up to " + b.pages_per_search + " pages each" +
       (b.lookup_cap ? " + up to " + b.lookup_cap + " itinerary lookups" : "") +
-      ". Cache hits are free and are not counted. Calls since launch: " + fmtInt(pf.calls.since_launch) +
-      " of " + fmtInt(pf.calls.cap) + ". " + CALLS_NOTE;
+      ". Cache hits are free and are not counted. " + callsSentence(pf.calls);
     var lines = [];
     if (isNum(pf.cache_answerable)) {
       lines.push("The disk cache can answer " + pf.cache_answerable + " of the " + b.flight_legs +
@@ -989,7 +1000,20 @@
     var su = section("Surcharge", "drawer-surcharge");
     if (!leg.surcharge) { add(su, p("No points path, so no surcharge applies to a points option here.", "dim")); }
     else {
-      if (!leg.surcharge.known) { var sp = el("p"); add(sp, unknownChip()); add(su, sp); }
+      var sp = el("p");
+      if (!leg.surcharge.known) { add(sp, unknownChip()); }
+      else {
+        // The terminal's own line LOSES this word: it prints
+        // "[modeled]" as markup and rich reads it as a style tag and eats it.
+        // The drawer takes it from the engine field instead, so "$0.00" is
+        // never shown here without saying whether anyone observed it. The CLI
+        // line itself is an older defect and is filed, not fixed, this round.
+        var conf = String(leg.surcharge.confidence || "unknown").toUpperCase();
+        add(sp, tid(chip(conf === "CAPTURED" ? "neutral" : "modeled", conf,
+          conf === "CAPTURED" ? "observed in a capture" : "from the surcharge table, not observed"),
+          "surcharge-confidence"));
+      }
+      add(su, sp);
       linesByTopic(leg, ["surcharge", "surcharge_unknown"]).forEach(function (l) { add(su, lineP(l)); });
     }
     add(d, su);
@@ -1180,8 +1204,8 @@
       if (pf.blocked) { showBanner(pf.blocked.message); return; }
       openConfirm({
         lead: "This search can spend up to", n: pf.max_calls,
-        why: "One call per results page (one page is the only shape seen so far). Calls since launch: " +
-          fmtInt(pf.calls.since_launch) + " of " + fmtInt(pf.calls.cap) + ". " + CALLS_NOTE,
+        why: "One call per results page (one page is the only shape seen so far). " +
+          callsSentence(pf.calls),
         extra: ["Searches " + pf.window.from + " to " + pf.window.to + ". Single-route search does not use the disk cache."],
         cmd: pf.argv_display, go: "Spend up to " + pf.max_calls + " calls",
         testid: "search-confirm", goid: "search-confirm-go"

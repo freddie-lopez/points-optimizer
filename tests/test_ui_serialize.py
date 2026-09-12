@@ -33,7 +33,7 @@ def _payload(name, tmp_path, monkeypatch):
     }
     mode = "replay" if "--from-snapshot" in g.SCENARIOS[name].argv else (
         "offline" if "--offline" in g.SCENARIOS[name].argv else "live")
-    payload = serialize.trip_run(out, mode, "trip", {"since_launch": 0, "cap": 1000})
+    payload = serialize.trip_run(out, mode, "trip", {"since_launch": 0, "spent_today": 0, "cap": 1000})
     return result, run, payload
 
 

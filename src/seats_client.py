@@ -988,6 +988,11 @@ class SeatsClient:
 
     _calls_made = 0
     _calls_date: Optional[date] = None
+    # L-1. `_calls_made` is Seats.aero's DAILY budget and zeroes at the date
+    # change. A long-lived process (the UI is one) that reported it as "spent
+    # since launch" understated itself every midnight. This one never resets,
+    # so the two numbers can be told apart and neither has to pretend.
+    _calls_ever = 0
 
     def __init__(self, api_key: Optional[str] = None):
         # v5 STEP 1. The key comes from `config.resolve_key`, not from
@@ -1061,6 +1066,7 @@ class SeatsClient:
     def _count_call(cls) -> None:
         cls._budget_remaining()
         cls._calls_made += 1
+        cls._calls_ever += 1
 
     @classmethod
     def reset_call_budget(cls) -> None:

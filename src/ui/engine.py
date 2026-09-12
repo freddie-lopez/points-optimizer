@@ -139,6 +139,10 @@ class Engine:
         self._confirms: Dict[str, Tuple[str, float]] = {}
         self._confirms_lock = threading.Lock()
         self._runs: "OrderedDict[str, dict]" = OrderedDict()
+        # L-1: the zero for "since launch", taken at launch.
+        from src.seats_client import SeatsClient
+
+        self._calls_at_launch = SeatsClient._calls_ever
 
     # ------------------------------------------------------------------ key
 
@@ -300,11 +304,17 @@ class Engine:
         return out
 
     def calls_state(self) -> Dict[str, int]:
+        """L-1. Two different numbers, and they are not the same number: what
+        THIS server has spent since it started, and what is left of Seats.aero's
+        daily budget. The budget zeroes at midnight; the launch count does not,
+        so a server left running overnight no longer reports fewer calls than
+        it made."""
         from src.seats_client import SeatsClient
 
         remaining = SeatsClient._budget_remaining()
         return {
-            "since_launch": SeatsClient.DAILY_CALL_CAP - remaining,
+            "since_launch": SeatsClient._calls_ever - self._calls_at_launch,
+            "spent_today": SeatsClient.DAILY_CALL_CAP - remaining,
             "cap": SeatsClient.DAILY_CALL_CAP,
             "remaining": remaining,
         }

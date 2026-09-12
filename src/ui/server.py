@@ -56,6 +56,11 @@ SECURITY_HEADERS = (
     ("X-Content-Type-Options", "nosniff"),
     ("Referrer-Policy", "no-referrer"),
     ("X-Frame-Options", "DENY"),
+    # L-4. frame-ancestors stops the page being framed, but a page on any
+    # origin could still pull /static/app.js in as a <script> - the token is
+    # not in it, so nothing leaks, but nothing else on this server should be
+    # readable that way either. CORP refuses the cross-origin read outright.
+    ("Cross-Origin-Resource-Policy", "same-origin"),
 )
 MAX_BODY_BYTES = 64 * 1024
 
