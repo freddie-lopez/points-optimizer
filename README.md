@@ -244,6 +244,13 @@ inline script. The key never leaves the server: the transcript's key line is
 replaced, and any response that would contain the key or its mask is refused
 instead of sent. Local malware is out of scope - it could read `~/.zshrc`.
 
+**One request does leave your machine**, and it is not the API key: the page
+loads two webfonts from Google (`fonts.googleapis.com`, `fonts.gstatic.com`),
+which tells Google your IP address and when you opened the app. Nothing else -
+no trip, no balance, no award, no key - is ever sent anywhere but Seats.aero.
+Block those two hosts, or run with no network, and the page falls back to your
+system fonts and works exactly the same.
+
 **Keyboard and phone.** Table rows and search cells are focusable: Enter or
 Space opens the detail panel and puts focus on its close button, and Esc closes
 it and gives focus back to the row you opened it from (Esc closes a confirmation

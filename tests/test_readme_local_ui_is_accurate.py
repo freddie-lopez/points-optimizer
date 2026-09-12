@@ -42,6 +42,8 @@ def test_the_section_exists_and_is_not_a_stub():
     ("phone width", ["720px", "400px"]),
     ("what the trip list says", ["CANNOT LOAD", "NOT A PER-LEG TRIP"]),
     ("every run is a CLI run", ["Equivalent command", "masked key not sent to the browser"]),
+    ("the one request that leaves the machine",
+     ["fonts.googleapis.com", "fonts.gstatic.com", "system fonts"]),
 ])
 def test_the_section_covers(topic, needles):
     missing = [n for n in needles if n not in FLAT]
@@ -89,3 +91,23 @@ def test_the_breakpoint_it_quotes_is_the_stylesheet_s():
 def test_it_does_not_still_describe_the_counter_that_reset_at_midnight():
     assert '"since launch" for today' not in FLAT, \
         "L-1: the launch count and the daily budget are two numbers now"
+
+
+def test_every_outside_host_the_page_can_reach_is_named_in_the_readme():
+    """The threat model may not read cleaner than the page behaves.
+
+    A reader who finishes that paragraph believes nothing leaves the machine, so
+    every host the page or its policy allows has to be named there. This is the
+    Manager's must-fix from the UI review: the webfont request was real, and the
+    README described everything except it.
+    """
+    hosts = set()
+    for path in sorted(STATIC.glob("*")) + [ROOT / "src" / "ui" / "server.py"]:
+        if not path.is_file():
+            continue
+        hosts.update(re.findall(r"https://([A-Za-z0-9.-]+)", path.read_text()))
+    unnamed = sorted(h for h in hosts if h not in FLAT)
+    assert unnamed == [], (
+        "the Local UI section does not tell the reader the page can reach "
+        f"{unnamed}; say so, or stop reaching them"
+    )
