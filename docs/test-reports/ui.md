@@ -715,3 +715,163 @@ the page shows.
 | New: R3-1 `nights × points_per_night` | Open (Medium) |
 | New: R3-2 portability tests need `.git` | Open (Low) |
 | New: R3-3 refusal prints the whole number | Open (Low) |
+
+---
+
+# Re-test 4 — attacking the round-3 fixes
+
+Against `001bd5f` (two commits on `3776cff`), round 3 of
+`runs/points-optimizer/ui-fix-report-1.md`. New probes in
+`ui-probes/test_ui_m_retest4.py`.
+
+**468 probes: 8 red, 460 green.** Every probe from round 1 and re-tests 2 and 3
+is green — R3-1, R3-2 and R3-3 are closed. The 8 reds are **two** new findings,
+each in a cash-option and a mandatory-fee shape, each at the CLI and at the API.
+Both are the same family as M-1 / R2-3 / R3-1: the guard is right, and the
+arithmetic reaches one step past it — once on the caller's side of the guard,
+once on the other.
+
+| Check | Result |
+|---|---|
+| `.venv/bin/python -m pytest -q -p no:cacheprovider` | **2079 passed, 13 skipped** (as claimed) |
+| the same under `-O` | **2079 passed, 13 skipped**, 1 warning |
+| the same suite in an unpacked `git archive HEAD` export, outside interpreter | **2075 passed, 17 skipped, 0 failed** (as claimed) |
+| `test_ui_g_cli_parity.py` | 69 / 69 green |
+| v5 / adversarial / known-failures / operating-airline | **19 / 40 / 0 / 5 red — identical by id** |
+| working tree | clean apart from this report and the probe files |
+| network | nothing left the machine |
+
+## New findings
+
+### Medium
+
+**R4-1 — a huge integer in a money field still crashes: the loader converts before the guard runs.**
+Probes `test_ui_m_retest4.py::test_M1[cash_bigint]`, `::test_M1[fee_bigint]`,
+`::test_M2[cash_bigint]`, `::test_M2[fee_bigint]` (RED).
+
+Round 3 added `except OverflowError` **inside** `config.unscoreable_cash_reason`
+and reported that "a huge int in a money field escaped the guard entirely" was
+closed. The guard function does catch it now — but `trip_loader._finite_amount`
+does its own conversion one line earlier:
+
+```python
+try:
+    amount = float(value)            # float(10 ** 400) -> OverflowError
+except (TypeError, ValueError) as e: # ... which is not caught here
+```
+
+so a fixture carrying `{"amount": 10**400}` in a cash option or a mandatory fee
+never reaches the guard.
+
+* CLI: `OverflowError: int too large to convert to float`, a traceback, exit 1.
+* UI: the trip list's CANNOT LOAD row reads `OverflowError: int too large to
+  convert to float`, `/api/trips/{id}` answers 422 with the same text, and a run
+  answers **500 `Unexpected OverflowError`**.
+
+One `except OverflowError` beside the existing one closes it. The count path
+(`_count`) already catches `OverflowError`; only the money path does not.
+
+**R4-2 — the bound is currency-blind: an amount that only overflows once the FX rate is applied.**
+Probes `::test_M3[cash_in_eur]`, `::test_M3[fee_in_eur]`, `::test_M4[cash_in_eur]`,
+`::test_M4[fee_in_eur]` (RED).
+
+The guard checks the number **as the file states it**, at the default valuation.
+What is scored is that number times an FX rate. `1.6e306 EUR` passes
+(`1.6e306 / 0.01` is finite), is converted to `1.859e306 USD` at the EUR rate of
+1.1620, and `cash_to_points_equivalent` then divides by 0.01 into `inf`:
+
+* CLI: `OverflowError: cannot convert float infinity to integer`, traceback, exit 1.
+* UI: **500 `Unexpected OverflowError`**; the trip lists and opens normally
+  first, so it looks fine until it is run.
+
+Both a `cash_options` amount and a `mandatory_fees` amount reach it. The bound
+would have to be taken on the USD figure (or `cash_to_points_equivalent` would
+have to refuse rather than raise); the same hole exists for any rate the run
+applies after loading.
+
+## What I could not break in the round-3 fixes
+
+**R3-1 (the products).** Every product the file determines is now a clean load
+refusal: `points_per_night × nights`, `points × travellers`, `cash ×
+travellers`, `fee.amount × nights × travellers` (`M5`). The refusal names the
+fixture's own fields — `leg 'B5': the award points (points_per_night x nights)
+is too large to score … (a 401-digit number …)` — rather than reporting `inf is
+not a finite amount` at the arithmetic (`M6`). Realistic numbers are untouched:
+30 nights × 12,000 points a night prints `360,000`, and a 1,000,000-point award
+prints in full and scores (`M7`). No run-time knob turns a legal fixture into a
+traceback — `--valuation-cpp 1e-10`, `1e300` and `0.000001`, a 301-digit
+`--transfer-increment`, a 301-digit `--max-stranded-points` (`M8`). APD ×
+travellers on a UK departure with a 10³⁰⁰ party is exit 3, not a crash. And the
+search path — whose numbers come from the API and have never been through any of
+these guards — survives a 401-digit `MileageCost`, a `1e308` one, a 401-digit
+tax figure and a negative cost: exit 0 or a refusal, no 500, no traceback
+(`M9`).
+
+**R3-2 (the export).** I unpacked `git archive HEAD` into a clean directory and
+ran it with an interpreter from outside the tree: **2075 passed, 17 skipped, 0
+failed**, 296 files, no symlink, no `.venv` (`M12`). The skips are the right
+ones: 13 documented gates (4 APD-verification, 9 live-snapshot) plus exactly the
+4 portability tests, skipped only for "no .git here" (`M13`) — and those 4 do
+run, and pass, in a clone (`M14`). Nothing is silently skipped that would run on
+his machine.
+
+**R3-3 (the number in the message).** No path I could find prints the digits:
+the CLI line, the UI's CANNOT LOAD row, `/api/trips/{id}`'s 422, the run's
+refusal and the transcript all read "a 401-digit number", and the builder's
+`--travelers`, `--hotel NIGHTS` and `--leg CASH_USD` refusals do too, with
+nothing written (`M10`, `M11`). A number a person can read is still printed
+unchanged.
+
+**Everything earlier still holds.** All 441 probes from the previous rounds
+pass: DOM parity for the recurring failure in every scenario, the security suite
+and the cross-origin attacker page, spending (no call without a fresh matching
+confirm; the maxima hold under pagination, flex days and lookups), long-lived
+process state, couple trips WITHHELD at exit 3, the `-O` import guards, the
+phone and docked layouts with the pinned columns, focus restore, and the
+transcript equalling the CLI's own output for the argv the page shows.
+
+## If there were another round, this is what I would attack
+
+Named so the manager can tell what is *tested* from what is merely *unbroken so
+far*:
+
+1. **The real Seats.aero.** Nothing in four rounds has touched it. Real
+   pagination shapes, a 429 in the middle of a trip run, a slow or partial page,
+   and the trips endpoint's real field names (the parser is still UNVERIFIED
+   against a real response) are all inherited by the UI untested. This is the
+   biggest unknown by a distance, and only his Mac can close it.
+2. **Wall-clock life.** I ran many scenarios in one process; I did not run one
+   server across a real midnight, or for hours against the 6-hour disk cache.
+   The date rollover is now two counters instead of one, which is better and
+   still untested against a real clock.
+3. **Concurrency other than two runs.** The run lock is proven. Preflights,
+   wallet edits and trip creates race freely against each other and against a
+   run; I tested creates against creates and runs against runs, not the
+   interleavings, and not two browser tabs doing different things.
+4. **The replay allowlist over time.** Manifest ids are positional; a file
+   appearing between page load and Run is a known, documented gap, and a
+   manifest edited under a running app is untested.
+5. **The small end of the number line.** Four rounds of overflow work have all
+   been about the top: `1e-320` fares, fractional points, negative zero, and
+   cent-level rounding in the totals are untouched.
+6. **Fixture shape rather than fixture numbers.** 10,000 legs, deeply nested
+   JSON, duplicate leg ids, a leg id that collides with a `data-testid`
+   selector, a fixture that is a 50 MB file.
+7. **A browser that is not headless Chromium 1194** with Google Fonts blocked —
+   his Safari or Chrome, with the fonts actually loading, at a real retina
+   width.
+8. **The two filed CLI items** (Score-column truncation, the swallowed
+   `[modeled]`) and F-2 (`0.00% (none)`, kept verbatim by decision T4): all
+   three are known, agreed and still there.
+
+## Findings ledger
+
+| Finding | State |
+|---|---|
+| Round 1: H-1, M-1…M-6, L-1…L-4 | **Closed** (M-6 and L-2 with their CLI-output halves filed) |
+| Re-test 2: R2-1 … R2-4 | **Closed** |
+| Re-test 3: R3-1 products | **Closed** for the products the file determines; the family continues in R4-1/R4-2 |
+| Re-test 3: R3-2 export | **Closed** — verified by running the export myself |
+| Re-test 3: R3-3 number in the message | **Closed** on every path I could find |
+| New: R4-1 huge int in a money field | Open (Medium) |
+| New: R4-2 FX-converted amount | Open (Medium) |
