@@ -1,5 +1,6 @@
 """Load multi-leg trip fixtures from JSON."""
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -247,29 +248,131 @@ class TripFixtureError(ValueError):
 REQUIRED_TOP_LEVEL = ("id",)
 
 
+# ---------------------------------------------------------------------------
+# What a trip fixture may be SHAPED like - MAC-2
+# ---------------------------------------------------------------------------
+#
+# R5-4 caught a 400-level-deep JSON document by catching the RecursionError
+# `json.loads` raises walking it. That is not a rule, it is whatever the
+# interpreter happens to do with its stack: the same 400-deep file is REFUSED
+# here (exit 1, CANNOT LOAD) and LOADED on Tsuki's macOS Python, where the C
+# scanner gets further before the limit bites. The suite's own
+# test_a_malformed_file_is_one_line_not_a_traceback[deeply_nested] therefore
+# passed on one machine and failed on the other - the refusal boundary deciding
+# by platform, which is the exact class of problem the boundary was built to
+# end.
+#
+# So the depth is a RULE, checked before the file is parsed, by SCANNING the
+# text rather than by walking a parsed tree - the scan cannot itself run out of
+# stack, so it gives the same answer on every interpreter on every platform.
+#
+# DEPTH. The deepest shape the fixture schema has is five levels: the document,
+# `legs`, a leg, `cash_options`/`points_candidates`/`mandatory_fees`, and one of
+# those objects. Every committed fixture measures 2 to 5. 32 is six times the
+# deepest shape that exists, so a nesting level nobody has designed yet still
+# loads, and nothing a person writes by hand comes close.
+MAX_NESTING_DEPTH = 32
+
+# SIZE. The largest committed fixture is 17 KB (trip_b_europe.json, seven legs),
+# and both the scan and `json.loads` hold the whole file in memory. 4 MB is
+# ~240x the largest real one - room for a trip with hundreds of legs, each with
+# every option filled in - and it is a bound rather than a ceiling somebody will
+# meet. It matters because the file is chosen by whoever points --trip-fixture
+# at it, and because the UI lists and loads every file in its trips directory
+# on every page load.
+MAX_FILE_BYTES = 4 * 1024 * 1024
+
+# NUMBER OF LEGS, NUMBER OF KEYS: deliberately NOT limited. Both are bounded
+# already - a file under MAX_FILE_BYTES cannot hold more than a few tens of
+# thousands of either - and neither reaches recursion or any other stack: legs
+# are a flat loop and keys are dict lookups, so a big-but-legal trip is slow at
+# worst, never a crash. A leg cap would be a number invented out of nothing that
+# could one day refuse a real round-the-world itinerary, which is the thing this
+# comment block is here to avoid.
+
+# A JSON string literal, so quoted text cannot contribute brackets to the count.
+_JSON_STRING = re.compile(r'"(?:[^"\\]|\\.)*"', re.DOTALL)
+_NOT_A_BRACKET = re.compile(r"[^\[\]{}]+")
+
+
+def json_nesting_depth(text: str) -> int:
+    """
+    The deepest level of `[`/`{` nesting in this JSON text, counted WITHOUT
+    parsing it.
+
+    MAC-2: the point is that this runs before `json.loads` and uses no stack of
+    its own, so the answer is a fact about the file and not about the
+    interpreter reading it. Brackets inside string literals are not nesting, so
+    the literals are removed first; everything that is not a bracket is then
+    dropped, and what is left is short enough to walk in Python whatever the
+    file's size.
+    """
+    brackets = _NOT_A_BRACKET.sub("", _JSON_STRING.sub("", text))
+    depth = deepest = 0
+    for ch in brackets:
+        if ch in "[{":
+            depth += 1
+            if depth > deepest:
+                deepest = depth
+        else:
+            depth -= 1
+    return deepest
+
+
+def _too_deep(name: str, depth: int) -> "TripFixtureError":
+    """The ONE sentence a too-deeply-nested file gets, on every platform,
+    whether the rule caught it or the RecursionError backstop did."""
+    return TripFixtureError(
+        f"{name} is nested {depth} levels deep, and a trip fixture may be at "
+        f"most {MAX_NESTING_DEPTH}. It is not a trip fixture."
+    )
+
+
 def load_trip_fixture(path: Path) -> TripFixture:
     """Load a multi-leg trip fixture from JSON. Raises TripFixtureError, never KeyError."""
     path = Path(path)
+    # MAC-2: the size is checked before the bytes are read, so a file too large
+    # to hold in memory is refused without being held in memory.
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except json.JSONDecodeError as e:
-        raise TripFixtureError(f"{path.name} is not valid JSON: {e}") from e
-    except RecursionError as e:
-        # R5-4: `json.loads` recurses per level of nesting, so a deeply nested
-        # document exhausts the stack before any of this module's rules run.
-        # A malformed FILE is a load refusal like any other - not a traceback
-        # from the CLI and not a 500 from the UI.
+        size = path.stat().st_size
+    except IsADirectoryError as e:
+        raise TripFixtureError(f"{path.name} is a directory, not a trip fixture file.") from e
+    except PermissionError as e:
+        raise TripFixtureError(f"{path.name} cannot be read: permission denied.") from e
+    except OSError:
+        # Anything else about the file itself (it is gone, it is a broken
+        # symlink) is reported by the read below, which already has a clause
+        # for it - FileNotFoundError stays FileNotFoundError, as `main` and the
+        # UI's trip list both expect.
+        size = 0
+    if size > MAX_FILE_BYTES:
         raise TripFixtureError(
-            f"{path.name} is nested too deeply to read: the file has more levels "
-            f"of nesting than this tool can walk. It is not a trip fixture."
-        ) from e
+            f"{path.name} is {size:,} bytes, and a trip fixture may be at most "
+            f"{MAX_FILE_BYTES:,}. It is not a trip fixture."
+        )
+    try:
+        text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as e:
         raise TripFixtureError(f"{path.name} is not UTF-8 text: {e}") from e
     except IsADirectoryError as e:
         raise TripFixtureError(f"{path.name} is a directory, not a trip fixture file.") from e
     except PermissionError as e:
         raise TripFixtureError(f"{path.name} cannot be read: permission denied.") from e
+    # MAC-2: the RULE, before the parser gets a chance to decide by stack depth.
+    depth = json_nesting_depth(text)
+    if depth > MAX_NESTING_DEPTH:
+        raise _too_deep(path.name, depth)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise TripFixtureError(f"{path.name} is not valid JSON: {e}") from e
+    except RecursionError as e:
+        # R5-4, kept as a BACKSTOP. `json.loads` recurses per level of nesting,
+        # so on an interpreter with a small stack (or one already deep in a call
+        # chain) it can give up on a document the rule above accepted. Same
+        # sentence either way: the reader is told the file's depth and the
+        # limit, never which interpreter ran out first.
+        raise _too_deep(path.name, depth) from e
     if not isinstance(data, dict):
         raise TripFixtureError(
             f"{path.name} is not a trip fixture: its top level is a "
@@ -301,9 +404,8 @@ def load_trip_fixture(path: Path) -> TripFixture:
     except (TypeError, ValueError, AttributeError) as e:
         raise TripFixtureError(f"{path.name}: {e}") from e
     except RecursionError as e:
-        raise TripFixtureError(
-            f"{path.name} is nested too deeply to read; it is not a trip fixture."
-        ) from e
+        # The same backstop, for the build walk rather than the parse.
+        raise _too_deep(path.name, depth) from e
 
 
 def _build_trip_fixture(data: dict) -> TripFixture:
