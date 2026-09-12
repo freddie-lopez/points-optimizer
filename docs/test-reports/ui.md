@@ -875,3 +875,180 @@ far*:
 | Re-test 3: R3-3 number in the message | **Closed** on every path I could find |
 | New: R4-1 huge int in a money field | Open (Medium) |
 | New: R4-2 FX-converted amount | Open (Medium) |
+
+---
+
+# Re-test 5 — the boundary as a property, and the untested list
+
+Against `565bafd` (two commits on `28fabeb`), round 4 of
+`runs/points-optimizer/ui-fix-report-1.md`. New probes in
+`ui-probes/test_ui_n_retest5.py`.
+
+**490 probes: 9 red, 481 green.** Every probe from rounds 1–4 is green: R4-1 and
+R4-2 are closed, and so is the whole overflow family the boundary was built for.
+The 9 reds are **four new findings**, and — this is the point — none of them is
+another overflow. Three are the *other* half of the same idea: a number that is
+readable, finite and small, and still not a price.
+
+| Check | Result |
+|---|---|
+| `.venv/bin/python -m pytest -q -p no:cacheprovider` | **3190 passed, 13 skipped** (as claimed) |
+| the same under `-O` | **3190 passed, 13 skipped**, 1 warning |
+| the unpacked `git archive HEAD` export, outside interpreter | **3186 passed, 17 skipped, 0 failed** (as claimed); skips = 4 APD gates + 9 live-snapshot gates + 4 git-only checks |
+| `test_ui_g_cli_parity.py` | 69 / 69 green |
+| v5 / adversarial / known-failures / operating-airline | **19 / 40 / 0 / 5 red — identical by id** |
+| working tree | clean apart from this report and the probe files |
+| network | nothing left the machine |
+
+## 1. The boundary, tested as a property
+
+**It holds.** I instrumented `config.scoreable_amount` / `scoreable_count` and
+loaded every committed fixture: every number in each per-leg fixture passes the
+boundary (12 calls for Trip A's 9 numbers, 53 for Trip B's 26, 16 for Trip C's
+8). `trip_001`/`trip_002` make 0 calls and contain 0 scoreable numbers — they
+have no `legs` key at all, which is what the UI now says about them.
+
+* **The conversions are total** (`N6`): `cash_to_points_equivalent(1e308,
+  1e-300)` and `points_to_cash_equivalent(10**400)` raise `UnscoreableNumber`;
+  `convert_to_usd(1.6e306, "EUR")` returns the finite product and the *next*
+  step refuses, which is where R4-2 crashed; an unknown currency and `cpp <= 0`
+  raise `ValueError`; and `367 → 36,700`, `42,600 → $426.00`, `USD → USD` are
+  unchanged.
+* **The other outside sources hold too.** A 401-digit `MileageCost`, a `1e308`
+  one, a 401-digit tax figure, a negative cost and a fractional one, through the
+  search path and through a snapshot replayed from disk: a refusal or
+  `no_awards`, never a wrong number in a cell, never a traceback (`N3`, `N4`).
+  Every numeric CLI flag refuses cleanly — `--valuation-cpp 0 / -1 / 1e400 /
+  nan`, `--transfer-increment 0 / -5`, `--fx GBP=0 / -1 / 1e400`,
+  `--max-stranded-points`, `--cache-ttl`, `--balance UR=1e400`.
+* **The backstop does not swallow a named refusal** (`N7`): a `10**400` cash
+  amount is still "leg 'A1' cash option amount: … too large to score", not "this
+  run could not be scored".
+* **A legal fixture is untouched** (`N8`): Trip B offline is still
+  `2.04% - 11.03% (badge)`, B1 `$500.00`, B4 `$418.11`.
+
+The `ast` ban on `int()`/`float()` in `trip_loader` is a guard on *code*, and
+nothing a JSON document can carry defeats it: JSON produces only int, float,
+str, bool, None, list and dict, so there is no object with a misbehaving
+`__float__` to smuggle in. It would not stop a future author importing
+`decimal` or calling `operator.index`, which is worth knowing but is not
+something an input can do.
+
+## 2. New findings
+
+### Medium
+
+**R5-1 — the loader scores money the builder refuses: zero, negative zero, negative, `true`, and a denormal.**
+Probes `test_ui_n_retest5.py::test_N1[zero|negative_zero|negative|true|denormal]` (RED).
+
+`trip_builder.validate_cash` refuses these in the project's own words — *"a cash
+price of 0.0 is refused. Zero is not a price - it is silence, and this project
+has confused the two before"*. `trip_loader` has no such rule, so a hand-edited
+or externally supplied fixture is scored on the figure:
+
+| in the file | the table prints | the verdict sentence |
+|---|---|---|
+| `"amount": 0` | `$0.00` | `Cash is cheaper: $0.00 vs at least $430.00` |
+| `"amount": -0.0` | `$-0.00` | same |
+| `"amount": -50.0` | `$-50.00`, cash-as-points `-5,000` | same, and it feeds the trip totals |
+| `"amount": true` | `$1.00` | a boolean scored as a dollar |
+| `"amount": 1e-320` | `$0.00` | a fare that renders as zero |
+
+The overflow boundary made the top of the number line safe; the bottom is where
+this project's own failure mode lives. `scoreable_amount` is the obvious place
+for the rule the builder already has (the count path already rejects booleans
+explicitly; the money path does not).
+
+**R5-2 — a points price of `0` or a negative one becomes `none - not a partner`.**
+Probes `::test_N2[0]`, `::test_N2[-42600]` (RED).
+
+The candidate is dropped silently and the leg reports *"none - not a partner"* —
+a claim about transfer partnerships that nothing checked, on a leg where a
+partner demonstrably exists in the file. This is F-1's exact shape (the finding
+this round's own plan called "the project's recurring failure"), reached from a
+different direction. Reproduced identically at `3c104b3`, so it is pre-existing
+and was never tested until now; the UI renders it in the path cell and the
+drawer.
+
+### Low
+
+**R5-3 — a 401-digit wallet balance is accepted and printed in full.**
+Probe `::test_N5` (RED). `--balance UR=<10**400>` is accepted; one run prints
+**914 digits**, in the wallet banner and again in the residue table, and the UI's
+`/api/wallet` echoes it. The wallet is the one outside-number path that
+`config.short_number` does not cover. No crash, no wrong verdict — an unreadable
+screen.
+
+**R5-4 — a deeply nested fixture is a `RecursionError` traceback and a 500.**
+Probe `::test_N17` (RED). 400 levels of nesting: `json.loads` exceeds Python's
+recursion limit, the CLI prints a traceback and exits 1, the UI's trip list
+shows `RecursionError: maximum recursion depth exceeded…` and a run answers
+**500 `Unexpected RecursionError`**. The backstop covers `ValueError` and
+`ArithmeticError`; `RecursionError` is a `RuntimeError`. The boundary's own
+stated property is "nothing that overflows anywhere reaches the reader as a
+traceback" — this is a different overflow (the stack), and it does.
+
+## 3. The list I said I would attack, worked
+
+* **Wall-clock life.** A cache entry older than the 6-hour TTL is re-fetched,
+  not served (`N9`); a cached answer does not re-stamp itself as freshly fetched
+  when the clock moves inside the TTL, and its line still says when the bytes
+  were fetched (`N10`); the two call counters still survive midnight (`K17`).
+* **Concurrency beyond two runs.** A draft, a create, a wallet edit and a state
+  read, all fired *during* a LIVE run: the run completes, uses the wallet it
+  started with, and none of them is refused or corrupted (`N11`). Two tabs on
+  one server: both authenticate, and the second run is refused `busy` while the
+  first holds the slot (`N12`).
+* **The positional replay manifest id.** With a second manifest inserted into
+  the corpus between the preflight and the Run — so index 0 now names a
+  different file — the run used the manifest the confirm had named (`N13`).
+* **The small end of the number line.** This is R5-1: denormals, zero, negative
+  zero and negatives are accepted and scored. Cent-level rounding across the
+  totals I did **not** test (see below).
+* **Fixture shape rather than magnitude.** 10,000 legs in a 1.2 MB file: scored,
+  no crash, the UI lists and runs it (`N14`). Two legs sharing one id: both are
+  printed, neither silently swallows the other (`N15`). A leg id carrying
+  `leg-row-B1"><img src=x onerror=alert(1)>`: it round-trips as text through the
+  API and breaks nothing (`N16`). Deep nesting is R5-4.
+* **A second browser.** Not possible here: `/opt/pw-browsers` holds Chromium
+  1194 and its headless shell only; the Firefox and WebKit paths Playwright
+  names do not exist on this machine. Everything visual and behavioural in every
+  round has been measured in headless Chromium 1194 with Google Fonts blocked.
+
+## 4. What is still untested, plainly
+
+So the manager can judge what is merely *unbroken so far*:
+
+1. **The real Seats.aero.** Unreachable from here and out of bounds by rule.
+   Real pagination, a mid-run 429, a slow or partial page, and the trips
+   endpoint's real field names (the parser is still UNVERIFIED against a real
+   response) are all inherited by the UI untested.
+2. **Any browser but headless Chromium 1194**, and any real display: Safari,
+   his Chrome, a retina width, Google Fonts actually loading, and the whole
+   pointer/touch path on a phone rather than a 400px viewport.
+3. **Cent-level arithmetic**: rounding across totals and residues, foreign
+   currency rounding, and whether the trip totals add up to the penny on a long
+   trip. Every money probe so far has been about magnitude, not precision.
+4. **A long soak**: a server up for days, memory growth across hundreds of runs,
+   a snapshot corpus that grows all the while. I have run dozens of runs in one
+   process, not thousands.
+5. **Real wall-clock**: I moved a pinned clock. A genuine midnight, a genuine
+   six-hour-old cache entry and a genuinely stale FX table are untested.
+6. **His own data**: the real `wallet.json`, the real key resolution on macOS
+   (permissions, `~/.zshrc`), and a trips directory with his own fixtures in it.
+7. **The three known, agreed, still-open items**: the Score-column truncation,
+   the swallowed `[modeled]`, and F-2 (`0.00% (none)`, kept verbatim by decision
+   T4).
+
+## Findings ledger
+
+| Finding | State |
+|---|---|
+| Round 1: H-1, M-1…M-6, L-1…L-4 | **Closed** |
+| Re-test 2: R2-1 … R2-4 | **Closed** |
+| Re-test 3: R3-1, R3-2, R3-3 | **Closed** |
+| Re-test 4: R4-1 huge int in a money field, R4-2 FX-converted amount | **Closed** — and the family with them: the boundary holds as a property, not as a list of shapes |
+| New: R5-1 money the builder refuses is scored | Open (Medium) |
+| New: R5-2 unreadable points price → "not a partner" | Open (Medium, pre-existing) |
+| New: R5-3 401-digit wallet balance printed in full | Open (Low) |
+| New: R5-4 deep nesting → RecursionError / 500 | Open (Low) |
