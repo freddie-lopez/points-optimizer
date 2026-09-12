@@ -293,3 +293,61 @@ unrun. I ran it: 546/546.
 * **The boundary does not over-refuse.** See above.
 * **Nothing spends without being asked.** Preflights, `/api/state`, page loads and
   refused runs all left the counter where they found it.
+
+---
+
+# Sign-off re-review (b9c6f03)
+
+The must-fix is **closed**. Committed by the coordinator, since the Coder's session
+was stopped.
+
+**The wording is honest and complete.** The new paragraph is headed *"One request does
+leave your machine"*, names both hosts, says what they reveal (IP address and when the
+app was opened), says what is never sent anywhere but Seats.aero (no trip, no balance,
+no award, no key), and says that blocking them or running with no network falls back to
+system fonts with no other change. I checked all three claims rather than reading them:
+`BASE_URL = "https://seats.aero/partnerapi"` is the only outbound host anywhere in
+`src/` — `requests.get` appears twice, both in `seats_client.py`, both against it — and
+I had already driven the whole app in Chromium with every non-loopback request aborted,
+where it works on the fallback stack with nothing else changed. It does not overclaim:
+it says "and it is not the API key", which is exactly right, and it does not pretend the
+request is harmless.
+
+**The new test really guards it.** I ran three negative controls at this commit:
+
+| Control | Result |
+|---|---|
+| delete the paragraph from the README | **2 tests fail**, naming both hosts |
+| add `https://telemetry.example.com` to the CSP in `server.py` | **fails**, naming it |
+| add `https://beacon.example.net` to `app.js` | **fails**, naming it |
+| add the same host over plain `http://` | **passes** — see below |
+
+The guard is structurally right: a new host has to be in the CSP to be reachable at all
+(`default-src 'none'`), and the CSP is one of the things it scans, so it fires on the
+change that would have to happen. The section it compares against is the Local UI
+section alone, so naming a host elsewhere in the README would not satisfy it.
+
+**Verification at b9c6f03**: full suite **3,570 passed / 13 skipped**, identical under
+`-O`. The commit touches only `README.md` and that one test file; the only two probe
+files that mention the README use it incidentally (a traversal path string and a
+`[:0]` read), and I re-ran both anyway: **86 passed**. The 546-probe suite cannot be
+affected by a README-only change and I did not re-run it in full.
+
+**Two one-line improvements I would take, neither of which should hold the bundle:**
+
+1. The host regex is `https://` only, so a host declared over plain `http://` slips
+   past — and the app is itself served over `http://127.0.0.1`, so such a host would
+   actually load. One character: `https?://`.
+2. The scan covers `src/ui/static/*` and `src/ui/server.py` — the page's reach, which
+   is the right scope today. If the **server** ever fetches from a new host, the
+   paragraph becomes wrong and nothing fires. That is not hypothetical: decision 2 of
+   this review is about the FX table expiring on 2026-10-08, and one of the options is
+   fetching rates. Widen the scan to `src/*.py` with `seats.aero` allowlisted (the
+   paragraph already names it) the day that is built, if not before.
+
+**Verdict: Ship. Nothing is outstanding before the bundle goes to Tsuki.** The
+decisions in this review are his to make at leisure, not blockers; the should-fix-soon
+list is a next round; and the one thing that genuinely cannot be closed here — that
+every LIVE path in this whole round is a stub and the trips parser has never met a real
+Seats.aero response — closes on his Mac, not in this sandbox. The "what to do first on
+his Mac" list above is what I would put in front of him with the bundle.
