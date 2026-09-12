@@ -312,3 +312,91 @@ Full suite normally and under `-O` (2,079 / 13 skipped, identical), the same
 suite inside an unpacked export with an outside interpreter, all 441 Tester
 probes, the four baseline probe directories compared by test id, and Chromium at
 1440 px offline and LIVE with no page errors plus the Esc/× focus round trip.
+
+---
+
+# Round 4 — against the re-test at `28fabeb`
+
+Two Mediums, 8 red probes, both in the family that has now had five rounds. One
+commit on `001bd5f`. Nothing here made a network call.
+
+| Suite | Before | After |
+|---|---|---|
+| `tests/` (mine) | 2,079 pass | **3,190 pass, 13 skipped** — identical under `-O` |
+| the same suite in an unpacked `git archive` export | 2,075 / 17 skipped | **3,186 pass, 17 skipped, 0 fail** (460 files, no symlink) |
+| `docs/test-reports/ui-probes` | 460 pass / 8 red | **468 pass / 0 red** |
+| v5 / adversarial / known-failures / operating-airline | 19 / 40 / 0 / 5 red | **same sets, by id** |
+
+The count jumps because the new file asserts a property over a walked matrix
+rather than four hand-written shapes: 1,111 cases in
+`tests/test_no_external_number_can_crash_a_run.py`.
+
+## The family, closed rather than patched
+
+The coordinator asked whether one guard at the boundary could replace the next
+single hole. It can, but not as a single guard — the reason it took five rounds
+is that the property is not "these inputs are refused", it is **"nothing that
+reaches the optimizer can overflow, and nothing that overflows anywhere reaches
+the reader as a traceback"**, and that needs three things, deliberately
+redundant. All three are stated in one place, in `config`'s boundary comment.
+
+**1. The boundary.** `config.scoreable_amount` / `scoreable_count` are the only
+way a number from outside becomes a number this tool will score. They raise
+`UnscoreableNumber`, a **ValueError** — so `main`'s existing clause prints it as
+one red line and the UI renders a refusal; no new error path to remember.
+`src/trip_loader.py` now contains **no call to `int()` or `float()` at all**,
+which is what **R4-1** was: a `float(value)` one line above the guard, in a
+`try` that caught `TypeError` and `ValueError` while `float(10 ** 400)` raises
+`OverflowError`. A test parses the module with `ast` and fails on any such call,
+so the next parser cannot reintroduce it.
+
+**2. Total conversions.** `cash_to_points_equivalent`, `points_to_cash_equivalent`
+and `convert_to_usd` now return a number or refuse; they never raise
+`OverflowError` and never return `inf`. **This is the one that closes the
+family**, because it does not depend on anybody having enumerated the
+multiplications: any product or conversion of accepted numbers — any combination
+of fields, FX rates, counts and run-time knobs — is a refusal, not a crash.
+**R4-2** (`1.6e306 EUR`, legal until the rate is applied) is refused there,
+where the rate is known, instead of at a currency-blind bound that would have to
+guess every rate the run might apply.
+
+**3. The backstop.** `main` treats `ArithmeticError` exactly as it treats
+`ValueError`. An overflow down a path nobody has enumerated is still one line
+and exit 1 — never a traceback, and never a 500 from the UI.
+
+The same sweep was applied to the other parsers of external data:
+`seats_client._as_int` cannot be crashed by `inf`, `nan`, `"1e400"` or a
+401-digit string (it returns `None`, never `0`, as its contract says), and a
+wallet balance or valuation that cannot be held is a `WalletError` rather than
+an `OverflowError`.
+
+## The tests assert the property, not the shapes
+
+Four ways, none of which depends on somebody having listed the arithmetic:
+
+* **every numeric field in the committed fixtures**, found by *walking* them
+  rather than by being listed, set to each of eight hostile magnitudes
+  (`10**400`, `10**200`, `1e308`, `1.6e306`, the largest float, a negative
+  401-digit number, `0`, `-1`), in every currency the tool knows, through the
+  real `dispatch` and the real API — 1,038 cases, plus 32 through a live server;
+* the three conversions **total** over a grid of extreme values × six
+  valuations, including `--valuation-cpp` at `1e-10` and `1e300`;
+* **no bare conversion in a parser**, checked by parsing the code with `ast`;
+* the **backstop**: an `OverflowError` raised from inside the optimizer is one
+  line and exit 1.
+
+A field added to the fixture schema tomorrow is covered the day it is added,
+because the matrix is walked from the fixtures themselves.
+
+## Still filed, not fixed
+
+Unchanged: the derived **Score** columns truncate money exactly as the pre-UI
+CLI does, and the CLI's surcharge line still loses `[modeled]` to rich. Both
+need a round in which CLI output may move.
+
+## Verification
+
+Full suite normally and under `-O` (3,190 / 13 skipped, identical), the same
+suite inside an unpacked export with an outside interpreter (3,186 / 17 skipped,
+0 failed), all 468 Tester probes, the four baseline probe directories compared
+by test id, and Chromium at 1440 px offline and LIVE with no page errors.
