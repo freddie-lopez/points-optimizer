@@ -64,12 +64,54 @@ async function main() {
       return { drawerHidden: d.hidden, drawerText: d.hidden ? null : d.innerText.slice(0, 60),
         focus: a ? (a.getAttribute("aria-label") || a.className || a.tagName) : null };
     });
+    // Esc straight after Enter: where does focus go?
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(350);
+    out.escFocus = await page.evaluate(() => {
+      const a = document.activeElement;
+      return { drawerHidden: document.querySelector("#drawer-trips").hidden,
+        testid: a ? a.getAttribute("data-testid") : null,
+        tag: a ? a.tagName : null,
+        backOnTheRow: !!(a && (a.getAttribute("data-testid") || "").startsWith("leg-row-")) };
+    });
+    const again = await page.$('[data-testid^="leg-row-"]');
+    if (again) { await again.focus(); await page.keyboard.press("Enter");
+      await page.waitForTimeout(300); }
+    // where does focus land inside the drawer, and can it be tabbed through?
+    out.drawerTabStops = [];
+    for (let i = 0; i < 4; i++) {
+      await page.keyboard.press("Tab");
+      out.drawerTabStops.push(await page.evaluate(() => {
+        const a = document.activeElement;
+        if (!a) return null;
+        return { tag: a.tagName, label: a.getAttribute("aria-label"),
+          testid: a.getAttribute("data-testid"),
+          inDrawer: !!a.closest && !!a.closest("#drawer-trips") };
+      }));
+    }
     await page.keyboard.press("Escape");
     await page.waitForTimeout(400);
-    out.afterEscape = await page.evaluate(() => ({
-      drawerHidden: document.querySelector("#drawer-trips").hidden,
-      focus: document.activeElement ? document.activeElement.tagName : null,
-    }));
+    out.afterEscape = await page.evaluate(() => {
+      const a = document.activeElement;
+      return {
+        drawerHidden: document.querySelector("#drawer-trips").hidden,
+        focus: a ? a.tagName : null,
+        testid: a ? a.getAttribute("data-testid") : null,
+        backOnTheRow: !!(a && (a.getAttribute("data-testid") || "").startsWith("leg-row-")),
+      };
+    });
+    // and again with SPACE, which is the other key a row is expected to take
+    const rows2 = await page.$$('[data-testid^="leg-row-"]');
+    if (rows2.length > 2) {
+      await rows2[2].focus();
+      const before = await page.evaluate(() => window.scrollY);
+      await page.keyboard.press(" ");
+      await page.waitForTimeout(400);
+      out.afterSpace = await page.evaluate((y) => ({
+        drawerHidden: document.querySelector("#drawer-trips").hidden,
+        pageScrolled: window.scrollY !== y,
+      }), before);
+    }
   }
   await browser.close();
   process.stdout.write(JSON.stringify(out));

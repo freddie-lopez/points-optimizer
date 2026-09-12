@@ -105,18 +105,30 @@ def test_E5_a_cash_price_that_is_not_a_price_is_refused_and_writes_nothing(ui, c
     assert sorted(p.name for p in ui.trips_dir.glob("*")) == before
 
 
-def test_E6_a_huge_but_finite_fare_survives_the_whole_round_trip_or_refuses_loudly(ui):
-    """1e308 is finite, so the builder accepts it. Everything downstream must
-    either carry it or refuse - never emit a NaN/inf into the page."""
+def test_E6_a_fare_that_cannot_be_scored_is_refused_before_anything_is_written(ui):
+    """RE-SCOPED AFTER THE ROUND-1 FIX (tester's call, re-test 2).
+
+    Round 1 asserted that `1e308` was either carried through the whole round
+    trip or refused loudly; the coder was instructed to refuse it at validation,
+    before anything is written, and did. A refusal is what this probe was
+    guarding - the defect was a fixture on disk that made every later run over
+    that directory crash - so the probe now asserts the refusal, that nothing
+    was written, and that the refusal says why in the builder's own words.
+    `test_ui_k_retest2.py::test_K9` walks the boundary from both sides: whatever
+    IS accepted must then score without an internal error.
+    """
+    before = sorted(p.name for p in ui.trips_dir.glob("*"))
     legs = [dict(LEG, cash="1e308")]
     body, r, created = create(ui, name="probe_huge", legs=legs)
-    assert created.status == 200, created.text
-    run = ui.run_trip("probe_huge", OFFLINE)
-    assert run[1].status == 200, run[1].text[:400]
-    payload = run[1].json()
-    text = json.dumps(payload)
-    assert "Infinity" not in text and "NaN" not in text
-    assert payload["exit_code"] in (0, 3, 4)
+    assert created is None, "the fare was written after all"
+    j = r.json()
+    assert j["ok"] is False
+    message = " ".join(e["message"] for e in j["errors"])
+    assert "too large to score" in message, message
+    assert "points-equivalent" in message and "cents per point" in message, message
+    assert sorted(p.name for p in ui.trips_dir.glob("*")) == before
+    # and the app is unharmed: an existing trip still runs
+    assert ui.run_trip("trip_b_europe", OFFLINE)[1].json()["exit_code"] == 0
 
 
 # --------------------------------------------------------------------- dates

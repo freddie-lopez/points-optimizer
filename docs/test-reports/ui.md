@@ -344,3 +344,227 @@ page asks for anything but this server and Google Fonts.
   invocations (offline/live/down/replay/search, wallet variants, flag conflicts,
   paging, endless paging, no key, badge fallback) diffed against the pre-UI CLI.
   Keep it; it is what would catch a future "small" formatter change.
+
+---
+
+# Re-test 2 — attacking the round-1 fixes
+
+Against `b99d566` (seven commits on top of my round-1 report at `f510a5b`),
+fix report `runs/points-optimizer/ui-fix-report-1.md`. New probes are in
+`ui-probes/test_ui_k_retest2.py`; `test_ui_e_builder.py::test_E6` was re-scoped
+(ruling below).
+
+**412 probes: 5 red, 407 green.** Every round-1 probe is green. The five reds
+are all new findings from this round's attack.
+
+| Check | Result |
+|---|---|
+| `.venv/bin/python -m pytest -q -p no:cacheprovider` | **2013 passed, 13 skipped** (as claimed) |
+| the same under `-O` | **2013 passed, 13 skipped**, 1 warning |
+| `test_ui_g_cli_parity.py` (69 CLI invocations vs the pre-UI tree) | **69 / 69 green** |
+| goldens moved | **G7 only** (What column narrower, no value in it changes) plus the new G14 |
+| v5 / adversarial / known-failures / operating-airline probes | **19 / 40 / 0 / 5 red — every set identical by id** |
+| working tree after the run | clean apart from this report and the probe files |
+| network | nothing left the machine (canary in every probe process; Chromium with no proxy, nothing resolvable but loopback) |
+
+## Ruling: `test_E6`, the one probe the coder left red
+
+**Re-scoped, as the fix intended. A refusal is what E6 was guarding.**
+
+E6's title and docstring already sanctioned either behaviour ("survives the
+whole round trip **or refuses loudly**"); only the assertion insisted the fare
+be carried. What the probe existed to prevent was a *fixture on disk that made
+every later run over that directory crash*, and refusing at validation prevents
+it earlier and more completely than carrying it would. Refusing does not hide
+anything, for three reasons I checked rather than assumed:
+
+* the same rule is applied by the **loader**, so a fixture that already carries
+  such a value (hand-written, or written before this round) is a clean load
+  refusal, not a crash — verified for every money field (`K7`, `K8`);
+* the bound is **mechanical**, not a made-up ceiling: finite, survives the JSON
+  round trip, and has a finite points-equivalent at the run's valuation. `K9`
+  walks it from both sides across ten values — `1e308`, `1e307`, `0.1e309`,
+  `17976931348623157e292`, `9007199254740993`, `2400.000000000000000001`,
+  `1e306`, `-1e308`, `nan`, `inf` — and requires that **whatever is accepted
+  then scores without an internal error**, which is the half of the contract a
+  refusal could otherwise hide;
+* `--valuation-cpp` can still move the bound under the CLI (the UI does not
+  offer the flag); `K10` checks that even then the result is not a traceback.
+
+E6 now asserts the refusal, its wording, and that nothing was written.
+
+## New findings
+
+### High
+
+**R2-1 — the delivered tree carries a symlink to a path on the build machine.**
+Probe `test_ui_k_retest2.py::test_K20` (RED).
+
+`git ls-tree HEAD .venv` → `120000 blob … .venv`, whose content is
+`/home/claude/points-optimizer/.venv`. It was committed in `a53317f` (`Fix L-1
+to L-4`); `.gitignore` has `.venv/`, which ignores a *directory* of that name
+and not a symlink, so `git add -A` took it.
+
+*Why it matters.* The delivery is a bundle. On Tsuki's Mac, checking out
+`feature/ui` either fails (a real `.venv` directory is in the way) or leaves a
+dangling `.venv` pointing at a directory that does not exist on his machine —
+and every documented command in the README, the plan and the fix report starts
+`.venv/bin/python`. It also puts a sandbox path into the repository.
+
+*Fix.* `git rm --cached .venv`, add `.venv` (no slash) to `.gitignore`, and
+amend or add a commit before the bundle is cut.
+
+### Medium
+
+**R2-2 — the VERDICT SENSITIVE reason still quotes the band as it stood before UK APD, when the flag was already set.**
+Probe `test_ui_k_retest2.py::test_K1` (RED). Controls `K2`, `K3`, `K4`, `K6`
+(GREEN) show the rest of the H-1 fix works.
+
+`set_verdict_sensitivity` starts with `if flips == result.verdict_sensitive:
+return`. That is right for "nothing changed" — except that the *figures* have
+changed: `apply_apd` has just moved both ends of the band. When the band
+straddled the fare **before and after** the duty, the early return leaves the
+reason built from the pre-APD numbers.
+
+*Repro* (the probe builds it in tmp): LHR→JFK, business, BA Executive Club on IB
+metal — the table models that band as `$522.50–$1,045.00` one-way, wider than
+the $330.38 duty — against a $1,450 fare.
+
+*Expected.* The reason quotes the scored band, as `K3`'s case now does.
+
+*Actual.* `verdict_sensitive` is correctly `True`, the table and the leg cells
+show the scored band `$1,352.88 – $1,875.38`, but the reason code reads:
+
+```
+The verdict FLIPS inside the surcharge range: points score $1,022.50 at the low
+end and $1,545.00 at the high end, against $1,450.00 cash. This recommendation
+is NOT settled - capture the real surcharge before booking.
+```
+
+Both figures are $330.38 low and the duty is not named, so the "defensible low
+end" reads better than it is — the F-3 shape the fix was written to close, one
+branch along. The drawer renders reason codes verbatim, so it reaches the page.
+*Location:* `src/optimizer.py`, `set_verdict_sensitivity` (the early return),
+called from `apply_apd`.
+
+**R2-3 — a hand-written fixture whose points value is a huge integer is still a traceback in the CLI and a 500 in the UI.**
+Probes `test_K7[points_bigint]` and `test_K8[points_bigint]` (RED); the other
+seven broken-fixture shapes are green.
+
+M-1's guard bounds **cash** (`_finite_amount` → `unscoreable_cash_reason`).
+A points value has no such guard: `{"points": 10**400}` is legal JSON, loads,
+and then `funding._score` does `points * _valuation(...)` →
+`OverflowError: int too large to convert to float`.
+
+* CLI: a full traceback, exit 1 — against the fix report's "the CLI prints one
+  line and exits 1 with no traceback".
+* UI: `500 {"error": "internal", "message": "Unexpected OverflowError; see the
+  terminal."}` — against "the UI lists it as CANNOT LOAD and never 500s".
+
+Only a hand-edited or externally supplied fixture can carry it (the form writes
+no points prices), which is why this is Medium and not High — but "hand-written
+broken fixtures" is exactly the class the guard claims. A float `1e308` points
+value, by contrast, is handled sanely (`partner exists, path blocked`).
+
+### Low
+
+**R2-4 — Esc closes the drawer and drops focus to `<body>`.**
+Probe `test_K23` (RED); `K21`, `K22`, `K24` (GREEN) confirm the M-4 fix itself.
+
+Tab to a leg row (9 stops), Enter — the drawer opens and focus lands on its
+"Close detail" button, as it should. Esc closes it, and because closing
+re-renders the table the focused element is destroyed: focus falls to `<body>`,
+and it takes **18 Tab presses** to get back to the row you were reading. Enter
+and Space both open the drawer, and Space does not scroll the page.
+
+## What I could not break in the fixes
+
+**H-1.** A flip the duty *creates* is now marked, and names the duty in the
+reason (`K3`). A flip the duty *removes* clears the marker, the reason and the
+warning rather than leaving a stale one (`K2`). The flag survives into the UI
+JSON with the scored figures on that path (`K4`). On every committed fixture the
+flag, the CLI text and the `!SENSITIVE` tag agree (`K6`), and the transcripts
+themselves are unchanged against the pre-UI CLI (69/69 parity), so no
+previously-settled verdict moved. A leg with an unknown cash side is still not
+recommended on points as settled (`K5`). I also walked the other comparisons
+that happen before `apply_apd`: `surcharge_cannot_change_verdict` can only be
+made *more* true by a duty that adds to the points side; the points→cash flip is
+re-decided inside `apply_apd`; `annotate_live_verdicts`, `trip_funding_report`
+and `trip_totals` all run after it; the search path has no verdict at all and
+already carries the APD floor into its ranking and its `total_is_floor` flag
+(`A7`). The off-date sentence quotes a pre-APD figure in its template, but
+flexible-date awards are never scored, so I could not reach it — noted, not
+filed.
+
+**M-1 (cash).** Ten money spellings at and around the bound are refused before
+anything is written, or accepted and then scored without an internal error
+(`K9`). Seven of the eight hand-written broken fixtures — a string amount, a
+null amount, a 1e308 fee, a wrong-typed `legs`, a huge traveller count, a 1e308
+points float, a 1e308 cash amount — are one clean line in the CLI and a listed
+row in the UI (`K7`, `K8`). `--valuation-cpp 0.000001` on a 1e300 fare is not a
+traceback (`K10`).
+
+**M-2.** Eight simultaneous creates of one name: one success, seven refusals in
+the writer's own words, one file on disk (`K11`). A refused create leaves
+nothing behind — no partial file, no temp file (`K12`). `--force` still
+overwrites for the CLI, and the exclusive create still refuses without it
+(`K13`).
+
+**M-3.** 118, 119 and 120-character names are written, listed, fetchable and
+runnable; 121 and 122 are refused before anything is written (`K14`). Nine
+non-ASCII or odd names either refuse or round-trip to exactly the id the app
+then addresses (`K15`). Two names that a case-insensitive or normalising
+filesystem could fold together never produce two successes for one file
+(`K16`).
+
+**M-4.** Enter and Space both open the drawer, focus lands on the close button,
+Space does not scroll the page, and the drawer is not a focus trap (`K21`,
+`K22`, `K24`). The focus ring is still 2px `--ember` under `:focus-visible`.
+
+**M-5.** At 400, 1100, 1440 and 1920 px, with the drawer docked and as a sheet,
+the LEG and VERDICT columns stay inside the frame at both ends of the scroll,
+are `position: sticky`, paint an opaque background, and win the hit test against
+the middle columns sliding under them (`K25`, `K26`). At 400px the two pinned
+columns take 242px of a 368px frame, leaving 126px of scrolling middle — tight,
+but the middle still scrolls and nothing overlaps (`K27`). Screenshot:
+`ui-probes/shots/pinned_1440.png` (table scrolled fully right, LEG and VERDICT
+both in place) and `shots/pinned_400.png`.
+
+**M-6.** The 69-scenario parity run is green, so F-1's label no longer moves any
+money figure that the pre-UI CLI did not already move. I confirmed both filings:
+the derived **Score cash** column still truncates (`$2,400.…` in the new G14,
+and the pre-UI CLI truncates the same way in G1 and G5 — the parity diff shows
+no change there), and the CLI's surcharge line still reads
+`Surcharge: $0.00  via …` with rich having eaten `[modeled]`.
+
+**The lows.** "Since launch" no longer falls at midnight and is shown beside
+"of 1,000 today" as a second number (`K17`). The drawer's confidence chip comes
+from `surcharge.confidence`, which is `modeled` / `captured` / `sourced` and
+never empty on a known surcharge (`K18`). `Cross-Origin-Resource-Policy:
+same-origin` is on every response, including errors and static files (`K19`).
+The only `data-testid` that repeats in the rendered page is `unknown-chip`,
+which marks a kind rather than an element.
+
+**Everything from round 1 still holds.** All 347 round-1 probes pass: the
+recurring-failure parity in the JSON and in the DOM for every scenario, the
+security suite plus the cross-origin attacker page, spending (no call without a
+fresh matching confirm; maxima hold with pagination, flex and lookups),
+long-lived process state, the couple trip WITHHELD at exit 3, the `-O` import
+guards, the phone layout, and the transcript equalling the CLI's own output for
+the argv the page shows.
+
+## Round-1 findings: closed or open
+
+| Round 1 | State |
+|---|---|
+| H-1 sensitivity before APD | **Closed** (`J1`, `K2`, `K3`, `K6`). New neighbouring finding R2-2 |
+| M-1 unscoreable fare | **Closed for cash** (`E6` re-scoped, `K9`, `K10`). Open for points: R2-3 |
+| M-2 concurrent create | **Closed** (`E11`, `K11`–`K13`) |
+| M-3 unaddressable names | **Closed** (`E3`, `E13`, `K14`–`K16`) |
+| M-4 Enter closes the drawer | **Closed** (`H9`, `K21`, `K22`, `K24`). New Low R2-4 |
+| M-5 verdict column off screen | **Closed** (`H10`, `K25`–`K27`) |
+| M-6 F-1 truncated a fare | **Closed** for the cash column; the Score-column truncation is unchanged from the pre-UI CLI and is filed |
+| L-1 "since launch" at midnight | **Closed** (`C18`, `K17`) |
+| L-2 swallowed `[modeled]` | **Closed in the UI** (`K18`); the CLI line is filed, verified still swallowed |
+| L-3 duplicate drawer testid | **Closed** |
+| L-4 cross-origin read of app.js | **Closed** (`K19`) |

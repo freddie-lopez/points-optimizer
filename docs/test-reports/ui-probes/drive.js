@@ -178,6 +178,48 @@ async function main() {
         scrollLeft: n.scrollLeft,
         verdict: vr ? { left: vr.left, right: vr.right, visible: vr.right <= r.right + 1 } : null };
     });
+    if (spec.sticky) {
+      out.sticky = await page.evaluate(() => {
+        const wrap = document.querySelector('[data-testid="legs-table-scroll"]');
+        if (!wrap) return null;
+        const read = () => {
+          const wr = wrap.getBoundingClientRect();
+          const rows = [];
+          document.querySelectorAll('[data-testid^="leg-row-"]').forEach((tr) => {
+            const id = tr.getAttribute("data-testid").replace("leg-row-", "");
+            const leg = tr.querySelector('[data-testid="cell-' + id + '-leg"]');
+            const ver = tr.querySelector('[data-testid="verdict-' + id + '"]');
+            const mid = tr.querySelector('[data-testid="cell-' + id + '-path"]');
+            const box = (n) => { const r = n.getBoundingClientRect();
+              return { left: r.left, right: r.right, w: r.width }; };
+            const cs = (n) => { const c = getComputedStyle(n);
+              return { pos: c.position, bg: c.backgroundColor, z: c.zIndex }; };
+            const hitOf = (n) => {
+              n.scrollIntoView({ block: "center" });
+              const r = n.getBoundingClientRect();
+              const el = document.elementFromPoint(r.left + Math.min(8, r.width / 2),
+                                                  r.top + r.height / 2);
+              return el ? (el.closest("td") === n ? "self" : (el.tagName + "." + el.className))
+                        : "none";
+            };
+            rows.push({ id: id, legBox: box(leg), verBox: box(ver), midBox: box(mid),
+              legCss: cs(leg), verCss: cs(ver), rowBg: getComputedStyle(tr).backgroundColor,
+              legHit: hitOf(leg), verHit: hitOf(ver),
+              legVisible: box(leg).left >= wr.left - 1 && box(leg).right <= wr.right + 1,
+              verVisible: box(ver).left >= wr.left - 1 && box(ver).right <= wr.right + 1 });
+          });
+          return { wrap: { left: wr.left, right: wr.right, w: wr.width },
+            scrollLeft: wrap.scrollLeft, scrollWidth: wrap.scrollWidth, rows: rows };
+        };
+        const atStart = read();
+        wrap.scrollLeft = wrap.scrollWidth;
+        const atEnd = read();
+        // left scrolled right, and in view, so the screenshot shows the pins
+        wrap.scrollLeft = wrap.scrollWidth;
+        wrap.scrollIntoView({ block: "center" });
+        return { atStart: atStart, atEnd: atEnd };
+      });
+    }
     out.drawers = {};
     if (spec.openAllLegs) {
       for (const r of out.rows) {
@@ -218,6 +260,14 @@ async function main() {
     bodySW: document.body.scrollWidth,
   }));
   out.drawerBox = await box(page, "#drawer-trips");
+  out.dupTestids = await page.evaluate(() => {
+    const seen = {}, dup = [];
+    document.querySelectorAll("[data-testid]").forEach((n) => {
+      const t = n.getAttribute("data-testid");
+      if (seen[t]) { if (dup.indexOf(t) < 0) dup.push(t); } else { seen[t] = 1; }
+    });
+    return dup;
+  });
   out.pwned = await page.evaluate(() => !!window.__pwned);
   out.title = await page.title();
 
