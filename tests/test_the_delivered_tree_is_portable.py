@@ -68,7 +68,8 @@ def test_the_archive_git_would_deliver_carries_no_venv_and_no_outside_path(tmp_p
     assert [n for n in names if ".." in Path(n).parts] == []
 
 
-@pytest.mark.parametrize("path", [".venv", ".venv/bin/python", ".venv/lib/x.py"])
-def test_the_ignore_rule_covers_the_link_and_anything_under_it(path):
-    r = subprocess.run(["git", "check-ignore", "-q", path], cwd=str(ROOT))
-    assert r.returncode == 0, f"{path} is not ignored"
+def test_git_add_everything_would_not_take_it_back():
+    """The regression as it happened: `git add -A` with a .venv present. Nothing
+    about it may appear in the status, as a link or as a directory."""
+    status = _git("status", "--porcelain", "--untracked-files=all")
+    assert [l for l in status.splitlines() if ".venv" in l] == [], status
