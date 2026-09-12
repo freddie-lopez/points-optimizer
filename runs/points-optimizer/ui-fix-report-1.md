@@ -170,3 +170,79 @@ compared by test id, all unchanged. DOM parity against the run JSON in headless
 Chromium at 1440 and 400 px, offline and LIVE, with no page errors: verdicts,
 every UNKNOWN cell, every transcript line in the drawer, the keyboard path, the
 pinned columns, the confidence chip, the run strip and the trip listing.
+
+---
+
+# Round 2 — against the re-test at `3f1ccfa`
+
+One High, two Medium, one Low; 5 red probes in `test_ui_k_retest2.py`.
+Five commits on top of `b99d566`. Nothing here made a network call.
+
+| Suite | Before | After |
+|---|---|---|
+| `tests/` (mine) | 2,013 pass | **2,056 pass, 13 skipped** — identical under `-O` |
+| `docs/test-reports/ui-probes` | 407 pass / 5 red | **412 pass / 0 red** |
+| v5 / adversarial / known-failures / operating-airline | 19 / 40 / 0 / 5 red | **same sets, by id** |
+
+New test files: `tests/test_the_delivered_tree_is_portable.py` (R2-1, 4),
+`tests/test_verdict_sensitivity_reason_is_restated.py` (R2-2, 5),
+`tests/test_unscoreable_counts_are_refused.py` (R2-3, 26),
+`tests/test_drawer_returns_focus.py` (R2-4, 7); plus one rewritten idempotence
+test in `test_verdict_sensitivity_after_apd.py`.
+
+**R2-1 — the tracked `.venv` symlink.** `git rm --cached .venv`, and the ignore
+rule loses its trailing slash: `.venv/` ignores a *directory* of that name and
+nothing else, which is exactly how `git add -A` took the symlink in `a53317f`.
+The link stays on disk, untracked, so this sandbox keeps working. Verified: no
+tracked path is a symlink or a non-regular file; `git archive HEAD` exports 321
+entries with no `.venv`, no symlink whose target is absolute, no leading `/` and
+no `..` segment. The only absolute paths left anywhere in the tree are inside
+prose — the plan and these reports naming the worktree they were written in, and
+one synthetic `/Users/someone/...` string used as test data. The regression test
+checks the archive, not just the worktree, because the archive is the delivery.
+
+**R2-2 — the sensitivity sentence.** The early return was right about the flag
+and wrong about the figures: `apply_apd` had just moved both ends of the band.
+The reason and the warning are now rebuilt from the current figures every time
+and compared with what is there. Identical text is left untouched **in place**,
+so re-deciding the same answer still moves nothing; different figures are
+restated **at the same index**, so a restated sentence does not travel to the
+end of the list and reorder the output. The probe's own case — BA on IB metal,
+a band wider than the duty, straddling $1,450 both before and after — now quotes
+$1,352.88 / $1,875.38 and names the $330.38 duty. No golden moved.
+
+**R2-3 — the bound reaches every number that reaches arithmetic.**
+`config.unscoreable_count_reason` applies the money rule to whole numbers: a
+whole number, surviving the round trip through the fixture's JSON, whose product
+at the run's valuation is finite. Checked **at validation** (`--travelers`,
+`--hotel NIGHTS`, before anything is written) and **at load** (`points`,
+`points_per_night`, both night counts, and `travelers` — which multiplies every
+money figure on the leg and was the same hole one multiplication along). It is
+not a ceiling on award prices: `10**30` and `1e308` points still load and are
+reported exactly as before; only a figure no run could put on the scale is
+refused. The reason never quotes the number in full — `repr(10 ** 400)` is 401
+digits — it says "a 401-digit number", which is the same mistake M-1 made once
+and fixed.
+
+**R2-4 — Esc gives the row back.** Both drawers record the testid they were
+opened from and restore focus to the rebuilt element, on Esc and on the close
+button; navigating to another trip or run forgets it rather than focusing a
+stale row. Verified in Chromium: Esc from `leg-row-B4` leaves focus on
+`leg-row-B4`, the close button from `leg-row-B2` leaves it on `leg-row-B2`, and
+no page error. Mouse users see no focus ring, because `:focus-visible` does not
+match a programmatic focus that follows a click.
+
+## Still filed, not fixed
+
+Unchanged from round 1 and confirmed by the Tester: the derived **Score**
+columns still truncate money exactly as the pre-UI CLI does, and the CLI's
+surcharge line still loses `[modeled]` to rich. Both need a round in which CLI
+output is allowed to move; the parity rule forbids it now.
+
+## Verification
+
+Full suite normally and under `-O` (2,056 / 13 skipped, identical). All 412
+Tester probes. The four baseline probe directories compared by test id, all
+unchanged. DOM parity against the run JSON in headless Chromium at 1440 and
+400 px, offline and LIVE, with no page errors, plus the keyboard round trip
+above.
