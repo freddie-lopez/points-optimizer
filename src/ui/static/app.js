@@ -68,6 +68,12 @@
   }
   function isNum(x) { return typeof x === "number" && isFinite(x); }
   function fmtInt(n) { return isNum(n) ? Math.round(n).toLocaleString("en-US") : null; }
+  // The tail of a path, for somewhere a whole one will not fit. Never the only
+  // copy: every caller puts the whole path in the element's title.
+  function shortPath(path) {
+    var parts = String(path || "").split("/").filter(function (x) { return x !== ""; });
+    return parts.length <= 2 ? String(path) : "…/" + parts.slice(-2).join("/");
+  }
   // The confirm dialog says which count is which, for the same reason.
   function callsSentence(c) {
     return "Calls since this server started: " + fmtInt(c.since_launch) +
@@ -346,9 +352,15 @@
       if (t.load_error) {
         add(b, el("span", "flag", "CANNOT LOAD"), el("span", "m", t.load_error));
       } else {
-        var m = t.legs + " legs · " + t.flights + " flights";
-        if (t.hotels) { m += " · " + t.hotels + (t.hotels === 1 ? " hotel" : " hotels"); }
-        add(b, el("span", "m", m));
+        // A file with no legs is not a trip with nothing in it: say which it
+        // is. "0 legs · 0 flights" reads as a finding about the trip.
+        if (t.no_legs_note) {
+          add(b, el("span", "flag", "NOT A PER-LEG TRIP"), el("span", "m", t.no_legs_note.short));
+        } else {
+          var m = t.legs + " legs · " + t.flights + " flights";
+          if (t.hotels) { m += " · " + t.hotels + (t.hotels === 1 ? " hotel" : " hotels"); }
+          add(b, el("span", "m", m));
+        }
         if (t.live_only) { add(b, el("span", "flag", "NO POINTS PRICES — LIVE OR REPLAY ONLY")); }
         if (t.max_flight_travellers > 1) {
           add(b, el("span", "flag", "2+ TRAVELLERS ON A FLIGHT — NOT SCORED ON POINTS"));
@@ -381,6 +393,14 @@
   }
 
   function renderFixtureLegs(main, trip) {
+    // An empty legs table says nothing about why it is empty. The note comes
+    // from the file itself and replaces the table rather than sitting over it.
+    if (trip.no_legs_note) {
+      var np = tid(el("div", "panel nolegs"), "fixture-no-legs");
+      add(np, el("span", "flag", "NOT A PER-LEG TRIP"), p(trip.no_legs_note.text, "note"));
+      add(main, np);
+      return;
+    }
     var wrap = tid(el("div", "tscroll"), "fixture-legs-scroll");
     var t = tid(el("table", "grid static"), "fixture-legs");
     var thead = el("thead"); var hr = el("tr");
@@ -455,6 +475,20 @@
       modeBtn("offline", "mode-offline", "OFFLINE", noPts ? "this trip has no points prices, so nothing will be scored on points" :
         "no transport: scores the fixture's own points prices", false));
     add(field, seg);
+    // The three segments are one control and stay the same width, so the
+    // reason REPLAY is unavailable - which carries a filesystem path of no
+    // fixed length - goes on its own line under it. The path is shortened to
+    // its last two parts; the whole of it is in the title, never dropped.
+    var detail = !man && st && st.modes.replay_reason_detail;
+    if (detail) {
+      var note = tid(el("span", "mode-note"), "replay-unavailable");
+      var parts = detail.text.split("{path}");
+      add(note, parts[0]);
+      var pathEl = el("span", "path", shortPath(detail.path));
+      pathEl.title = detail.path;
+      add(note, pathEl, parts.length > 1 ? parts[1] : "");
+      add(field, note);
+    }
     add(strip, field);
     if (!liveOk && st && st.key.error_text) {
       var ke = tid(el("details", "fold"), "key-error");

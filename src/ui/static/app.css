@@ -85,10 +85,15 @@ a { color: var(--ember); }
 .field-error { color: var(--warn); font-size: var(--s12); overflow-wrap: anywhere; max-width: 90ch; }
 .panel { background: var(--coal); border: 1px solid var(--seam); border-radius: 3px; }
 .seg { display: inline-flex; border: 1px solid var(--seam); border-radius: 3px; overflow: hidden; flex-wrap: wrap; max-width: 100%; }
-.seg button { background: var(--coal); border: 0; border-right: 1px solid var(--seam); padding: 6px 14px; text-align: left; cursor: pointer; display: grid; gap: 1px; max-width: 280px; }
+/* The three mode segments are one control and are read across, so they are
+   the same width whatever each one has to say. Anything longer than a
+   caption - a filesystem path, say - goes on its own line under it. */
+.seg button { background: var(--coal); border: 0; border-right: 1px solid var(--seam); padding: 6px 14px; text-align: left; cursor: pointer; display: grid; gap: 1px; flex: 1 1 0; min-width: 0; max-width: 280px; }
+.mode-note { display: block; margin-top: 6px; font-size: 11px; color: var(--smoke); }
+.mode-note .path { font-family: var(--mono); overflow-wrap: anywhere; }
 .seg button:last-child { border-right: 0; }
 .seg button .t { font: 500 11px/1.3 var(--mono); letter-spacing: .06em; }
-.seg button .s { font-size: 11px; color: var(--smoke); }
+.seg button .s { font-size: 11px; color: var(--smoke); overflow-wrap: anywhere; }
 .seg button[aria-pressed="true"] { background: var(--ash); box-shadow: inset 0 -2px 0 var(--oxblood); }
 .note { font-size: var(--s13); color: var(--smoke); max-width: 78ch; margin: 0; overflow-wrap: anywhere; }
 .warnline { color: var(--warn); }
@@ -116,6 +121,9 @@ a { color: var(--ember); }
 .trow .n { font-weight: 500; font-size: var(--s13); overflow-wrap: anywhere; }
 .trow .m { font-size: var(--s12); color: var(--smoke); }
 .trow .flag { font: 500 10px/1.4 var(--mono); color: var(--warn); letter-spacing: .04em; overflow-wrap: anywhere; }
+/* A fixture with no legs says what it is instead of showing an empty table. */
+.nolegs { padding: 12px; display: grid; gap: 6px; }
+.nolegs .flag { font: 500 10px/1.4 var(--mono); color: var(--warn); letter-spacing: .04em; }
 .newtrip { margin-top: 10px; justify-self: start; }
 
 /* trip result */

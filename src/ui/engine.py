@@ -17,8 +17,11 @@ A LONG-LIVED PROCESS IS NOT ONE CLI RUN, and three things are done about that:
 * THE IN-PROCESS CACHE IS CLEARED BEFORE EVERY RUN (D7). It has no TTL, so in a
   server that stays up for days a morning search would answer an evening one.
   Each UI run then behaves exactly like a fresh CLI process; the 6-hour DISK
-  cache still applies. The daily call counter is deliberately KEPT and shown as
-  "since launch" - it resets itself at the date change, as the CLI's does.
+  cache still applies. The daily call counter is deliberately KEPT, and it is
+  Seats.aero's DAILY budget: it resets at the date change, as the CLI's does.
+  What this server has spent since it started is a second, separate count that
+  does not reset, because a server left running overnight would otherwise
+  report fewer calls than it made.
 * NOTHING THAT SPENDS CALLS RUNS WITHOUT A SERVER-SIDE CONFIRM (D5). A LIVE trip
   run and a search need a `confirm_id` from their preflight: single use, five
   minutes, bound to a hash of the exact request - fixture bytes included - so a
@@ -112,6 +115,49 @@ def _loads_as_a_trip(path: Path) -> bool:
         return True
     except Exception:  # noqa: BLE001 - an unloadable file is listed, not hidden
         return False
+
+
+def _no_legs_note(path: Path) -> Dict[str, str]:
+    """What a fixture with no legs actually holds, read off the file itself.
+
+    (manager's call) `trip_001.json` and `trip_002.json` are the acceptance
+    suite's ORIGINAL inputs: a single route, a date range and a set of
+    balances - a search request, not a per-leg trip. They load, so they are not
+    "CANNOT LOAD"; but listing them as "0 legs - 0 flights" reads like a
+    finding about the trip rather than a fact about the file. Everything in
+    both sentences is read out of the file; nothing is inferred.
+
+    `short` goes in the sidebar row, `text` on the trip's own page.
+    """
+    plain = "no legs in this file"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - the caller already loaded it; be quiet here
+        raw = None
+    if not isinstance(raw, dict):
+        return {"short": plain, "text": "This file has no legs in it."}
+    if "legs" in raw:
+        return {
+            "short": "its `legs` list is empty",
+            "text": ("This fixture's `legs` list is empty, so there is nothing in it "
+                     "to score. Nothing is claimed about any route."),
+        }
+    where = ""
+    if raw.get("origin") and raw.get("destination"):
+        where = f" for {raw['origin']}->{raw['destination']}"
+    when = ""
+    rng = raw.get("date_range")
+    if isinstance(rng, dict) and rng.get("from") and rng.get("to"):
+        when = f" between {rng['from']} and {rng['to']}"
+    return {
+        "short": f"a single-route search request{where}",
+        "text": (
+            f"Not a per-leg trip: this file has no `legs` key at all. It is a "
+            f"single-route search request{where}{when}, which is what the Search "
+            f"tab does. Running it here scores nothing, and that is the file, not "
+            f"the trip."
+        ),
+    }
 
 
 def path_arg(p: Path) -> str:
@@ -334,10 +380,15 @@ class Engine:
                 "live": key["found"],
                 "live_reason": None if key["found"] else "LIVE needs a Seats.aero key.",
                 "replay_manifests": manifests,
-                "replay_reason": None if manifests else (
-                    f"No snapshot manifest found at {display_path(snapshot_manifest)}. "
-                    f"Run a trip LIVE once to write one."
-                ),
+                # The short reason sits inside the mode control, which is one
+                # of three equal segments; the path is long and unbounded, so
+                # it travels beside it and the page puts it on its own line.
+                "replay_reason": None if manifests else "no snapshot to replay yet",
+                "replay_reason_detail": None if manifests else {
+                    "text": "No snapshot manifest found at {path}. "
+                            "Run a trip LIVE once to write one.",
+                    "path": display_path(snapshot_manifest),
+                },
             },
             "calls": self.calls_state(),
             "paths": {
@@ -415,6 +466,7 @@ class Engine:
                 continue
             flights = [l for l in fx.legs if l.kind == "flight"]
             row.update(
+                no_legs_note=_no_legs_note(path) if not fx.legs else None,
                 name=fx.name,
                 legs=len(fx.legs),
                 flights=len(flights),
@@ -437,7 +489,8 @@ class Engine:
             fx = load_trip_fixture(path)
         except Exception as e:  # noqa: BLE001
             raise ApiError(422, "cannot_load", f"{type(e).__name__}: {e}")
-        return serialize.fixture_detail(trip_id, path, fx)
+        return serialize.fixture_detail(
+            trip_id, path, fx, _no_legs_note(path) if not fx.legs else None)
 
     def _trip_options(self, trip_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
         """Every UI field validated BEFORE an argv exists (argparse would exit)."""

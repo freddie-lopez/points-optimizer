@@ -45,7 +45,7 @@ def iso(d) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 
-def fixture_detail(trip_id: str, path, fx) -> Dict[str, Any]:
+def fixture_detail(trip_id: str, path, fx, no_legs_note: str = None) -> Dict[str, Any]:
     legs = []
     for leg in fx.legs:
         legs.append({
@@ -91,6 +91,7 @@ def fixture_detail(trip_id: str, path, fx) -> Dict[str, Any]:
         "description": fx.description,
         "source": fx.source,
         "flags": list(fx.trip_level_flags),
+        "no_legs_note": no_legs_note if not legs else None,
         "legs": legs,
     }
 
