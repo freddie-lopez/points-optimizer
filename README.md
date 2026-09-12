@@ -178,7 +178,7 @@ A small web page over the same engine, for your own machine:
 .venv/bin/python -m src.ui --wallet wallet.json --port 8777 --no-open
 ```
 
-Run it from the repo root. It prints `Points optimizer UI: http://127.0.0.1:8777/  (Ctrl-C to stop)`
+Run it from the repo root, with the same interpreter you run the CLI with. It prints `Points optimizer UI: http://127.0.0.1:8777/  (Ctrl-C to stop)`
 and opens your browser unless you pass `--no-open`. `--port 0` picks any free
 port; a port that is already taken is an error, never a silent move to another
 one. The wallet defaults to `./wallet.json` when that file exists.
@@ -195,15 +195,25 @@ CLI's own sentence; "CLI output" under each result is the full terminal text
 What you can do: pick a trip and run it LIVE, REPLAY or OFFLINE; open any leg
 for everything the CLI knows about it; search one route; build a new trip (it is
 written to `tests/fixtures/trips/NAME.json` by the same builder `--new-trip`
-uses, one traveller, a cabin per leg); edit the wallet for the session.
+uses, one traveller, a cabin per leg, a name of at most 120 characters); edit the
+wallet for the session.
+
+The trip list says what each file is. A file that will not load is listed as
+**CANNOT LOAD** with the reason, never hidden and never shown as an empty trip;
+`trip_001` and `trip_002` are listed as **NOT A PER-LEG TRIP** - they are the
+acceptance suite's original single-route inputs and have no `legs` key at all.
+A trip is written only if it does not already exist: two simultaneous writes of
+one name cannot both report success.
 
 **What LIVE spends.** Before any LIVE trip run or search the page states the
 most it can spend and waits for you: a trip can spend up to 25 calls per flight
 leg (one per results page; one page is the only shape seen so far) plus the
 itinerary-lookup cap (default 10); a search up to 25. It also says how many of
 the trip's searches the 6-hour disk cache can answer right now (those are free).
-The counter in the top bar is "since launch" for today; Seats.aero also counts
-your other runs, which the page cannot see. The confirmation is checked by the
+The top bar shows two counts, because they are two different numbers: what THIS
+server has spent since you started it, which does not reset, and what is left of
+Seats.aero's daily budget, which resets at midnight. Seats.aero also counts
+your other runs today, which the page cannot see. The confirmation is checked by the
 server, not only by the page: it is single-use, lasts five minutes, and is
 bound to the trip file's bytes, the mode, the options and the wallet - change
 any of them and you are asked again. A single-route search is always LIVE and,
@@ -234,10 +244,15 @@ inline script. The key never leaves the server: the transcript's key line is
 replaced, and any response that would contain the key or its mask is refused
 instead of sent. Local malware is out of scope - it could read `~/.zshrc`.
 
-**Keyboard and phone.** Table rows and search cells are focusable: Enter opens
-the detail panel, Esc closes it (and closes a confirmation). Below 720px the
-tables scroll inside their own frame, the detail panel becomes a full-screen
-sheet, and the top bar wraps. The page is dark only.
+**Keyboard and phone.** Table rows and search cells are focusable: Enter or
+Space opens the detail panel and puts focus on its close button, and Esc closes
+it and gives focus back to the row you opened it from (Esc closes a confirmation
+first, if one is open). Nothing is a focus trap. In the per-leg table the LEG
+and VERDICT columns are pinned - the identifier every other line refers back to,
+and the answer the row carries - so both stay on screen while the middle
+scrolls. Below 720px the tables scroll inside their own frame, the detail panel
+becomes a full-screen sheet, and the top bar wraps; the page works down to
+400px. It is dark only.
 
 ## Live Trip Mode (v3)
 
