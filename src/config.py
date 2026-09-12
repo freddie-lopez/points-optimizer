@@ -308,6 +308,56 @@ def unscoreable_cash_reason(amount, cpp: float = CASH_VALUATION_CPP) -> str:
     return ""
 
 
+def unscoreable_count_reason(count, cpp: float = CASH_VALUATION_CPP) -> str:
+    """
+    Why this whole-number field cannot be carried through a fixture and scored,
+    or "".
+
+    FINDING R2-3. M-1 bounded CASH and nothing else, so `{"points": 10**400}` -
+    legal JSON, and a hand-written or externally supplied fixture can carry it -
+    loaded fine and then reached `funding._score`, where `points * valuation`
+    raises `OverflowError: int too large to convert to float`: a traceback out
+    of the CLI and a 500 from the UI, which is exactly the class M-1 claimed to
+    close. The rule is the same mechanical one and for the same reason: it is
+    not a ceiling on how many points an award may cost, but a refusal to carry a
+    figure that no run could ever put on the scale with a fare.
+    """
+    import json as _json
+    import math as _math
+
+    def _short(n) -> str:
+        """A number a person can read. `repr(10 ** 400)` is 401 digits, and an
+        error message that prints all of them is its own kind of unreadable."""
+        text = repr(n)
+        return text if len(text) <= 30 else f"a {len(str(abs(n)))}-digit number"
+
+    if isinstance(count, bool):
+        return f"{count!r} is not a whole number."
+    try:
+        value = int(count)
+    except (TypeError, ValueError, OverflowError):
+        return f"{_short(count)} is not a whole number."
+    try:
+        if _json.loads(_json.dumps(value)) != value:
+            return (
+                f"{_short(value)} does not survive being written to the fixture "
+                f"and read back unchanged."
+            )
+    except (ValueError, OverflowError):
+        return f"{_short(value)} cannot be written to a fixture as JSON."
+    try:
+        equivalent = value * cpp
+    except OverflowError:
+        equivalent = float("inf")
+    if not _math.isfinite(equivalent):
+        return (
+            f"{_short(value)} is too large to score: multiplied out at "
+            f"{cpp * 100:.2f} cents per point the arithmetic overflows, so no "
+            f"run could ever put it on the scale beside a fare."
+        )
+    return ""
+
+
 def points_to_cash_equivalent(points: int, cpp: float = CASH_VALUATION_CPP) -> float:
     """Convert points to their cash-equivalent at `cpp` cents per point."""
     return points * cpp

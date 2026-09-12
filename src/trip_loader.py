@@ -31,6 +31,36 @@ def _finite_amount(value, what: str) -> float:
     return amount
 
 
+def _count(value, what: str, default: int = 0) -> int:
+    """
+    A whole-number field that reaches arithmetic - a points price, a night
+    count, a points-per-night - or a TripFixtureError.
+
+    R2-3: M-1 bounded money and nothing else, so `{"points": 10 ** 400}` loaded
+    happily and then raised `OverflowError: int too large to convert to float`
+    inside the scorer: a traceback from the CLI and a 500 from the UI, the exact
+    class M-1 claimed to close. Same mechanical rule as the money one, and it is
+    not a ceiling on award prices: it refuses only a figure no run could ever
+    put on the scale beside a fare.
+    """
+    from src import config
+
+    if value is None or value == "":
+        value = default
+    if isinstance(value, bool) or isinstance(value, (list, dict)):
+        raise TripFixtureError(f"{what} is {value!r}, which is not a whole number.")
+    try:
+        count = int(value)
+    except (TypeError, ValueError, OverflowError) as e:
+        raise TripFixtureError(
+            f"{what} is {value!r}, which is not a whole number."
+        ) from e
+    unscoreable = config.unscoreable_count_reason(count)
+    if unscoreable:
+        raise TripFixtureError(f"{what} is {value!r}: {unscoreable}")
+    return count
+
+
 def _currency(value, what: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise TripFixtureError(f"{what} is {value!r}, which is not a currency code.")
@@ -56,6 +86,8 @@ def _strict_date(value, what: str) -> "date | None":
 
 def _travelers(value, leg_id) -> int:
     """A party size of at least one whole traveller - or a TripFixtureError."""
+    from src import config
+
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise TripFixtureError(f"leg {leg_id!r} travelers is {value!r}, not a count.")
     try:
@@ -66,6 +98,11 @@ def _travelers(value, leg_id) -> int:
         raise TripFixtureError(
             f"leg {leg_id!r} travelers is {value!r}; a leg is for at least 1 traveller."
         )
+    # R2-3: the count multiplies every money figure on the leg (and APD is
+    # charged per passenger), so it reaches arithmetic like the rest.
+    unscoreable = config.unscoreable_count_reason(n)
+    if unscoreable:
+        raise TripFixtureError(f"leg {leg_id!r} travelers is {value!r}: {unscoreable}")
     return n
 
 
@@ -200,7 +237,7 @@ def _build_trip_fixture(data: dict) -> TripFixture:
             PointsCandidate(
                 label=p["label"],
                 program=p["program"],
-                points=int(p.get("points", 0) or 0),
+                points=_count(p.get("points"), f"leg {raw.get('id')!r} points"),
                 cash_surcharge=_finite_amount(
                     p.get("cash_surcharge", 0.0), f"leg {raw.get('id')!r} cash_surcharge"
                 ),
@@ -226,11 +263,12 @@ def _build_trip_fixture(data: dict) -> TripFixture:
                 # `cash_surcharge: 0.0` with no flag is silence, not a real zero.
                 surcharge_captured=bool(p.get("surcharge_captured", False)),
                 points_per_night=(
-                    int(p["points_per_night"])
+                    _count(p["points_per_night"],
+                           f"leg {raw.get('id')!r} points_per_night")
                     if p.get("points_per_night") is not None
                     else None
                 ),
-                nights=int(p.get("nights", 0) or 0),
+                nights=_count(p.get("nights"), f"leg {raw.get('id')!r} award nights"),
             )
             for p in raw.get("points_candidates", [])
         ]
@@ -268,7 +306,7 @@ def _build_trip_fixture(data: dict) -> TripFixture:
                 # nothing read it. Absent stays absent - it is not "Y".
                 cabin=str(raw.get("cabin", "") or "").strip().upper(),
                 mandatory_fees=mandatory_fees,
-                nights=int(raw.get("nights", 0) or 0),
+                nights=_count(raw.get("nights"), f"leg {raw.get('id')!r} nights"),
                 # Leg-level cash provenance: the most specific thing every cash
                 # option on the leg agrees on, and "unknown" the moment they do
                 # not. Silence is never promoted to a capture.

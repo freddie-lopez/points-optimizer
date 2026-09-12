@@ -200,6 +200,14 @@ def validate_travelers(value) -> int:
             f"--travelers {count} is refused. A trip with no travellers has no "
             f"cost, and APD is charged PER PASSENGER, so the count is load-bearing."
         )
+    # R2-3: the count multiplies every money figure on the leg, so it has to
+    # survive the same round trip the money does - checked here, before
+    # anything is written, and again at load.
+    from src import config
+
+    unscoreable = config.unscoreable_count_reason(count)
+    if unscoreable:
+        raise TripBuilderError(f"--travelers: {unscoreable}")
     return count
 
 
@@ -223,6 +231,11 @@ def validate_nights(value, flag: str) -> int:
             f"{flag}: {nights} nights is refused. A zero-night stay is not a "
             f"hotel leg."
         )
+    from src import config
+
+    unscoreable = config.unscoreable_count_reason(nights)
+    if unscoreable:
+        raise TripBuilderError(f"{flag}: {unscoreable}")
     return nights
 
 
