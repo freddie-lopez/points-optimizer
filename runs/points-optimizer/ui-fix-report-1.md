@@ -246,3 +246,69 @@ Tester probes. The four baseline probe directories compared by test id, all
 unchanged. DOM parity against the run JSON in headless Chromium at 1440 and
 400 px, offline and LIVE, with no page errors, plus the keyboard round trip
 above.
+
+---
+
+# Round 3 — against the re-test at `3776cff`
+
+One Medium, two Lows; 4 red probes in `test_ui_l_retest3.py`. One commit on
+`8b579ff`. Nothing here made a network call.
+
+| Suite | Before | After |
+|---|---|---|
+| `tests/` (mine) | 2,056 pass | **2,079 pass, 13 skipped** — identical under `-O` |
+| the same suite inside an unpacked `git archive` export | 2,052 pass / **4 fail** | **2,075 pass, 17 skipped, 0 fail** |
+| `docs/test-reports/ui-probes` | 437 pass / 4 red | **441 pass / 0 red** |
+| v5 / adversarial / known-failures / operating-airline | 19 / 40 / 0 / 5 red | **same sets, by id** |
+
+New test file `tests/test_unscoreable_products_are_refused.py` (23), plus the
+two edits to `test_the_delivered_tree_is_portable.py`.
+
+**R3-1 — the products, not the fields.** Bounding each field on its own was one
+multiplication short of the arithmetic. The loader now checks every product the
+FILE itself determines, by the same mechanical rule, at load: `points_per_night
+× nights` (what `hotels.award_points_for` computes), `points × travellers`,
+`cash × travellers`, and a fee's `amount × nights × travellers` (what
+`MandatoryFee.total_for` computes). Three of the four are clean today and are
+checked anyway — "clean today" is what was said about the shape before this one,
+twice. The builder checks the products it determines *before anything is
+written*. The refusal names what multiplied ("the award points
+(points_per_night x nights) is too large to score — this fixture's own numbers
+multiply past what a run can hold"), because a product that has already
+overflowed to `inf` otherwise reports itself as "inf is not a finite amount",
+which points at the arithmetic rather than at the file. Zero nights with a
+per-night price is still the `HotelDataError` it always was, and a real
+three-night 12,000-a-night award is untouched.
+
+**R3-2 — the export.** The portability tests ask git what is TRACKED, so they
+need a repository; in an unpacked export they were four red tests that said
+nothing about the reader's tree. They are skipped when there is no `.git`, and
+the "`.venv` exists on disk" assertion is gone: the guard is about what git
+tracks, not what happens to be beside it. Verified by unpacking `git archive
+HEAD` into a clean directory and running it with an interpreter from outside the
+tree — 2,075 passed, 17 skipped, nothing failed, 296 files, no symlink, no
+`.venv`.
+
+**R3-3 — the number in the message.** `short_number` is now a function in
+`config`, used where the printing happens rather than where the reason is built:
+the reason shortened `10 ** 400` to "a 401-digit number" and `trip_loader._count`
+wrapped it in `{value!r}`, so the reader got the 401 digits anyway — in the CLI
+line and in the UI's CANNOT LOAD row. Every message that names a value goes
+through it now (`_finite_amount`, `_count`, `_travelers`, and the builder's
+`--travelers`, `--hotel NIGHTS` and `--leg CASH_USD`), and a number a person can
+read is printed unchanged. It also closed a latent crash on the way:
+`float(10 ** 400)` raises `OverflowError`, which `unscoreable_cash_reason` did
+not catch, so a huge int in a *money* field escaped the guard entirely.
+
+## Still filed, not fixed
+
+Unchanged and confirmed again: the derived **Score** columns truncate money
+exactly as the pre-UI CLI does, and the CLI's surcharge line still loses
+`[modeled]` to rich. Both need a round in which CLI output may move.
+
+## Verification
+
+Full suite normally and under `-O` (2,079 / 13 skipped, identical), the same
+suite inside an unpacked export with an outside interpreter, all 441 Tester
+probes, the four baseline probe directories compared by test id, and Chromium at
+1440 px offline and LIVE with no page errors plus the Esc/× focus round trip.
