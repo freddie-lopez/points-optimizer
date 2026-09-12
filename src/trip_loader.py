@@ -24,10 +24,12 @@ def _finite_amount(value, what: str) -> float:
     try:
         amount = float(value)
     except (TypeError, ValueError) as e:
-        raise TripFixtureError(f"{what} is {value!r}, which is not a number.") from e
+        raise TripFixtureError(
+            f"{what} is {config.short_number(value)}, which is not a number."
+        ) from e
     unscoreable = config.unscoreable_cash_reason(amount)
     if unscoreable:
-        raise TripFixtureError(f"{what} is {value!r}: {unscoreable}")
+        raise TripFixtureError(f"{what}: {unscoreable}")
     return amount
 
 
@@ -48,17 +50,80 @@ def _count(value, what: str, default: int = 0) -> int:
     if value is None or value == "":
         value = default
     if isinstance(value, bool) or isinstance(value, (list, dict)):
-        raise TripFixtureError(f"{what} is {value!r}, which is not a whole number.")
+        raise TripFixtureError(
+            f"{what} is {config.short_number(value)}, which is not a whole number."
+        )
     try:
         count = int(value)
     except (TypeError, ValueError, OverflowError) as e:
         raise TripFixtureError(
-            f"{what} is {value!r}, which is not a whole number."
+            f"{what} is {config.short_number(value)}, which is not a whole number."
         ) from e
+    # R3-3: the reason already names the value, shortened. Wrapping it in
+    # `{value!r}` here is what put 401 digits back in front of the reader.
     unscoreable = config.unscoreable_count_reason(count)
     if unscoreable:
-        raise TripFixtureError(f"{what} is {value!r}: {unscoreable}")
+        raise TripFixtureError(f"{what}: {unscoreable}")
     return count
+
+
+def _check_products(leg) -> None:
+    """
+    Every figure the fixture's own numbers MULTIPLY INTO, bounded the way the
+    fields are.
+
+    R3-1. Bounding each field on its own is not enough: `nights = 10 ** 200` and
+    `points_per_night = 10 ** 200` each pass (each times the valuation is
+    finite), and `hotels.award_points_for` multiplies them into `10 ** 400`,
+    which `funding._score` then tries to convert to a float - OverflowError, a
+    traceback from the CLI and a 500 from the UI. The guard was one
+    multiplication short of the arithmetic.
+
+    So the products the FILE determines are computed here, where a bad one is
+    still a load refusal, and checked by the same mechanical rule. The other
+    three shapes (a party's cash, a party's fees, a party's points) are clean
+    today and are checked anyway - "clean today" is what the last two rounds
+    were each told about the shape before this one.
+    """
+    from src import config
+
+    where = f"leg {leg.id!r}"
+    nights = max(int(leg.nights or 0), 0)
+    party = max(int(leg.travelers or 1), 1)
+
+    def refuse(reason, what):
+        # A product that has already overflowed to `inf` reports itself as "inf
+        # is not a finite amount", which points at the arithmetic rather than at
+        # the file. The sentence names what multiplied, so the reader can find
+        # the two numbers that did it.
+        if reason:
+            raise TripFixtureError(
+                f"{where}: the {what} is too large to score - this fixture's own "
+                f"numbers multiply past what a run can hold ({reason})"
+            )
+
+    def refuse_count(value, what):
+        refuse(config.unscoreable_count_reason(value), what)
+
+    def refuse_cash(value, what):
+        refuse(config.unscoreable_cash_reason(value), what)
+
+    for c in leg.points_candidates:
+        total = c.points
+        if c.points_per_night is not None and nights > 0:
+            # hotels.award_points_for: per-night x nights. Zero nights with a
+            # per-night price is a DATA error raised later, not an overflow.
+            total = c.points_per_night * nights
+            refuse_count(total, "award points (points_per_night x nights)")
+        refuse_count(total * party, "award points for the party (points x travellers)")
+
+    for c in leg.cash_options:
+        refuse_cash(c.amount * party, "cash for the party (amount x travellers)")
+
+    for f in leg.mandatory_fees:
+        # MandatoryFee.total_for: amount x nights [x travellers].
+        refuse_cash(f.total_for(nights, party),
+                    f"fee {f.label!r} for the stay (amount x nights x travellers)")
 
 
 def _currency(value, what: str) -> str:
@@ -89,20 +154,25 @@ def _travelers(value, leg_id) -> int:
     from src import config
 
     if isinstance(value, bool) or not isinstance(value, (int, str)):
-        raise TripFixtureError(f"leg {leg_id!r} travelers is {value!r}, not a count.")
+        raise TripFixtureError(
+            f"leg {leg_id!r} travelers is {config.short_number(value)}, not a count."
+        )
     try:
         n = int(value)
     except ValueError as e:
-        raise TripFixtureError(f"leg {leg_id!r} travelers is {value!r}, not a count.") from e
+        raise TripFixtureError(
+            f"leg {leg_id!r} travelers is {config.short_number(value)}, not a count."
+        ) from e
     if n < 1 or str(value).strip() != str(n):
         raise TripFixtureError(
-            f"leg {leg_id!r} travelers is {value!r}; a leg is for at least 1 traveller."
+            f"leg {leg_id!r} travelers is {config.short_number(value)}; a leg is "
+            f"for at least 1 traveller."
         )
     # R2-3: the count multiplies every money figure on the leg (and APD is
     # charged per passenger), so it reaches arithmetic like the rest.
     unscoreable = config.unscoreable_count_reason(n)
     if unscoreable:
-        raise TripFixtureError(f"leg {leg_id!r} travelers is {value!r}: {unscoreable}")
+        raise TripFixtureError(f"leg {leg_id!r} travelers: {unscoreable}")
     return n
 
 
@@ -325,6 +395,7 @@ def _build_trip_fixture(data: dict) -> TripFixture:
                 ),
             )
         )
+        _check_products(legs[-1])
 
     return TripFixture(
         id=data["id"],

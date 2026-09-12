@@ -266,6 +266,26 @@ def cash_to_points_equivalent(cash_usd: float, cpp: float = CASH_VALUATION_CPP) 
     return int(round(cash_usd / cpp))
 
 
+def short_number(value) -> str:
+    """
+    A number as a person can read it, for an error message.
+
+    FINDING R3-3. `unscoreable_count_reason` shortened `10 ** 400` to "a
+    401-digit number" and its CALLERS then wrapped the reason in `{value!r}`,
+    so the line the reader actually saw was 401 digits followed by a sentence
+    saying the number would not be printed. Shortening belongs at the point of
+    printing, which is here: every message that names a value goes through it.
+    Anything a person could read is returned unchanged, so a legal award price
+    is still printed in full.
+    """
+    text = repr(value)
+    if len(text) <= 30:
+        return text
+    if isinstance(value, int) and not isinstance(value, bool):
+        return f"a {len(str(abs(value)))}-digit number"
+    return f"{text[:24]}… ({len(text)} characters)"
+
+
 def unscoreable_cash_reason(amount, cpp: float = CASH_VALUATION_CPP) -> str:
     """
     Why this cash amount cannot be carried through a fixture and scored, or "".
@@ -285,25 +305,32 @@ def unscoreable_cash_reason(amount, cpp: float = CASH_VALUATION_CPP) -> str:
     try:
         value = float(amount)
     except (TypeError, ValueError):
-        return f"{amount!r} is not a number."
+        return f"{short_number(amount)} is not a number."
+    except OverflowError:
+        # An int too large to be a float at all - `float(10 ** 400)`. Reached
+        # through a money field, and it used to escape this function entirely.
+        return (
+            f"{short_number(amount)} is too large to score: it cannot even be "
+            f"held as a dollar amount, so no run could ever put it on the scale."
+        )
     if not _math.isfinite(value):
-        return f"{amount!r} is not a finite amount."
+        return f"{short_number(amount)} is not a finite amount."
     try:
         if _json.loads(_json.dumps(value)) != value:
             return (
-                f"{value!r} does not survive being written to the fixture and "
-                f"read back unchanged."
+                f"{short_number(value)} does not survive being written to the "
+                f"fixture and read back unchanged."
             )
     except (ValueError, OverflowError):
-        return f"{value!r} cannot be written to a fixture as JSON."
+        return f"{short_number(value)} cannot be written to a fixture as JSON."
     if cpp <= 0:
         return "the valuation is not positive."
     equivalent = value / cpp
     if not _math.isfinite(equivalent):
         return (
-            f"{value!r} is too large to score: at {cpp * 100:.2f} cents per "
-            f"point its points-equivalent overflows, so no run could ever "
-            f"compare it against points."
+            f"{short_number(value)} is too large to score: at {cpp * 100:.2f} "
+            f"cents per point its points-equivalent overflows, so no run could "
+            f"ever compare it against points."
         )
     return ""
 
@@ -325,33 +352,27 @@ def unscoreable_count_reason(count, cpp: float = CASH_VALUATION_CPP) -> str:
     import json as _json
     import math as _math
 
-    def _short(n) -> str:
-        """A number a person can read. `repr(10 ** 400)` is 401 digits, and an
-        error message that prints all of them is its own kind of unreadable."""
-        text = repr(n)
-        return text if len(text) <= 30 else f"a {len(str(abs(n)))}-digit number"
-
     if isinstance(count, bool):
         return f"{count!r} is not a whole number."
     try:
         value = int(count)
     except (TypeError, ValueError, OverflowError):
-        return f"{_short(count)} is not a whole number."
+        return f"{short_number(count)} is not a whole number."
     try:
         if _json.loads(_json.dumps(value)) != value:
             return (
-                f"{_short(value)} does not survive being written to the fixture "
+                f"{short_number(value)} does not survive being written to the fixture "
                 f"and read back unchanged."
             )
     except (ValueError, OverflowError):
-        return f"{_short(value)} cannot be written to a fixture as JSON."
+        return f"{short_number(value)} cannot be written to a fixture as JSON."
     try:
         equivalent = value * cpp
     except OverflowError:
         equivalent = float("inf")
     if not _math.isfinite(equivalent):
         return (
-            f"{_short(value)} is too large to score: multiplied out at "
+            f"{short_number(value)} is too large to score: multiplied out at "
             f"{cpp * 100:.2f} cents per point the arithmetic overflows, so no "
             f"run could ever put it on the scale beside a fare."
         )

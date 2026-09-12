@@ -163,18 +163,18 @@ def validate_date(value: str, flag: str, today: Optional[date] = None) -> date:
 
 
 def validate_cash(value: str, flag: str) -> float:
+    # M-1: refused HERE, before anything is written, and by the same rule the
+    # loader applies - so a fixture this builder writes can always be scored.
+    from src import config
+
     text = str(value or "").strip()
     try:
         amount = float(text)
     except ValueError:
         raise TripBuilderError(
-            f"{flag}: {value!r} is not a number. A cash price is the one figure "
-            f"this builder writes and it is not being guessed."
+            f"{flag}: {config.short_number(value)} is not a number. A cash price "
+            f"is the one figure this builder writes and it is not being guessed."
         ) from None
-    # M-1: refused HERE, before anything is written, and by the same rule the
-    # loader applies - so a fixture this builder writes can always be scored.
-    from src import config
-
     unscoreable = config.unscoreable_cash_reason(amount)
     if unscoreable:
         raise TripBuilderError(
@@ -194,7 +194,11 @@ def validate_travelers(value) -> int:
     try:
         count = int(str(value).strip())
     except (TypeError, ValueError):
-        raise TripBuilderError(f"--travelers: {value!r} is not a whole number.") from None
+        from src import config
+
+        raise TripBuilderError(
+            f"--travelers: {config.short_number(value)} is not a whole number."
+        ) from None
     if count < 1:
         raise TripBuilderError(
             f"--travelers {count} is refused. A trip with no travellers has no "
@@ -225,7 +229,11 @@ def validate_nights(value, flag: str) -> int:
     try:
         nights = int(str(value).strip())
     except (TypeError, ValueError):
-        raise TripBuilderError(f"{flag}: {value!r} is not a whole number of nights.") from None
+        from src import config
+
+        raise TripBuilderError(
+            f"{flag}: {config.short_number(value)} is not a whole number of nights."
+        ) from None
     if nights < 1:
         raise TripBuilderError(
             f"{flag}: {nights} nights is refused. A zero-night stay is not a "
@@ -347,6 +355,26 @@ def build_fixture(
             "--new-trip needs at least one --leg or --hotel. An empty trip has "
             "nothing to score and writing the file would suggest otherwise."
         )
+    # R3-1: each field is bounded on its own, and the arithmetic multiplies
+    # them. A fare and a party size that are each scoreable can still make a
+    # party total that is not, so the products this builder determines are
+    # checked HERE, before anything is written, exactly as the loader checks
+    # the products it can compute.
+    from src import config
+
+    for spec in flights:
+        reason = config.unscoreable_cash_reason(spec.cash_usd * travelers)
+        if reason:
+            raise TripBuilderError(
+                f"--leg {spec.origin}:{spec.destination}: the fare for "
+                f"{travelers} travellers cannot be scored: {reason}"
+            )
+    for spec in hotels:
+        reason = config.unscoreable_cash_reason(spec.cash_usd * max(spec.nights, 1))
+        if reason:
+            raise TripBuilderError(
+                f"--hotel {spec.name}: the stay total cannot be scored: {reason}"
+            )
     captured = str(today or date.today())
     legs: List[Dict] = []
 
