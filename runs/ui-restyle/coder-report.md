@@ -194,3 +194,6 @@ Runs after the fixes:
   that needle (or the manager can choose the docs-only route for D5, which would put J8 back and
   D5[1180] red again).
 - ui-probes (`-O`, `-p no:randomly`): **663 passed, 0 failed** (487 s).
+6. **L3b (tester #9)** — `.seg button:disabled { cursor: not-allowed }` (the card's own
+   `cursor: pointer` outranked the global disabled rule). `test_L3b` and `test_J8` as run
+   together: 2 passed (J8's state is as described above); static rules 82 passed.
