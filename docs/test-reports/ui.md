@@ -1190,3 +1190,191 @@ the LIVE column of this report is synthetic from top to bottom.
 | New: R6-1 negative mandatory fee | Open (Medium) |
 | New: R6-2 sub-cent rounding on the page | Open (Low) |
 | Filed, agreed, unchanged | Score-column truncation; `[modeled]` swallowed by rich; F-2 (`0.00% (none)`, decision T4) |
+
+---
+
+# Mac round
+
+Tsuki ran the suite on his Mac for the first time: **5 failed / 3565 passed /
+13 skipped**. The Coder fixed two defects behind those five (MAC-1, copyable
+lines folding at narrow widths; MAC-2, the file-shape rules), and left one
+deviation for me to rule on. This round I attacked the two fixes as
+*properties*, finished the platform sweep they did not, re-verified the
+invariants I own, and ruled on the `main.py` probe.
+
+**620 probes at this head: 618 green, 2 red.** The new file is
+`docs/test-reports/ui-probes/test_ui_p_mac.py` (P1-P20). The two reds are P7
+and P8, and they are the finding below.
+
+## Findings
+
+### MAC-A (Low) - the relocation banner is the one copyable line still left folding
+
+**Repro** (`test_ui_p_mac.py::test_P7_the_relocation_banner_is_not_copyable_yet`,
+`::test_P8_a_very_long_relocation_path_is_split_mid_path`):
+
+```
+POINTS_OPTIMIZER_CACHE_DIR=/private/var/folders/9w/8k2x7p1n5q3d_4m6r0j8t1_c0000gn/T/\
+pytest-of-tsuki/pytest-4/test_the_live_transcript_matc0/snapshots
+.venv/bin/python -m src.main <any subcommand>
+```
+
+**Expected:** a path a user is meant to read and paste comes out whole on one
+line, like every other copyable line after MAC-1.
+
+**Actual:** `print_relocation_banner` is still three ordinary `console.print`
+calls, so rich wraps them at the console width. Measured at width 190:
+
+| path | whole banner line | printed as | path intact? |
+|---|---|---|---|
+| 122 chars (a realistic pytest tmp path on his Mac) | 205 chars | 2 lines, continuation `location for this run)` | yes |
+| 161 chars | 244 chars | 3 lines | yes |
+| **217 chars** | 300 chars | 3 lines | **no - the fold lands inside the path** |
+
+**Location:** `src/main.py`, `print_relocation_banner`.
+
+**Why it is a finding and not a preference:** the Coder's fix report declines
+this one on the ground that "none of those three can pass 190 columns in
+practice". That premise is wrong. The value is an environment variable, and the
+suite's own harness sets it to a macOS pytest tmp path; at 122 characters -
+shorter than paths pytest actually generates - the line is already 205
+characters and folds. It is Low rather than Medium because below roughly 190
+characters of path the path itself still survives whole on its own line, so a
+double-click still copies something usable; past that it does not.
+
+**Fix is one line of the same kind already applied elsewhere:** route these
+three through `print_copyable`. The only thing that stopped it was the
+operating-airline probe going red, and that is my call - see the ruling.
+
+## Ruling on the `main.py` probe
+
+**Reverting was not right. I widened the probe.**
+
+`docs/test-reports/operating-airline-probes/test_oa_r5_retest.py` exists to
+catch *undeclared restructuring* of `main.py` while the operating-airline work
+was in flight - not to freeze the file against a named, reviewed fix. Holding a
+correctness fix hostage to an adversarial pin inverts what the pin is for. I
+added, in the file, with the reasoning recorded next to it:
+
+```python
+CHANGED_BY_THE_MAC_1_FIX = {"print_relocation_banner", "run_new_trip"}
+allowed = SPLIT_BY_THE_UI_PLAN | CHANGED_BY_THE_MAC_1_FIX
+```
+
+What those functions *output* is still pinned - byte-identically - by the CLI
+golden transcripts and by the 69-scenario parity suite in `ui-probes`, which
+diffs this tree against pre-UI `3c104b3`. So the fix can land without loosening
+anything that matters. The operating-airline baseline is still 5 red by id
+after the widening; I changed what is allowed, not how many probes bite.
+
+The Coder should now un-revert `1185dbf` and land the three `print_copyable`
+calls.
+
+## MAC-1 as a property - what held
+
+`print_copyable` emits its text as **one whole line**, at console widths 20,
+40, 80, 190, 400 and 20000, for: a macOS `/private/var/folders/...` tmp path, a
+200-character path, a path with spaces, a unicode path, a path containing
+`[draft]`, and a path with backslashes (P1-P4).
+
+- `[draft]` is not eaten - the markup is escaped, not interpreted.
+- A style adds **zero** characters to the emitted text.
+- Prose that is *not* copyable still wraps, so the fix did not turn the whole
+  program into one long line.
+- The real `yq-check` command, end to end in a macOS-shaped deep directory at
+  widths 20/40/190/400, prints exactly **one** CSV row with every path whole
+  (P5).
+- The live-run banner manifest line (P6) and the UI's `argv_display` and
+  transcript (P9, P10) are unfolded.
+
+The only call site in the program that still folds is the one in MAC-A.
+
+## MAC-2 as a property - what held
+
+The scanner in `src/config.py` agrees with the **parsed** depth on ten string-
+literal edge cases: braces and brackets inside strings, an escaped quote, a
+trailing escaped backslash, a `\u007b` escape, a close brace inside a string (P11).
+
+- Cost: 0.058 s for a 1.4 MB file; 0.002 s for an unterminated string with
+  40,000 backslashes. No pathological blowup (P12).
+- Every committed fixture is depth 2-5: builder output 5, wallets 2, a 400-leg
+  trip depth 5 at 920 KB. The rule refuses nothing real (P13, P14).
+- Exactly 32 loads; 33, 35 and 120 refuse with the **identical** sentence at
+  recursion limits 1000 and 20000, with no traceback (P15).
+- A 5 MB fixture is refused in one sentence: `is 5,000,101 bytes, and may be at
+  most 4,194,304` (P16).
+- The wallet carries the same two rules: `Wallet error: ... nested 41 levels
+  deep ...`, exit 2 (P17).
+- The UI lists `load_error`, 422s the detail, and **never 500s**; the wallet
+  panel survives a deep wallet file (P18).
+
+## The platform sweep - what matters for his Mac, and what is theoretical
+
+| Item | Verdict |
+|---|---|
+| **Case-insensitive filesystem (evidence filenames)** | **Real for his Mac.** APFS is case-insensitive by default; two evidence files differing only in case collide there. Not reproducible in this sandbox (ext4), so I could not write a probe that bites here - it needs a run on his machine or a case-insensitive loopback image. This is the one platform item still genuinely open. |
+| **`LANG=C` end to end** | **Theoretical for his Mac**, real for a C-locale CI box. `c52cd9a` fixed the import (`import src.models` under `LANG=C` now works - P19 green), but `python -m src.main` on `trip_b`/`trip_c` still dies `UnicodeEncodeError: '…'`, exit 1, and 4 tests in `test_no_changelog_in_user_output.py` fail. His terminal is UTF-8, so he will not hit it; a Linux CI container with no locale set will. |
+| **`/private/var` tmp shape** | **Covered.** This was MAC-1's cause. The suite passes at a long macOS-shaped `--basetemp` (3656 passed / 13 skipped) once the basetemp directory exists - note that pytest errors every test with `FileNotFoundError` if you point `--basetemp` at a path whose parent is missing, which is a harness trap, not a defect. |
+| CRLF fixtures | Green (P20). |
+
+## Standing invariants, re-verified at this head
+
+- Full suite: **3656 passed / 13 skipped**, and identical under `-O` (the
+  structural import guards still refuse to be optimised away).
+- Long macOS-shaped `--basetemp`: **3656 / 13**.
+- Clean `git archive` export unpacked into a fresh directory: **3652 passed /
+  17 skipped / 0 failed**.
+- Baselines identical **by id**: v5 19 red, adversarial 40 red, known-failures
+  0, operating-airline 5 red (still 5 after the widening).
+- **No network call left this box.** The socket canary is still armed in
+  `ui-probes/conftest.py`, the browser context still aborts and records any
+  non-loopback request, and nothing was recorded. Nothing in this round spoke
+  to seats.aero or any real host.
+- Nothing was written into the repo tree or Tsuki's paths except my probe files
+  and this report.
+
+## Are his five failures actually closed?
+
+**Four of five: yes. The fifth: yes for the failure he saw, no for the class.**
+
+The three MAC-1 failures were copyable lines folding because a macOS tmp path
+is long; `print_copyable` fixes that as a property at every width I can throw at
+it, including widths far narrower than any his terminal will be. The two MAC-2
+failures were the file-shape rules disagreeing with themselves; scanner and
+parser now agree on every string-literal edge case I could construct, at two
+recursion limits, and refuse nothing real. Re-running the exact shapes that
+failed on his Mac - long `/private/var` basetemp, deep and oversized files -
+is green here.
+
+The caveat is MAC-A: the same class of bug the MAC-1 fix exists to kill is
+still live in `print_relocation_banner`, declined on a premise I measured to be
+false. It did not cause one of his five because that banner only prints when a
+`POINTS_OPTIMIZER_*` variable is set, and his run happened not to hit a long
+enough path in a way pytest compared. It will.
+
+And the qualification I have made in every round has not moved: **nothing here
+has ever spoken to the real Seats.aero.** His Mac run is the first contact with
+the real world, and it found two real defects in one afternoon. That is the
+point, and it is also the warning.
+
+## What I could not break, this round
+
+`print_copyable` itself - not with 20-column terminals, 20000-column
+terminals, 200-character paths, spaces, unicode, backslashes, rich markup in
+the path, or styles. The nesting scanner - not with braces in strings, escaped
+quotes, trailing backslashes, `\u007b` escapes, unterminated strings, 40,000
+backslashes, 1.4 MB of input, or recursion limits twenty times the default. The
+size rule - not with a fixture one byte over. The UI under either rule - it
+refuses in one sentence and never 500s. And the invariants: clean tree, clean
+export, `-O`, the baselines by id, and the socket canary.
+
+## Findings ledger, updated
+
+| Finding | State |
+|---|---|
+| Round 1 through Re-test 6 (all prior) | **Closed** except R6-1 (Medium), R6-2 (Low) |
+| MAC-1 (copyable lines fold) | **Closed** - property-verified |
+| MAC-2 (file-shape rules) | **Closed** - property-verified |
+| New: MAC-A relocation banner still folds | Open (Low) - probe widened so the fix can land |
+| Open platform item: case-insensitive evidence filenames | Needs a run on his Mac; not reproducible here |
+| Open platform item: `LANG=C` end to end | Theoretical for his Mac, real for C-locale CI |

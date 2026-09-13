@@ -357,6 +357,20 @@ def _top_level_shapes(src):
 # else. A later round that quietly restructures anything further turns this red
 # again.
 SPLIT_BY_THE_UI_PLAN = {"main", "run_fixture", "run_search"}
+# WIDENED BY THE TESTER, macOS ROUND. The coder applied `formatter.print_copyable`
+# to `main.py`'s three copyable lines - the relocation banner's directory,
+# `Wrote PATH` from --new-trip and the command --new-trip tells you to run next -
+# this probe went red, and they reverted the fix on the stated ground that none
+# of the three can pass 190 columns in practice. That ground is wrong for one of
+# them: the relocation banner's path comes from an environment variable, and the
+# suite's own harness sets it to a macOS tmp path, at which the line folds (I
+# measured it: 190 + 22, and above ~190 characters of path the fold lands INSIDE
+# the path). This probe exists to catch UNDECLARED restructuring, not to freeze a
+# file against a named fix, so the two functions that carry those lines are
+# allowed to change. What their output IS stays pinned by the byte-identical CLI
+# goldens and by the 69-scenario parity suite in ui-probes, which is the property
+# that matters; anything else in main.py still turns this red.
+CHANGED_BY_THE_MAC_1_FIX = {"print_relocation_banner", "run_new_trip"}
 ADDED_BY_THE_UI_PLAN = {
     "dispatch", "score_fixture", "print_fixture_report", "search_route",
     "print_search_report", "fixture_footer_lines", "fixture_exit_code",
@@ -376,9 +390,10 @@ def test_main_py_changed_only_by_the_dispatch_split_the_ui_plan_declares():
     missing = sorted(set(old) - set(new))
     assert missing == [], f"round-4 definitions deleted from main.py: {missing}"
     changed = sorted(name for name in old if old[name] != new[name])
-    assert set(changed) <= SPLIT_BY_THE_UI_PLAN, (
-        f"main.py changed outside the declared dispatch split: "
-        f"{sorted(set(changed) - SPLIT_BY_THE_UI_PLAN)}")
+    allowed = SPLIT_BY_THE_UI_PLAN | CHANGED_BY_THE_MAC_1_FIX
+    assert set(changed) <= allowed, (
+        f"main.py changed outside the declared dispatch split and the MAC-1 fix: "
+        f"{sorted(set(changed) - allowed)}")
     added = sorted(set(new) - set(old))
     assert set(added) <= ADDED_BY_THE_UI_PLAN, (
         f"main.py grew definitions the UI plan did not declare: "
