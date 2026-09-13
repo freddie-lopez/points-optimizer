@@ -357,6 +357,7 @@
     (S.trips || []).forEach(function (t) {
       var b = btn("trow", null, function () { S.view = "trips"; go("#trips/" + t.id); }, "trip-row-" + t.id);
       b.setAttribute("aria-current", String(S.view === "trips" && S.tripId === t.id));
+      b.classList.add(t.load_error ? "trow-broken" : (t.no_legs_note ? "trow-search" : "trow-trip"));
       add(b, el("span", "n", t.name));
       if (t.load_error) {
         add(b, el("span", "flag", "CANNOT LOAD"), el("span", "m", t.load_error));

@@ -135,18 +135,29 @@ a { color: var(--accent); }
 .has-drawer .search-grid { grid-template-columns: minmax(0, 1fr) 440px; }
 
 /* trip list */
-.triplist { display: grid; gap: 2px; align-content: start; }
-.triplist h2 { margin: 0 0 6px; }
-.trow { text-align: left; background: none; border: 0; border-left: 3px solid transparent; padding: 8px 10px; border-radius: 0 3px 3px 0; cursor: pointer; display: grid; gap: 2px; min-width: 0; }
+.triplist { display: grid; gap: 6px; align-content: start; }
+.triplist h2 { margin: 0; padding: 4px 14px 2px; }
+/* Three kinds of row, three forms - the captions ("NOT A PER-LEG TRIP",
+   "CANNOT LOAD") are the words, the form is the second signal. A search
+   request has a left rail and a quiet name (a request, not a trip); a file
+   that cannot load is a warn fill. Never dashed: dashed means UNKNOWN. */
+.trow { text-align: left; background: none; border: 1px solid transparent; padding: 12px 14px; border-radius: var(--radius); cursor: pointer; display: grid; gap: 3px; min-width: 0; }
 .trow:hover { background: var(--panel); }
-.trow[aria-current="true"] { background: var(--panel); border-left-color: var(--accent); }
-.trow .n { font-weight: 500; font-size: var(--s13); overflow-wrap: anywhere; }
+.trow[aria-current="true"] { background: var(--accent-tint); border-color: var(--line); }
+.trow[aria-current="true"] .n { color: var(--accent); }
+.trow .n { font-weight: 600; font-size: var(--s13); overflow-wrap: anywhere; }
 .trow .m { font-size: var(--s12); color: var(--muted); }
-.trow .flag { font: 500 10px/1.4 var(--mono); color: var(--warn); letter-spacing: .04em; overflow-wrap: anywhere; }
+.trow .flag { font: 600 11px/1.4 var(--sans); color: var(--warn); letter-spacing: .04em; text-transform: uppercase; overflow-wrap: anywhere; }
+.trow-search { border-left: 3px solid var(--line); border-radius: 0 var(--radius) var(--radius) 0; }
+.trow-search .n { font-weight: 400; color: var(--muted); }
+.trow-search[aria-current="true"] { border-left-color: var(--accent); }
+.trow-broken { background: var(--warn-bg); border-color: var(--warn-line); }
+.trow-broken:hover { background: var(--warn-bg); }
+.trow-broken[aria-current="true"] { background: var(--warn-bg); border-color: var(--warn); }
 /* A fixture with no legs says what it is instead of showing an empty table. */
 .nolegs { padding: 12px; display: grid; gap: 6px; }
-.nolegs .flag { font: 500 10px/1.4 var(--mono); color: var(--warn); letter-spacing: .04em; }
-.newtrip { margin-top: 10px; justify-self: start; }
+.nolegs .flag { font: 600 11px/1.4 var(--sans); color: var(--warn); letter-spacing: .04em; text-transform: uppercase; }
+.newtrip { margin-top: 10px; margin-left: 6px; justify-self: start; }
 
 /* trip result */
 .result { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; }
