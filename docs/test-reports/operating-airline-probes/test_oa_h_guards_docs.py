@@ -111,13 +111,64 @@ def test_the_readme_does_not_promise_a_free_cache_hit_the_code_does_not_give():
     assert "cap is checked before the cache" in lim or "cache hit" in lim.lower()[:4000]
 
 
-def test_the_existing_contract_tests_are_untouched():
+def _assertions_in(source: str) -> set:
+    """Every assertion a test file makes, as text. Comments, imports, harness
+    keywords and formatting are not assertions and are not in here."""
+    import ast
+
+    tree = ast.parse(source)
+    out = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assert):
+            out.add(ast.unparse(node.test))
+        elif isinstance(node, ast.Call) and "raises" in ast.unparse(node.func):
+            out.add(ast.unparse(node))
+    return out
+
+
+def _at(rev: str, path: str) -> str:
+    r = subprocess.run(["git", "show", f"{rev}:{path}"], cwd=ROOT,
+                       capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else ""
+
+
+def test_the_existing_contract_tests_still_make_every_promise_they_made():
+    """
+    RE-SCOPED BY THE TESTER, macOS ROUND 2. This pinned four contract files
+    BYTE for byte since a17497d, so that nobody could make a failing contract
+    pass by editing the test that states it. That is the right thing to guard
+    and the wrong way to say it: the MAC-A fix added `encoding="utf-8"` to one
+    subprocess call in `test_no_changelog_in_user_output.py` - a HARNESS line,
+    changing how the child's bytes are decoded, touching no assertion - and
+    without it the test, not the tool, is what fails on a C-locale machine.
+    A byte pin cannot tell that apart from gutting a contract.
+
+    So it now says what it means: every assertion those files made at a17497d
+    is still made at HEAD. Adding assertions is allowed. Changing or deleting
+    one is not, and neither is quietly weakening one, because the text of the
+    expression is what is compared.
+    """
     names = ["tests/test_verdicts_are_documented.py", "tests/test_exit_codes_are_documented.py",
              "tests/test_live_first_defaults.py", "tests/test_no_changelog_in_user_output.py"]
-    r = subprocess.run(["git", "diff", "--name-only", "a17497d", "HEAD", "--", *names],
-                       cwd=ROOT, capture_output=True, text=True)
-    assert r.stdout.strip() == ""
+    for name in names:
+        was, now = _at("a17497d", name), (ROOT / name).read_text(encoding="utf-8")
+        assert was, f"{name} did not exist at a17497d"
+        lost = _assertions_in(was) - _assertions_in(now)
+        assert not lost, f"{name} no longer makes {len(lost)} assertion(s) it made: {sorted(lost)}"
+
+
+def test_no_pre_existing_test_file_has_lost_an_assertion():
+    """The same rule over the whole suite: a file that existed at a17497d may
+    gain tests and may have its harness fixed, but may not stop asserting
+    something it asserted."""
     r = subprocess.run(["git", "diff", "--name-status", "a17497d", "HEAD", "--", "tests/"],
                        cwd=ROOT, capture_output=True, text=True)
-    modified = [l for l in r.stdout.splitlines() if not l.startswith("A")]
-    assert modified == ["M\ttests/fixtures/seats_aero/README.md"], modified
+    modified = [l.split("\t", 1)[1] for l in r.stdout.splitlines()
+                if l.startswith("M") and l.endswith(".py")]
+    for name in modified:
+        was, now = _at("a17497d", name), (ROOT / name).read_text(encoding="utf-8")
+        lost = _assertions_in(was) - _assertions_in(now)
+        assert not lost, f"{name} no longer makes {len(lost)} assertion(s) it made: {sorted(lost)}"
+    assert set(modified) <= {"tests/test_no_changelog_in_user_output.py"}, (
+        f"pre-existing test files changed beyond the declared MAC-A harness fix: "
+        f"{sorted(set(modified) - {'tests/test_no_changelog_in_user_output.py'})}")

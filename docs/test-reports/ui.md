@@ -1378,3 +1378,173 @@ export, `-O`, the baselines by id, and the socket canary.
 | New: MAC-A relocation banner still folds | Open (Low) - probe widened so the fix can land |
 | Open platform item: case-insensitive evidence filenames | Needs a run on his Mac; not reproducible here |
 | Open platform item: `LANG=C` end to end | Theoretical for his Mac, real for C-locale CI |
+
+---
+
+# Mac round 2
+
+MAC-A landed (`feee113`, `892f085`) and my ruling on the `main.py` probe was
+followed. This round: rule on my own P7, confirm MAC-A as a property the way I
+did MAC-1 and MAC-2, and re-verify.
+
+**663 probes at this head: 662 green, 1 red.** The red is new and Low (P29).
+
+## 1. Ruling on P7 - it was over-asserting. Re-scoped.
+
+`test_P7_the_relocation_banner_is_not_copyable_yet` asserted the banner prints
+**exactly one line**. The banner prints one line **per relocation variable that
+is set**, and the harness sets all three, so it got three and went red for the
+wrong reason. Each of the three was whole, including the 122-character macOS
+path - which is the property P7 exists to check. The coordinator is right.
+
+It now says what it means, as
+`test_P7_every_line_the_relocation_banner_prints_arrives_whole`: one line per
+set variable, each line whole, with the path intact - parametrised over the
+same six path shapes and four widths as P1 (20, 40, 190, 400), because the
+value is an environment variable and nothing bounds what a user puts in it. It
+also asserts a variable that is *not* set is not named. Added `P7b`: rich markup
+in a relocation path (`/Users/someone/[draft]/cache`) survives now that the line
+prints with a style.
+
+This is the same correction I made to the `main.py` probe last round, in the
+other direction: a probe must assert the promise, not an incidental shape of
+the output it happened to have when I wrote it.
+
+## 2. The same call on a second probe I own - and the baseline is really 6, not 5
+
+Running the baselines at this head, **operating-airline came back 6 red, not 5**.
+The sixth was
+`test_oa_h_guards_docs.py::test_the_existing_contract_tests_are_untouched`,
+which pinned four contract files byte for byte since `a17497d`. `feee113` added
+`encoding="utf-8"` to one `subprocess.run` in
+`tests/test_no_changelog_in_user_output.py` - a harness line, changing how the
+child's bytes are decoded, touching no assertion - and without it the *test*,
+not the tool, is what fails on a C-locale machine.
+
+The thing that pin guards is right: nobody gets to make a failing contract pass
+by editing the test that states it. A byte pin cannot tell that apart from a
+harness fix. So I re-scoped it to say what it means, and made it stronger while
+I was there:
+
+- `test_the_existing_contract_tests_still_make_every_promise_they_made` -
+  every assertion those four files made at `a17497d` is still made at HEAD.
+  Adding assertions is allowed; changing, weakening or deleting one is not,
+  because the *text of the expression* is compared.
+- `test_no_pre_existing_test_file_has_lost_an_assertion` - the same rule over
+  the whole `tests/` tree, not just four files, plus a declared-changes list.
+
+Operating-airline is now **5 red by id**, exactly the R5-1/R5-2 pair. The
+coordinator's number was right about what should be red; the sixth was my pin
+being too literal, not a regression.
+
+## 3. MAC-A as a property - what held
+
+**The copyable lines** (P7, P7b, P21). Every line the relocation banner prints
+arrives whole at widths 20/40/190/400 for all six path shapes, including the
+200-character path and the macOS tmp path that folded before. `run_new_trip`
+driven end to end into a macOS-shaped deep directory with a 64-character
+fixture name emits `Wrote PATH` on one line and the command underneath on
+exactly one line, byte-identical to the expected string, at widths
+20/40/80/190/400/20000. P8 - the fold landing inside a 223-character path - is
+now green.
+
+**The UTF-8 forcing is at process entry points only** (P22, P23, P26, P32, P33).
+By AST: `use_utf8_output` is called from exactly three files -
+`src/main.py`, `src/trips_tools.py`, `src/ui/__main__.py` - and every call sits
+inside an `if __name__ == "__main__"` guard. Behaviourally: importing and
+calling `src.main` in-process under `LC_ALL=C` leaves `sys.stdout` the same
+object with the same encoding; driving a real run through the UI server leaves
+this process's stdout untouched; calling it twice is harmless; and a stream it
+does not own (a `StringIO` swapped in) is left exactly as it is rather than
+crashed on.
+
+**A C locale no longer loses the answer** (P24, P25, P32). `python -m src.main`
+on `trip_b_europe` and `trip_c_lon_mry_surcharge` under `LC_ALL=C LANG=C
+PYTHONUTF8=0` prints a whole report - no `UnicodeEncodeError`, no traceback.
+`python -m src.trips_tools` and `python -m src.ui` start under the same locale.
+This was the failure I called "theoretical for his Mac, real for C-locale CI"
+last round. It is now closed for both.
+
+**The case-exact evidence rule** (P27, P28, P30, P31). Through the real
+`yq_inclusion.load`: an exact row loads; `2026-09-10-VirginAtlantic.md`,
+`2026-09-10-VIRGINATLANTIC.MD` and `2026-09-10-virginatlantic.MD` are each
+refused with **"is spelt"** and the correct spelling, and explicitly *not* with
+"does not exist"; an absent file is refused with **"does not exist"** and not
+with "is spelt". That distinction is the one the coordinator asked me to
+confirm, and it holds: a mis-cased row is not sent looking for a missing file.
+The rule is a function of the names the directory lists, so this probe passes on
+ext4 for the *right* reason - which is the whole point, since the old code said
+no here for the wrong one. 100 lookups in a 1000-record directory take well
+under a second, and the committed table still loads.
+
+## 4. New finding
+
+### MAC-B (Low) - a mis-cased *directory* is named as though it were the file
+
+**Repro** (`test_ui_p_mac.py::test_P29_a_mis_cased_intermediate_directory_is_named_wrongly`):
+a record at `docs/yq-checks/sub/b.md` cited by a row as
+`docs/yq-checks/SUB/b.md`.
+
+**Expected:** `evidence '...' is spelt 'docs/yq-checks/sub/b.md' on disk`.
+**Actual:** `... is spelt 'docs/yq-checks/sub' on disk` - the path truncated at
+the mis-cased component, so the message names a **directory** as the corrected
+spelling of a file.
+
+**Location:** `src/yq_inclusion.py`, `_spelt_differently_on_disk` - the early
+`return str(Path(*rel.parts[:i], same_but_for_case[0]))` drops `rel.parts[i+1:]`.
+
+**Severity Low, and unreachable at this head:** `docs/yq-checks/` is flat, and
+the validator's own `rel.parts[:2]` check is case-sensitive, so `docs/` and
+`yq-checks/` themselves cannot be the mis-cased component. It becomes reachable
+the day anyone nests a record, which the rule permits (`len(rel.parts) < 3` is a
+minimum, not an equality). One-line fix: append the remaining parts.
+
+## 5. Invariants at this head
+
+- Full suite **3,689 passed / 13 skipped**, identical under `-O`.
+- Clean `git archive` export into a fresh directory: **3,685 passed / 17
+  skipped / 0 failed**.
+- Baselines by test id: v5 **19**, adversarial **40**, known-failures **0**,
+  operating-airline **5** (after the re-scope in §2).
+- **No network call left this box.** The socket canary in
+  `ui-probes/conftest.py` is still armed on every probe and recorded nothing.
+- Nothing written into the repo tree or Tsuki's paths except my probe files and
+  this report.
+
+## 6. Are his five failures closed for the class?
+
+**Yes - for the class, not only for the five shapes.**
+
+- **Copyable lines.** Every line in the program that a reader is meant to copy
+  now goes through `print_copyable`, and I have checked the property rather than
+  the instances: six path shapes, six widths, markup, styles, and the three call
+  sites that MAC-1 originally skipped, driven end to end. The one I filed last
+  round as MAC-A is fixed and I can no longer fold any of them.
+- **File shape.** Unchanged from last round and still green: scanner and parser
+  agree, the refusal is one sentence at any recursion limit, nothing real is
+  refused, the UI never 500s.
+- **Locale.** Was open as "theoretical for his Mac"; now closed for everyone,
+  and closed the right way - forced at the three entry points, so nothing
+  in-process has a console changed underneath it.
+- **Filesystem.** Was the one platform item I could not test on ext4. It is now
+  testable *because the rule stopped asking the filesystem*: which file a row
+  cites is decided by comparing names, so his Mac and CI give the same answer by
+  construction. That is a better fix than anything I could have verified by
+  running on APFS.
+
+The standing qualification does not move, and it is the only thing I would put
+in front of the manager now: **nothing here has ever spoken to the real
+Seats.aero.** Every LIVE path is a stub and the trips parser is still UNVERIFIED
+against a real response.
+
+## Findings ledger, updated
+
+| Finding | State |
+|---|---|
+| Round 1 through Re-test 6 | **Closed** except R6-1 (Medium), R6-2 (Low) |
+| MAC-1, MAC-2 | **Closed** - property-verified |
+| MAC-A relocation banner | **Closed** - `feee113`, property-verified |
+| Platform: `LANG=C` end to end | **Closed** - `use_utf8_output` at the three entry points |
+| Platform: case-insensitive evidence filenames | **Closed** - decided by name, not by the filesystem |
+| New: MAC-B mis-cased directory named as the file | Open (Low), probe P29 |
+| Probes re-scoped by me this round | P7 (one line per set variable); `test_oa_h_guards_docs` (assertions, not bytes) |
