@@ -129,3 +129,45 @@ in the repo.
 - The tester's probe design holds up on inspection: markers asserted as DOM text outside the
   transcript fold, chip forms by computed style, grayscale by pixel luminance, and the
   no-network guard (every `connect()` refused, only the fonts URL ever attempted and aborted).
+
+## Re-review: e9561cb
+
+Since fe04c71: 999fff3 (E1), c7ddb68 (design inputs committed, shots pruned), 257960a (coder
+report), e9561cb (tester re-test, probes write to a gitignored `shots-out/`).
+
+**Verdict: Ship.** Must-fix 1 and 2 are done and verified; must-fix 3 (a real-font pass) cannot
+be done in this sandbox and becomes the handoff condition below.
+
+Verified by me at e9561cb:
+
+- Full suite `-O`: **3692 passed, 13 skipped** (155 s). ui-probes (`-O`, `-p no:randomly`):
+  **663 passed, 0 failed** (530 s). ui-restyle-probes: **284 passed, 2 failed, 10 skipped** —
+  the 2 red are exactly `test_C5[search_ok]` and `test_E3`, open by decision. `git status` is
+  clean after the probe run (shots now go to the gitignored `shots-out/`).
+- `git diff 386b2fc..e9561cb` on `src/ui/server.py api.py engine.py serialize.py src/main.py
+  src/formatter.py` and on `docs/test-reports/ui-probes/`: still **empty**. The only source
+  change since fe04c71 is one hunk in `app.js:768-777`.
+- The E1 line, per mode (tester's `test_M1–M4`, 16/16 green, and the diff): LIVE
+  `Seats.aero key: (masked key not sent to the browser)   (source: environment)` (unchanged);
+  OFFLINE with a key `Seats.aero key: not used (offline: no transport)   (source: environment)`;
+  REPLAY `Seats.aero key: not required (--from-snapshot replays committed bytes)   (source:
+  environment)`; no key: the base's line with no suffix and the bar chip `key: not found`.
+  The text before the suffix is byte-identical to 386b2fc's three lines; the appended
+  `   (source: X)` — in the form LIVE already printed — is the only wording change. The fake
+  key and its mask are nowhere in the page in any of the four states.
+- `docs/design/UI-BRIEF.md`, `docs/design/restyle-ref/` (DirectionC.dc.html, .png, tokens-c.txt)
+  and the eight cited shots are committed; the pointers in `ui.md` §4.7, the plan and `app.css`
+  now resolve.
+
+Nit, not blocking: the OFFLINE/REPLAY suffix reads `S.state.key.source` at render time, not the
+run's own context, so an OFFLINE run recorded before a key was added mid-session will show
+`(source: …)` retroactively. Harmless (that run used no key, and the line says so), and it goes
+away with the E3 fix (`refreshState().then(go)`), which is still the first thing to do after ship.
+
+**Handoff condition (Tsuki, first step on the Mac):** open the Trips tab with a real network,
+confirm Figtree / Red Hat Mono actually load (`document.fonts.check('12px Figtree')`), then look
+at 1440 and 400 wide — the three-row top bar at 400, the legs table's pinned columns, the search
+strip, and the mode cards. Every measurement on this branch was taken in fallback fonts; if a
+400px layout breaks with the real metrics, that is a one-line CSS fix, not a reason to hold the
+merge. Still open by decision: E3 (one-render chip/LIVE-card disagreement on a mid-session key
+change) and C5 (two coral buttons on Search with the drawer open).
