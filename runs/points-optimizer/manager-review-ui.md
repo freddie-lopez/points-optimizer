@@ -351,3 +351,183 @@ list is a next round; and the one thing that genuinely cannot be closed here —
 every LIVE path in this whole round is a stub and the trips parser has never met a real
 Seats.aero response — closes on his Mac, not in this sandbox. The "what to do first on
 his Mac" list above is what I would put in front of him with the bundle.
+
+---
+
+# Sign-off re-review (ff33b74): the macOS round
+
+Tsuki's Mac produced the first evidence from outside this sandbox: **5 failed /
+3565 passed / 13 skipped**. Two defects were behind the five, a third and fourth
+came out of the sweep, and the Tester re-scoped two of its own pins on the way.
+
+**Verdict: Ship.** Both of his defects were real product defects — not test
+noise — and both are now closed as properties rather than as shapes. I proved
+each one red at `a47dcb6` and green at `ff33b74` myself. One new Low, mine, in
+the coordinator's own commit; two re-scopings judged below, one of which is
+sound and one of which reached the right answer for a reason that is half wrong.
+
+## What I verified myself at ff33b74
+
+| Check | Result |
+|---|---|
+| `pytest -q -p no:cacheprovider` | **3,690 passed / 13 skipped** |
+| the same under `-O` | **3,690 / 13**, 1 pytest warning |
+| clean `git archive HEAD` export, interpreter from outside the tree | **3,686 passed / 17 skipped / 0 failed**; 308 files, 0 symlinks, no `.venv` |
+| `docs/test-reports/ui-probes` | **663 passed, 0 red** (11m02s) |
+| v5 / adversarial / known-failures baselines | **19 / 40 / 0 — identical by test id** to the saved baselines |
+| operating-airline | **5 red**, and I listed them: exactly the R5-1/R5-2 pair |
+
+**Red before, green after — each run by me, against a `git archive` of `a47dcb6`:**
+
+* **MAC-1.** A 200-character macOS-shaped path in a `yq-check` row: `console.print`
+  gives 2 lines at width 190 and 6 at width 40, path broken both times;
+  `print_copyable` gives 1 line with the path intact at 40, 190 and 400. That row
+  is the one input that decides whether a carrier surcharge is added to a score,
+  and it is pasted by hand. This was worth fixing.
+* **MAC-2.** The same 1,201-level file, at recursion limits 1000 / 5000 / 30000:
+  at `a47dcb6` it gives **three different answers** — "nested too deeply to
+  read", then twice "its top level is a list", which means the file was *read*.
+  At `ff33b74` it is one sentence at every limit: *"nested 1201 levels deep, and
+  may be at most 32."* That is the defect (an interpreter accident dressed as a
+  rule) and the fix, demonstrated. The limits refuse nothing real: the deepest
+  JSON anywhere under `tests/fixtures` measures **7** levels against a limit of
+  32, and the largest fixture is 17 KB against 4 MiB.
+* **Locale.** At `a47dcb6`, `python -m src.main` under `LC_ALL=C LANG=C
+  PYTHONUTF8=0` dies at **import** — `UnicodeDecodeError` reading its own source
+  — exit 1, 29 lines, no report. At `ff33b74`: exit 0, 226 lines, the real
+  `2.04% - 11.03%` headline. A whole class of machine went from "cannot run this
+  tool at all" to "runs it".
+* **MAC-A.** The relocation banner with a 122-char and a 224-char path: before,
+  5 lines for two variables with the 224-char path broken mid-path; after, 2
+  lines with both paths whole.
+
+## The two re-scopings
+
+**The contract-file pin (`test_oa_h_guards_docs`): sound, and broader than it
+was.** The Tester undersells its own work. The replacement keeps
+`assert set(modified) <= {"tests/test_no_changelog_in_user_output.py"}` — no
+pre-existing test file may be modified *at all* beyond the one declared change —
+and adds a per-file comparison of every assertion's text across the **whole**
+`tests/` tree instead of four files. I checked the premise rather than taking
+it: `git diff --name-status a17497d HEAD -- tests/` shows exactly one modified
+`.py`, and its entire diff is the declared `encoding="utf-8"` on one
+`subprocess.run`. No assertion, helper, constant or fixture was touched. The
+byte pin went red for exactly the reason given, and the re-scope hides nothing.
+The Tester is also right that the sixth red was its own pin being too literal,
+not a regression.
+
+**The `main.py` structure pin: right conclusion, half-wrong justification — and
+it did cost something.** The ruling itself is correct and is the Tester's to
+make: an adversarial pin exists to catch *undeclared* restructuring, and using
+it to veto a named, reviewed correctness fix inverts what it is for. But the
+sentence that carries the ruling — *"What those functions output is still
+pinned - byte-identically - by the CLI golden transcripts and by the 69-scenario
+parity suite"* — is only half true, and I checked both halves:
+
+* `print_relocation_banner` **is** covered. I ran a LIVE parity scenario through
+  `cli_diff_runner.py` and its output carries
+  `POINTS_OPTIMIZER_ENV_FILE is set: …`, so that function's output is diffed
+  old-tree against new-tree. Fine.
+* `run_new_trip` **is not**. There are **zero** `--new-trip` invocations in the
+  14 goldens and zero in the 69 parity scenarios, and nothing anywhere asserts
+  the wording of the two lines it prints. `feee113` changed its output shape —
+  the "Score it with:" sentence and the command were one `console.print` with an
+  embedded newline and are now two calls — and no byte-level test would have
+  noticed. Widening the pin removed the only structural pin that function had.
+
+Exposure is small: the new property tests and probe P21 do drive `run_new_trip`
+end to end, and `test_trip_builder.py` still byte-pins the fixture it writes. So
+this is a gap, not a hole. **Should fix soon, one scenario:** add a `--new-trip`
+invocation to `test_ui_g_cli_parity.py`, which makes the Tester's sentence true
+and restores the coverage the widening spent.
+
+## The weaker separation, checked harder — and what came out of it
+
+Two commits are the coordinator's, and the Coder left an unfinished test file.
+I read that file rather than counting its tests. It is not vacuous: the
+C-locale tests spawn **real subprocesses** (the encoding of stdout is a property
+of a process, and they say so), assert the run printed a report of more than 50
+lines with box drawing in it, and then compare the C-locale run against the
+UTF-8 run **character for character**. The filesystem tests apply the rule
+directly instead of asking the disk, which is why they can run on ext4 at all.
+Both halves are the right tests for the defects.
+
+**New finding — MAC-C (Low), in the coordinator's own MAC-B fix.** `ff33b74`
+carries the rest of the path through a mis-cased directory, which is right. It
+does not check that the path it now names exists:
+
+```
+cited=docs/yq-checks/SUB/b.md        -> 'docs/yq-checks/sub/b.md'        exists=True
+cited=docs/yq-checks/SUB/nothing.md  -> 'docs/yq-checks/sub/nothing.md'  exists=False
+```
+
+So a row citing a mis-cased directory **and** an absent file is told *"is spelt
+`docs/yq-checks/sub/nothing.md` on disk"* — a correction to a file that is not
+there. That is MAC-B's own shape one step along, and this project's recurring
+failure in miniature: "I could not find it" rendered as "the one you mean is X".
+Unreachable through `load()` while `docs/yq-checks/` is flat, same as MAC-B.
+**Fix, one line:** return the corrected path only if it resolves; otherwise
+return `""` so the caller says "does not exist". Not a blocker.
+
+## Two corrections to the reports themselves
+
+1. **`LANG=C` — both reports are wrong, in opposite directions.** The Coder's
+   report says it is "broken end to end… 65 tests still fail"; the Tester's
+   ledger says "Closed for everyone". Neither is right at this head. The
+   **product** is closed — I ran it. The **test suite** is not: under
+   `LC_ALL=C LANG=C PYTHONUTF8=0` pytest gives **5 collection errors and runs
+   nothing**, because five test files read repo text (README, the UI's static
+   assets) with the locale's encoding at module level. Not his machine, and one
+   line per file — the same line MAC-A already added to
+   `test_no_changelog_in_user_output.py`. **Should fix soon.**
+2. **A stale ledger row.** The Tester's updated ledger lists R6-1 (Medium) and
+   R6-2 (Low) as still open. They were closed in `12076b1` and I verified them
+   green at `543e75c`; the 663/0 run above confirms it again. A stale ledger is
+   how a real open item eventually gets lost — correct it.
+
+## Does this change what Tsuki should do on his Mac?
+
+**The order does not move. One step in it became trustworthy that was not.**
+
+* Re-run the suite first and expect **3,690 passed / 13 skipped, 0 failed**. If
+  any of his five comes back, that is new information worth pasting.
+* Then, unchanged: OFFLINE Trip B; one LIVE trip run, watching the calls
+  counter, the coverage line, the OPERATING AIRLINE section and the
+  per-itinerary taxes line; then the YQ measurement.
+* **What changed:** that YQ measurement ends with him pasting a `yq-check` CSV
+  row into `data/yq_inclusion.csv`, and before this round that row could arrive
+  folded across two lines on his Mac and nowhere else. It is the single input
+  that decides whether a carrier surcharge is added to a score. Pasting a broken
+  one would have been a wrong answer with no symptom. That step is now safe, and
+  the evidence filename is checked by name rather than by asking APFS, so a row
+  that loads for him loads in CI.
+* Everything I said not to trust is still not to be trusted. Nothing in this
+  round spoke to the real Seats.aero, and the trips parser is still UNVERIFIED.
+
+## Is the two-bundle delivery still right?
+
+**Yes — and this round makes the second bundle matter more, not less.**
+`feature/ui` contains `feature/operating-airline` in its history, so the second
+bundle carries everything, these fixes included.
+
+One caveat I verified rather than assumed: **the macOS fixes are engine fixes,
+not UI fixes, and two of them repair defects that are on `feature/operating-airline`
+too.** I extracted that branch and ran it: `import src.models` under `LC_ALL=C`
+dies with `UnicodeDecodeError`, and `print_copyable` does not exist there at all.
+So:
+
+* he should not go back to `feature/operating-airline` on his Mac — `feature/ui`
+  supersedes it in every respect;
+* if feature 1 is ever merged to master on its own, `71f9ec9`, `c52cd9a` and the
+  `use_utf8_output` half of `feee113` have to go with it, or master ships the
+  bugs his Mac already found.
+
+## Verdict
+
+**Ship.** Nothing here blocks the bundle. Four items for the next round, none
+urgent: MAC-C's one-line correction, a `--new-trip` parity scenario, the five
+C-locale collection errors, and the stale ledger row — alongside what was
+already filed (the Score-column truncation, the swallowed `[modeled]`, F-2). The
+standing qualification is unchanged and is still the only thing worth saying
+twice: every LIVE path in every round of this feature is a stub, and the first
+real Seats.aero response this code sees will be on his machine.
