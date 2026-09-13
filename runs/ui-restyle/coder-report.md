@@ -197,3 +197,23 @@ Runs after the fixes:
 6. **L3b (tester #9)** — `.seg button:disabled { cursor: not-allowed }` (the card's own
    `cursor: pointer` outranked the global disabled rule). `test_L3b` and `test_J8` as run
    together: 2 passed (J8's state is as described above); static rules 82 passed.
+
+## Fix round 2
+
+Manager review: `runs/ui-restyle/manager-review.md` (fe04c71).
+
+1. **E1** — the run-details key line is built in app.js (`runDetails`), not copied from the
+   transcript, so it could be reused: a found key is now named by `S.state.key.source` in every
+   mode, appended in the exact form the LIVE branch prints — `Seats.aero key: not used (offline:
+   no transport)   (source: environment)` / `… not required (--from-snapshot replays committed
+   bytes)   (source: environment)`. The not-found case prints what it printed before. No
+   CLI/engine/server change; ui.md §4.8 untouched. `tests/test_ui_static_rules.py` +
+   `test_ui_api.py` + `test_ui_security.py`: 220 passed. Tester's `test_r_e_keychip.py`:
+   4 passed, 1 failed — `test_E1` green; `test_E3` (the pre-existing render race) left alone as
+   instructed.
+2. **Design inputs committed**: `docs/design/UI-BRIEF.md`, `docs/design/restyle-ref/`
+   (DirectionC.dc.html, DirectionC.png 210 KB, tokens-c.txt) and the eight cited shots
+   (`fix-d1-400`, `s4-1440-gray`, `s6-1440-gray`, `smoke-1440`, `smoke-400`, `smoke-top-400`,
+   `mockup-1440`, `mockup-400`); `mockup-1440.png` was 307 KB and is downscaled to 751×469
+   (235 KB); every other PNG was under 300 KB. Twenty-five uncited working shots dropped.
+   Full suite `-O` after both: **3692 passed, 13 skipped** (147 s).
