@@ -626,6 +626,49 @@ def too_large_reason(what: str, size: int, limit: int = MAX_INPUT_FILE_BYTES) ->
     return f"{what} is {size:,} bytes, and may be at most {limit:,}."
 
 
+def use_utf8_output() -> None:
+    """
+    Write this process's output as UTF-8, whatever the shell's locale says.
+
+    MAC-A. Python picks stdout's encoding from the locale, so under `LANG=C` it
+    is ASCII - and this tool's output is not ASCII: rich draws its tables with
+    box-drawing characters and every masked key carries U+2026. `python -m
+    src.main` therefore scored a whole trip and then died with a
+    UnicodeEncodeError partway through printing it, which is the worst of the
+    three possible outcomes: the work was done, the answer was lost, and what
+    the reader got was a traceback.
+
+    FORCED RATHER THAN REFUSED, deliberately. Refusing to run at all under a C
+    locale would take the tool away from any CI that has not set one, to protect
+    a terminal that might render a box character oddly. A terminal that cannot
+    show UTF-8 still gets every figure; a crash gives nothing. This is the one
+    thing that is decided by the machine and should not be: what the tool prints
+    is the same text everywhere, and only its rendering is the terminal's
+    business.
+
+    Called from the process entry points ONLY. Nothing in-process (the UI, the
+    tests) touches the real stdout, so nothing else's behaviour changes.
+    """
+    import sys
+
+    for stream in (sys.stdout, sys.stderr):
+        encoding = (getattr(stream, "encoding", "") or "").lower().replace("-", "")
+        if encoding in ("utf8", "utf8mb4"):
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            # Not a text stream this process owns (a pipe someone replaced, a
+            # test's StringIO). Left exactly as it is.
+            continue
+        try:
+            reconfigure(encoding="utf-8")
+        except (OSError, ValueError):
+            # Detached, closed, or already being written to. The run then
+            # behaves as it did before this function existed, which is the
+            # honest fallback: we do not have a stream to fix.
+            continue
+
+
 # ---------------------------------------------------------------------------
 # Transfer mechanics
 # ---------------------------------------------------------------------------

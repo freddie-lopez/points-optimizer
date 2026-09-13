@@ -75,4 +75,8 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    from src import config
+
+    # MAC-A: the launcher prints the URL and the key banner to a terminal too.
+    config.use_utf8_output()
     sys.exit(main())

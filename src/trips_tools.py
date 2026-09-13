@@ -1020,4 +1020,7 @@ def main(
 if __name__ == "__main__":
     import sys
 
+    # MAC-A: the yq-check row is copied out of this process's stdout, so it has
+    # to reach the terminal at all. UTF-8 wherever it runs.
+    config.use_utf8_output()
     sys.exit(main())

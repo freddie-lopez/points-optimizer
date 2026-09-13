@@ -31,6 +31,7 @@ from rich.console import Console
 
 from src import trips_tools
 from src.formatter import print_copyable, print_live_banner
+from src.main import RELOCATION_VARS, print_relocation_banner, run_new_trip
 from src.seats_client import SeatsClient
 from tests.test_trips_tools import FLAG_KEY, TODAY, Stub
 from tests._trips_label_state import unverified_constants  # noqa: F401 - pins the label
@@ -195,16 +196,60 @@ def test_the_label_check_refusal_names_a_directory_that_is_not_folded(tmp_path, 
     assert f"  - {out_dir} is not the real/ capture directory" in lines
 
 
-# NOT FIXED HERE, ON PURPOSE: src/main.py prints three lines of this kind - the
-# relocation banner's directory, `Wrote PATH` from --new-trip, and the command
-# --new-trip tells you to run next. None of them can pass 190 columns in
-# practice (the paths are inside the repo or chosen by the person running it,
-# the command is a fixed length), and main.py's every top-level definition is
-# pinned to round 4 by
-# docs/test-reports/operating-airline-probes/test_oa_r5_retest.py::
-# test_main_py_changed_only_by_the_dispatch_split_the_ui_plan_declares, which
-# allows only the UI plan's dispatch split. Changing them would turn a sixth
-# probe red for a fold nobody can produce. Reported rather than done.
+# MAC-A. I left src/main.py's three lines of this kind alone in the first round,
+# on the ground that none of them could pass 190 columns in practice. That ground
+# was WRONG, and the Tester measured it: the relocation banner's path comes from
+# an environment variable, the suite's own harness sets it to a macOS tmp path,
+# and at 122 characters the line already folds. Above ~190 characters of path the
+# fold lands INSIDE the path, so what is left to copy is not a directory. "In
+# practice" was a guess about the input; the width is a fact about the console.
+# The banner is asserted here at the real macOS shape and past it.
+
+MACOS_TMP = (
+    "/private/var/folders/9w/8k2x7p1n5q3d_4m6r0j8t1_c0000gn/T/pytest-of-tsuki/"
+    "pytest-4/test_the_live_transcript_matc0/snapshots"
+)
+
+
+@pytest.mark.parametrize(
+    "directory",
+    [MACOS_TMP, "/Users/tsuki/" + "d" * 210 + "/snapshots", "/tmp/c"],
+    ids=["macos_tmp_path", "longer_than_the_console", "short"],
+)
+@pytest.mark.parametrize("width", WIDTHS)
+def test_the_relocation_banner_never_folds_the_directory_it_names(
+    directory, width, monkeypatch
+):
+    for var in RELOCATION_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("POINTS_OPTIMIZER_CACHE_DIR", directory)
+    assert printed(print_relocation_banner, width) == [
+        f"  POINTS_OPTIMIZER_CACHE_DIR is set: {directory} (overrides the "
+        f"default location for this run)"
+    ]
+
+
+@pytest.mark.parametrize("width", WIDTHS)
+def test_new_trip_prints_the_file_it_wrote_and_the_command_on_one_line_each(
+    tmp_path, width, monkeypatch
+):
+    """`Wrote PATH` and the command under it are both copied by hand."""
+    from src import trip_builder
+
+    monkeypatch.setattr(trip_builder, "FIXTURE_DIR", deep_dir(tmp_path, "trips"))
+    args = SimpleNamespace(
+        new_trip="probe", travelers="1", cabin="J", force=False,
+        legs=["LHR:SFO:2027-01-27:1200"], hotels=[],
+    )
+    buf = io.StringIO()
+    code, path = run_new_trip(args, Console(file=buf, width=width))
+    assert code == 0
+    lines = [l.rstrip() for l in buf.getvalue().splitlines()]
+    assert f"Wrote {path}" in lines, lines
+    assert (
+        '  python -m src.main --trip-fixture probe.json --live '
+        '--balance UR=<n> --card "<card>"'
+    ) in lines, lines
 
 
 @pytest.mark.parametrize("width", WIDTHS)

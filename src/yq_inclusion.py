@@ -111,6 +111,37 @@ class YqVerdict:
         return self.verdict == "excludes_yq"
 
 
+def _spelt_differently_on_disk(root: Path, rel: Path) -> str:
+    """
+    The path as the DIRECTORY spells it, when the row spells it differently in
+    case only - or "" when the row is exact (or the file simply is not there,
+    which the caller reports in its own words).
+
+    MAC-A. `Path.is_file()` asks the filesystem, and macOS's is
+    case-insensitive: `docs/yq-checks/2026-09-11-VirginAtlantic.md` is a file
+    there and is not a file on the Linux box that runs this in CI. So a row
+    whose evidence is mis-cased would load on Tsuki's machine and be refused on
+    the other one, and a row that is evidence on one computer and not on another
+    is not evidence. Which file a row cites is decided HERE, by comparing the
+    row's spelling with the names the directory actually lists, so the answer
+    does not depend on the filesystem underneath.
+    """
+    here = root
+    for i, part in enumerate(rel.parts):
+        try:
+            names = {p.name for p in here.iterdir()}
+        except OSError:
+            # Unreadable or not a directory. `is_file()` reports that.
+            return ""
+        if part not in names:
+            same_but_for_case = sorted(n for n in names if n.lower() == part.lower())
+            if not same_but_for_case:
+                return ""  # simply absent: the caller's "does not exist".
+            return str(Path(*rel.parts[:i], same_but_for_case[0]))
+        here = here / part
+    return ""
+
+
 def _check_evidence(
     evidence: str, root: Path, line: int, source: str = "", verdict: str = "",
     airline: str = "",
@@ -128,6 +159,12 @@ def _check_evidence(
         raise YqInclusionError(
             f"yq_inclusion.csv line {line}: evidence {text!r} is outside "
             f"{EVIDENCE_DIR}/. Only a yq-check record can back a verdict."
+        )
+    misspelt = _spelt_differently_on_disk(root, rel)
+    if misspelt:
+        raise YqInclusionError(
+            f"yq_inclusion.csv line {line}: evidence {text!r} is spelt "
+            f"{misspelt!r} on disk. The path has to match the file exactly."
         )
     path = root / rel
     if not path.is_file():
