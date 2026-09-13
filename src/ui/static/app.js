@@ -236,7 +236,14 @@
         add(chips, b);
       });
     }
-    $("key-source").textContent = "key: " + (st.key.found ? st.key.source : "not found");
+    // The key chip is only news when there is no key: the run-details box
+    // names the source of a found key.
+    var ks = $("key-source");
+    if (st.key.found) {
+      ks.textContent = ""; ks.hidden = true; ks.className = "keysrc";
+    } else {
+      ks.textContent = "key: not found"; ks.hidden = false; ks.className = "keysrc warn";
+    }
     $("tab-trips").setAttribute("aria-selected", String(S.view !== "search"));
     $("tab-search").setAttribute("aria-selected", String(S.view === "search"));
   }
