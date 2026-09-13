@@ -48,6 +48,31 @@ class SeatsAeroError(RuntimeError):
     """Raised when the Seats.aero API cannot be reached or returns an error."""
 
 
+class TripsLookupError(SeatsAeroError):
+    """
+    A trips lookup that produced no response to read, with the reason as DATA.
+
+    `code` is one of the MetalLookup reason codes (HTTP_404, HTTP_429,
+    HTTP_ERROR, TIMEOUT, TRANSPORT_ERROR, JSON_ERROR, BUDGET_EXHAUSTED,
+    AVAILABILITY_ID_INVALID, NO_TRIPS_SNAPSHOT), so the caller maps it to a
+    status without parsing a sentence. `request_sent` says whether an HTTP
+    request actually left this machine - the per-run cap counts those.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        request_sent: bool = False,
+        http_status: Optional[int] = None,
+    ):
+        super().__init__(message)
+        self.code = code
+        self.request_sent = request_sent
+        self.http_status = http_status
+
+
 # v5 STEP 2. WHICH PARSER READ A SET OF BYTES.
 #
 # Stamped into every snapshot's `_meta` and into its manifest row at `put` time.
@@ -217,6 +242,42 @@ class RawSearchResult:
 # invariants need carried from the bytes must exist on the transport's result
 # type, under the same name storage uses. Raises at import if it does not.
 models.assert_transport_carries(RawSearchResult)
+
+
+@dataclass
+class RawTripsResult:
+    """
+    One trips response, verbatim, and everything known about how it arrived.
+
+    `payload` is exactly what `response.json()` returned - `[]`, `None` and a
+    string are kept as they came, because coercing them to `{}` would turn a
+    wrong-shaped answer into an empty one. The parser names each shape.
+    """
+
+    payload: Any = None
+    http_status: Optional[int] = None
+    served_from_cache: bool = False
+    fetched_at: Optional[datetime] = None
+    request: Dict[str, str] = field(default_factory=dict)
+    request_key: str = ""
+    snapshot_name: Optional[str] = None
+    manifest_key: str = ""
+    incomplete: bool = False
+    incomplete_reason: str = ""
+    # The verbatim response body when it was fetched on THIS run, else "".
+    raw_text: str = ""
+    # Whether an HTTP request left this machine for this result.
+    request_sent: bool = False
+    # Replay provenance, set only by the snapshot transport.
+    replayed_from_snapshot: bool = False
+    snapshot_content_hash: str = ""
+    snapshot_parser_version: str = ""
+    snapshot_captured_at: Optional[datetime] = None
+
+
+# The same way (9) check, for the trips transport: the provenance keys every
+# storage layer persists must be fields here too.
+models.assert_transport_carries(RawTripsResult)
 
 
 def coverage_of_pages(pages: List[Dict[str, Any]]) -> Tuple[bool, str]:
@@ -453,13 +514,19 @@ def _as_int(value: Any) -> Optional[int]:
     if isinstance(value, int):
         return value
     if isinstance(value, float):
-        return int(value)
+        # R4-1 as a class: `int(inf)` and `int(nan)` raise, and this parser's
+        # contract is that a value it cannot read becomes None, never a crash
+        # and never 0.
+        try:
+            return int(value)
+        except (ValueError, OverflowError):
+            return None
     text = str(value).strip().replace(",", "")
     if not text:
         return None
     try:
         return int(float(text))
-    except ValueError:
+    except (ValueError, OverflowError):
         return None
 
 
@@ -474,6 +541,23 @@ def _as_bool(value: Any) -> Optional[bool]:
     if text in ("false", "0", "no"):
         return False
     return None
+
+
+def pagination_signals(payload: Dict[str, Any]) -> Tuple[Optional[bool], Any, Optional[int]]:
+    """
+    (has_more, cursor, skip): the "there is more" signals, read ONE way.
+
+    The search transport's pagination and the trips coverage check both read a
+    page through this, so a signal that marks a search INCOMPLETE can never
+    leave a trips list reading as whole: `hasMore` / `has_more` through
+    `_as_bool` (True for true, 1, "1", "yes"), `cursor` / `next_cursor` when
+    present, and `skip` through `_as_int` (a digit string counts).
+    """
+    has_more = _as_bool(payload.get("hasMore"))
+    if has_more is None:
+        has_more = _as_bool(payload.get("has_more"))
+    cursor = payload.get("cursor") or payload.get("next_cursor")
+    return has_more, cursor, _as_int(payload.get("skip"))
 
 
 def parse_carriers(value: Any) -> List[str]:
@@ -876,6 +960,22 @@ def parse_availability_row(row: Dict[str, Any]) -> List[Award]:
     return awards
 
 
+def search_request(origin: str, destination: str, date_range: DateRange) -> Dict[str, str]:
+    """The search request exactly as `search_raw` sends and caches it."""
+    return {
+        "origin_airport": origin,
+        "destination_airport": destination,
+        "start_date": str(date_range.from_date),
+        "end_date": str(date_range.to_date),
+    }
+
+
+def search_request_key(origin: str, destination: str, date_range: DateRange) -> str:
+    """The disk-cache key `search_raw` files this search under. One function, so
+    a caller predicting a cache hit asks the same question the client does."""
+    return response_cache.request_key("search", search_request(origin, destination, date_range))
+
+
 class SeatsClient:
     """Thin wrapper around the Seats.aero Partner API."""
 
@@ -894,6 +994,11 @@ class SeatsClient:
 
     _calls_made = 0
     _calls_date: Optional[date] = None
+    # L-1. `_calls_made` is Seats.aero's DAILY budget and zeroes at the date
+    # change. A long-lived process (the UI is one) that reported it as "spent
+    # since launch" understated itself every midnight. This one never resets,
+    # so the two numbers can be told apart and neither has to pretend.
+    _calls_ever = 0
 
     def __init__(self, api_key: Optional[str] = None):
         # v5 STEP 1. The key comes from `config.resolve_key`, not from
@@ -948,6 +1053,10 @@ class SeatsClient:
         self.last_snapshot_content_hash: str = ""
         self.last_snapshot_captured_at = None
         self.last_snapshot_parser_version: str = ""
+        # STICKY for the life of this client: Seats.aero answered HTTP 429 to a
+        # search or an itinerary lookup. Its real rate limit shows up only this
+        # way, so every later trips request in the run is not sent.
+        self.saw_http_429: bool = False
 
     # -- rate limiting ---------------------------------------------------
 
@@ -963,6 +1072,7 @@ class SeatsClient:
     def _count_call(cls) -> None:
         cls._budget_remaining()
         cls._calls_made += 1
+        cls._calls_ever += 1
 
     @classmethod
     def reset_call_budget(cls) -> None:
@@ -1004,11 +1114,7 @@ class SeatsClient:
         is exactly what this method refuses to do. It is now followed only when
         the server's own value MOVES PAST what we last sent.
         """
-        has_more = _as_bool(payload.get("hasMore"))
-        if has_more is None:
-            has_more = _as_bool(payload.get("has_more"))
-        cursor = payload.get("cursor") or payload.get("next_cursor")
-        skip = payload.get("skip")
+        has_more, cursor, next_skip = pagination_signals(payload)
 
         if has_more is False:
             return None, ""
@@ -1018,7 +1124,6 @@ class SeatsClient:
             return None, ""
 
         sent_skip = _as_int((sent or {}).get("skip")) or 0
-        next_skip = _as_int(skip)
         if next_skip is not None and next_skip > sent_skip:
             return {"skip": str(next_skip)}, ""
         if next_skip is not None:
@@ -1062,13 +1167,8 @@ class SeatsClient:
 
         Raises SeatsAeroError if the API cannot be reached.
         """
-        request = {
-            "origin_airport": origin,
-            "destination_airport": destination,
-            "start_date": str(date_range.from_date),
-            "end_date": str(date_range.to_date),
-        }
-        key = response_cache.request_key("search", request)
+        request = search_request(origin, destination, date_range)
+        key = search_request_key(origin, destination, date_range)
 
         if cache is not None and not refresh:
             hit = cache.get(key, ttl=cache_ttl)
@@ -1165,6 +1265,8 @@ class SeatsClient:
                     params=params,
                     timeout=15,
                 )
+                if getattr(response, "status_code", None) == 429:
+                    self.saw_http_429 = True
                 response.raise_for_status()
                 payload = response.json() or {}
                 http_status = getattr(response, "status_code", None)
@@ -1319,6 +1421,217 @@ class SeatsClient:
                 result.snapshot_name = written.meta.get("snapshot")
                 result.manifest_key = str(written.meta.get("manifest_key") or "")
 
+        return result
+
+    # -- trips -----------------------------------------------------------
+
+    def cached_trips(
+        self,
+        availability_id: str,
+        cache: Optional["response_cache.ResponseCache"],
+        cache_ttl: Optional[int] = None,
+    ) -> Optional["RawTripsResult"]:
+        """
+        The disk cache's answer for this id, or None. NEVER sends anything.
+
+        `trips_raw` asks this first; the metal pass also asks it after the
+        per-run cap is spent or after an HTTP 429, because a cache hit costs no
+        call and the answer is already on disk.
+        """
+        from src import seats_trips
+
+        if cache is None or not seats_trips.valid_availability_id(availability_id):
+            return None
+        request = {"availability_id": availability_id, **seats_trips.TRIPS_REQUEST_PARAMS}
+        key = response_cache.request_key("trips", request)
+        tcache = cache.for_trips()
+        hit = tcache.get(key, ttl=cache_ttl)
+        if hit is None:
+            return None
+        if len(hit.pages) != 1:
+            tcache.warnings.append(
+                f"Trips cache file {hit.path.name} holds {len(hit.pages)} pages; "
+                f"a trips response is exactly one. Treated as a MISS and "
+                f"re-fetched. The file is left in place."
+            )
+            return None
+        payload = hit.pages[0]
+        # WAY (9): the stored coverage and the coverage recomputed from the
+        # bytes, unioned - neither can answer "complete" for the other.
+        stored = response_cache.provenance_from_meta(hit.meta)
+        recomputed, recomputed_why = seats_trips.trips_coverage(payload)
+        incomplete = bool(stored.get("incomplete")) or recomputed
+        reasons = [
+            r
+            for r in (str(stored.get("incomplete_reason") or ""), recomputed_why)
+            if r
+        ]
+        return RawTripsResult(
+            payload=payload,
+            http_status=hit.http_status,
+            served_from_cache=True,
+            fetched_at=hit.fetched_at,
+            request=request,
+            request_key=key,
+            snapshot_name=hit.meta.get("snapshot"),
+            manifest_key="",
+            incomplete=incomplete,
+            incomplete_reason=(
+                "; ".join(reasons)
+                or "the cached response is INCOMPLETE and records no reason."
+            )
+            if incomplete
+            else "",
+            request_sent=False,
+        )
+
+    def trips_raw(
+        self,
+        availability_id: str,
+        *,
+        cache: Optional["response_cache.ResponseCache"] = None,
+        cache_ttl: Optional[int] = None,
+        refresh: bool = False,
+        leg_id: Optional[str] = None,
+        trip_id: Optional[str] = None,
+        award_date: Optional[str] = None,
+        route: str = "",
+    ) -> "RawTripsResult":
+        """
+        TRANSPORT ONLY. One GET /partnerapi/trips/{id}, verbatim. Parse NOTHING.
+
+        Raises TripsLookupError, whose `code` is the reason, for everything that
+        yields no response to read. Nothing is sent for an id that fails
+        validation, or when the call budget is at 0. A call is counted BEFORE it
+        is sent, on the same counter search uses, so trips can never spend past
+        the cap the search loop respects.
+        """
+        from src import seats_trips
+
+        if not seats_trips.valid_availability_id(availability_id):
+            raise TripsLookupError(
+                "AVAILABILITY_ID_INVALID",
+                f"{availability_id!r} is not a plain 10-64 character "
+                f"letters-and-digits availability id; no request was built from it.",
+            )
+        request = {"availability_id": availability_id, **seats_trips.TRIPS_REQUEST_PARAMS}
+        key = response_cache.request_key("trips", request)
+        tcache = cache.for_trips() if cache is not None else None
+
+        if tcache is not None and not refresh:
+            hit = self.cached_trips(availability_id, cache, cache_ttl)
+            if hit is not None:
+                return hit
+
+        if self._budget_remaining() <= 0:
+            raise TripsLookupError(
+                "BUDGET_EXHAUSTED",
+                f"{self._budget_remaining()} of {self.DAILY_CALL_CAP} calls left "
+                f"in this process",
+            )
+
+        self._count_call()
+        try:
+            response = requests.get(
+                f"{self.BASE_URL}/trips/{availability_id}",
+                headers={
+                    "Partner-Authorization": self.api_key,
+                    "Accept": "application/json",
+                },
+                params=dict(seats_trips.TRIPS_REQUEST_PARAMS),
+                timeout=15,
+            )
+        except requests.Timeout as e:
+            raise TripsLookupError(
+                "TIMEOUT", f"{type(e).__name__}: {e}", request_sent=True
+            ) from e
+        except requests.RequestException as e:
+            raise TripsLookupError(
+                "TRANSPORT_ERROR", f"{type(e).__name__}: {e}", request_sent=True
+            ) from e
+
+        status = getattr(response, "status_code", None)
+        if isinstance(status, bool) or not isinstance(status, int):
+            raise TripsLookupError(
+                "HTTP_ERROR",
+                f"the response carried no HTTP status ({status!r})",
+                request_sent=True,
+            )
+        if status == 404:
+            raise TripsLookupError(
+                "HTTP_404", "HTTP 404 Not Found", request_sent=True, http_status=404
+            )
+        if status == 429:
+            self.saw_http_429 = True
+            raise TripsLookupError(
+                "HTTP_429",
+                "HTTP 429 Too Many Requests",
+                request_sent=True,
+                http_status=429,
+            )
+        if not 200 <= status < 300:
+            raise TripsLookupError(
+                "HTTP_ERROR", f"HTTP {status}", request_sent=True, http_status=status
+            )
+        try:
+            payload = response.json()
+        except ValueError as e:
+            raise TripsLookupError(
+                "JSON_ERROR",
+                f"{type(e).__name__}: {e}",
+                request_sent=True,
+                http_status=status,
+            ) from e
+        text = getattr(response, "text", "")
+        incomplete, why = seats_trips.trips_coverage(payload)
+        result = RawTripsResult(
+            payload=payload,
+            http_status=status,
+            served_from_cache=False,
+            fetched_at=None,
+            request=request,
+            request_key=key,
+            incomplete=incomplete,
+            incomplete_reason=why,
+            raw_text=text if isinstance(text, str) else "",
+            request_sent=True,
+        )
+        # A 2xx is archived WHATEVER its shape: a wrong-shaped answer is still
+        # the answer, and it must parse to the same named unknown on every read.
+        # Failures above raised before reaching here, so none is ever cached.
+        if tcache is not None:
+            data = payload.get("data") if isinstance(payload, dict) else None
+            try:
+                written = tcache.put(
+                    key,
+                    request,
+                    [payload],
+                    meta={
+                        "endpoint": "trips",
+                        "parser_version": seats_trips.TRIPS_PARSER_VERSION,
+                        "http_status": status,
+                        "pagination_note": why,
+                        "leg_id": leg_id,
+                        "trip_id": trip_id,
+                        "availability_id": availability_id,
+                        "award_date": award_date,
+                        "route": route,
+                        "rows_seen": len(data) if isinstance(data, list) else None,
+                        **response_cache.provenance_meta(result),
+                    },
+                    secret=self.api_key,
+                )
+            except (OSError, ValueError) as e:
+                tcache.warnings.append(
+                    f"COULD NOT ARCHIVE the trips response for {availability_id} "
+                    f"({type(e).__name__}: {e}). The response arrived and IS being "
+                    f"used; it is not in the cache or the snapshot corpus, so this "
+                    f"lookup is not reproducible from disk."
+                )
+            else:
+                result.fetched_at = written.fetched_at
+                result.snapshot_name = written.meta.get("snapshot")
+                result.manifest_key = str(written.meta.get("manifest_key") or "")
         return result
 
     @staticmethod

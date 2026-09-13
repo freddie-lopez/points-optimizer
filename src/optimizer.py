@@ -13,6 +13,8 @@ from src.config import (
 )
 from src.funding import all_plans, best_plan, residue_report
 from src.models import (
+    METAL_PROVENANCE_TRIPS,
+    MetalStatus,
     Award,
     CashOption,
     FundingPlan,
@@ -20,6 +22,7 @@ from src.models import (
     LegResult,
     PointsCandidate,
     Ratio,
+    Reason,
     Strategy,
     SurchargeEstimate,
     Transfer,
@@ -357,27 +360,8 @@ def optimize(
                 continue
 
             points_cost = path.total_points_cost
-            # An award whose taxes could not be converted to USD contributes
-            # 0.0 here, which would silently understate it. Flag it rather than
-            # let it pass as a total: this is the same failure shape as v0's
-            # phantom $0 surcharge.
-            # MR-5: the getattr FALLBACK was `True` as well - a second copy of
-            # the unsafe default, which would have survived flipping the field.
-            # An object that cannot say whether it knows does not know.
-            cash_known = getattr(award, "cash_component_known", False)
-            below_duty = _search_taxes_below_owed_uk_duty(trip, award) if cash_known else ""
-            if below_duty:
-                # The trip path's rule, applied here too: a UK-departure tax
-                # figure below the duty it must contain is incomplete.
-                cash_known = False
-            cash_cost = award.cash_component if cash_known else 0.0
-            total_value = points_cost * valuation_cpp + cash_cost
-            apd_floor = 0.0 if cash_known else _search_uk_duty_floor(trip, award)
-            if apd_floor:
-                # An UNKNOWN cash side still has a known floor on a UK departure:
-                # the duty is owed on the ticket. The displayed ">=" total is a
-                # floor, and a floor that leaves out a certain tax is not one.
-                total_value += apd_floor
+            cash_known, cash_cost, cash_note, apd_floor = search_award_cash(trip, award)
+            total_value = points_cost * valuation_cpp + cash_cost + apd_floor
 
             strategy = Strategy(
                 award=award,
@@ -386,21 +370,7 @@ def optimize(
                 cash_cost=cash_cost,
                 total_value=total_value,
                 cash_cost_known=cash_known,
-                cash_cost_note=(
-                    ""
-                    if cash_known
-                    else (
-                        below_duty
-                        or getattr(award, "cash_component_note", "")
-                        or "The cash component of this award is unknown."
-                    )
-                    + (
-                        f" The total shown is a FLOOR that includes UK Air "
-                        f"Passenger Duty of ${apd_floor:,.2f}, owed on this ticket."
-                        if apd_floor
-                        else ""
-                    )
-                ),
+                cash_cost_note=cash_note,
             )
 
             # DEDUPLICATION USES THE RANKING RULE, not the raw total. Comparing
@@ -426,6 +396,52 @@ def optimize(
     # follow, ordered by points only, and are printed as UNKNOWN - never $0.
     results.sort(key=_strategy_rank)
     return results[:max_results]
+
+
+def search_award_cash(trip, award) -> Tuple[bool, float, str, float]:
+    """
+    (known, cash_usd, note, apd_floor) for one single-route search award.
+
+    The tax-trust rules of the search path, in ONE place: `optimize()` calls it
+    for every award it can fund, and the local UI calls it for the awards it
+    cannot, so every search cell - fundable or not - goes through the same
+    rules. `cash_usd` is 0.0 when `known` is False and MUST NOT be shown as a
+    number then: the unknown is carried by `known` and `note`.
+    """
+    # An award whose taxes could not be converted to USD contributes 0.0 to a
+    # total, which would silently understate it. Flag it rather than let it
+    # pass as a total: this is the same failure shape as v0's phantom $0
+    # surcharge.
+    # MR-5: the getattr FALLBACK was `True` as well - a second copy of the
+    # unsafe default, which would have survived flipping the field. An object
+    # that cannot say whether it knows does not know.
+    cash_known = getattr(award, "cash_component_known", False)
+    below_duty = _search_taxes_below_owed_uk_duty(trip, award) if cash_known else ""
+    if below_duty:
+        # The trip path's rule, applied here too: a UK-departure tax figure
+        # below the duty it must contain is incomplete.
+        cash_known = False
+    cash_cost = award.cash_component if cash_known else 0.0
+    # An UNKNOWN cash side still has a known floor on a UK departure: the duty
+    # is owed on the ticket. The displayed ">=" total is a floor, and a floor
+    # that leaves out a certain tax is not one.
+    apd_floor = 0.0 if cash_known else _search_uk_duty_floor(trip, award)
+    note = (
+        ""
+        if cash_known
+        else (
+            below_duty
+            or getattr(award, "cash_component_note", "")
+            or "The cash component of this award is unknown."
+        )
+        + (
+            f" The total shown is a FLOOR that includes UK Air "
+            f"Passenger Duty of ${apd_floor:,.2f}, owed on this ticket."
+            if apd_floor
+            else ""
+        )
+    )
+    return cash_known, cash_cost, note, apd_floor
 
 
 def _strategy_rank(s: "Strategy"):
@@ -632,6 +648,37 @@ def resolve_leg_surcharge(
     # A program-wide no-YQ policy row needs neither, which is why a United or
     # Aeroplan candidate still resolves to a confirmed $0 here.
     region, country, why_not = _leg_region_and_country(leg)
+
+    # METAL FROM THE ITINERARY LOOKUP, for a source verified `excludes_yq`
+    # (only `award_to_candidate` sets this carrier_source, and only then). The
+    # itinerary's carriers - or the union of AMBIGUOUS sets - resolve TOGETHER:
+    # a figure only when every one gives the same outcome. For a set that means
+    # "all of these fly segments", which is safe for exactly that reason.
+    metal = getattr(cand, "metal", None)
+    if cand.carrier_source == METAL_PROVENANCE_TRIPS and metal is not None and (
+        metal.status in (MetalStatus.KNOWN, MetalStatus.AMBIGUOUS)
+    ):
+        est = surcharges.resolve_ambiguous_metal(
+            ratios_manager.normalize_program(cand.program),
+            list(metal.all_carriers),
+            region or "",
+            cand.cabin,
+            country or "",
+            is_round_trip=cand.is_round_trip,
+            today=today,
+        )
+        if not est.is_known:
+            from src import seats_trips
+
+            label = seats_trips.trips_parser_label()
+            est.notes = (
+                f"Cannot model a surcharge for {cand.label!r} on the metal its "
+                f"itinerary lookup found ({', '.join(metal.all_carriers)})"
+                + (f": {why_not}" if region is None else "")
+                + f". {est.notes}"
+                + (f" {label}" if label else "")
+            ).strip()
+        return est
     est = surcharges.resolve(
         ratios_manager.normalize_program(cand.program),
         cand.operating_carrier if cand.has_known_metal else "",
@@ -642,6 +689,25 @@ def resolve_leg_surcharge(
         carrier_is_known=cand.has_known_metal,
         today=today,
     )
+    if not est.is_known and metal is not None and metal.status in (
+        MetalStatus.KNOWN, MetalStatus.AMBIGUOUS
+    ):
+        # The lookup DID name metal; it is deliberately not used here, and the
+        # note must say that rather than "no operating carrier is recorded".
+        # The metal came from the trips parser: its label goes on the note
+        # while the parser is unverified (Re-test 2, R2-7).
+        from src import seats_trips
+
+        label = seats_trips.trips_parser_label()
+        est.notes = (
+            f"Cannot model a surcharge for {cand.label!r}: the itinerary lookup "
+            f"names {', '.join(metal.all_carriers)} by flight number, and that "
+            f"metal is NOT used for a surcharge because whether Seats.aero's taxes "
+            f"for this source already include one is not verified. The band for "
+            f"that metal is stated on the operating-airline line and is NOT ADDED."
+            + (f" {label}" if label else "")
+        )
+        return est
     if not est.is_known:
         why = []
         if not cand.operating_carrier:
@@ -1238,7 +1304,13 @@ def evaluate_leg(
                 surcharge.notes
                 or "No surcharge rule matched and none was captured. This is NOT zero.",
             )
-        if not cand.has_known_metal:
+        # Dropped when the itinerary lookup named the metal: "the tool never
+        # guesses metal" beside "operating airline: VS by flight number" would
+        # contradict the line above it. The surcharge stays unresolved either
+        # way unless the source's YQ inclusion is verified - that is
+        # SURCHARGE_UNKNOWN's job, not this reason's.
+        metal = getattr(cand, "metal", None)
+        if not cand.has_known_metal and not (metal is not None and metal.is_known):
             result.add_reason(
                 "CARRIER_UNKNOWN",
                 f"Operating carrier for {cand.label!r} is "
@@ -1506,34 +1578,7 @@ def evaluate_leg(
             )
 
     # ---- Verdict sensitivity -----------------------------------------------
-    # A surcharge estimate is a RANGE. If the verdict differs between the low and
-    # the high end, the recommendation is not settled and the tool says so rather
-    # than picking the midpoint and sounding confident.
-    if (
-        result.has_points_path
-        and result.surcharge is not None
-        and result.surcharge.is_range
-        and result.cash_total_score_usd != float("inf")
-    ):
-        wins_at_low = result.points_score_low_usd < result.cash_total_score_usd
-        wins_at_high = result.points_score_high_usd < result.cash_total_score_usd
-        if wins_at_low != wins_at_high:
-            result.verdict_sensitive = True
-            result.add_reason(
-                "VERDICT_SENSITIVE",
-                f"The verdict FLIPS inside the surcharge range: points score "
-                f"${result.points_score_low_usd:,.2f} at the low end and "
-                f"${result.points_score_high_usd:,.2f} at the high end, against "
-                f"${result.cash_total_score_usd:,.2f} cash. This recommendation is "
-                f"NOT settled - capture the real surcharge before booking.",
-                low=result.points_score_low_usd,
-                high=result.points_score_high_usd,
-                cash=result.cash_total_score_usd,
-            )
-            result.warnings.append(
-                "VERDICT SENSITIVE: the recommendation reverses inside the "
-                "surcharge estimate's own range. Do not treat it as settled."
-            )
+    set_verdict_sensitivity(result)
 
     # ---- Alternatives -------------------------------------------------------
     if show_alternatives and leg.kind == "flight" and result.best_points is not None:
@@ -1564,6 +1609,32 @@ def evaluate_leg(
             )
             if note:
                 result.warnings.append(note)
+
+    # ---- The operating-airline lookup: counted, never scored --------------
+    # For the chosen award only. A lookup that could not change the answer
+    # (a program-wide $0 surcharge, not a direct partner) is not a gap and is
+    # not counted. Literal codes, one per branch: way (10) discovers reason
+    # codes by parsing `add_reason("CODE", ...)`.
+    metal = getattr(result.best_points, "metal", None) if result.best_points else None
+    if metal is not None and metal.is_missing_lookup:
+        result.add_reason(
+            "METAL_LOOKUP_MISSING",
+            f"The operating airline of {result.best_points.label!r} was "
+            f"{metal.status.value.replace('_', ' ').upper()} "
+            f"({metal.reason_code}). Nothing is known about which airline flies "
+            f"it; it is NOT known metal.",
+            status=metal.status.value,
+            reason=metal.reason_code,
+        )
+    elif metal is not None and metal.is_unresolved:
+        result.add_reason(
+            "METAL_UNKNOWN",
+            f"The operating-airline lookup for {result.best_points.label!r} did "
+            f"not settle one carrier set ({metal.status.value}"
+            f"{', ' + metal.reason_code if metal.reason_code else ''}).",
+            status=metal.status.value,
+            reason=metal.reason_code,
+        )
 
     return result
 
@@ -1696,6 +1767,91 @@ def evaluate_trip(
 # ---------------------------------------------------------------------------
 # v5 Step 7: UK Air Passenger Duty. THE ONLY PLACE THIS MODULE TOUCHES IT.
 # ---------------------------------------------------------------------------
+
+
+def set_verdict_sensitivity(result: LegResult, apd_usd: float = 0.0) -> None:
+    """
+    Whether the verdict FLIPS inside the surcharge band, decided on the scores
+    AS THEY NOW STAND.
+
+    A surcharge estimate is a RANGE. If the verdict differs between the low and
+    the high end, the recommendation is not settled and the tool says so rather
+    than picking the midpoint and sounding confident.
+
+    FINDING H-1. This used to be decided once, inside `evaluate_leg`, BEFORE
+    `apply_apd` added UK Air Passenger Duty to both ends of the band. A LHR
+    departure whose points side wins at $1,030.38 and loses at $1,180.38 against
+    $1,150.00 cash - the straddle the marker exists for - was therefore reported
+    as a settled POINTS verdict, because before the duty both ends sat below the
+    fare. It is the F-3 shape one field along: a flag decided on figures that
+    are not the ones scored. So it is a function, it recomputes from the current
+    scores, and `apply_apd` calls it again after moving them.
+
+    FINDING R2-2. It then returned early when the FLAG did not change - which
+    also skipped the sentence, and the sentence quotes FIGURES. A band that
+    straddled the fare both before and after the duty kept a reason built from
+    the pre-APD numbers: both ends $330.38 low, and the duty not named, so the
+    "defensible low end" read better than the one actually scored. The same
+    failure the fix was written to close, one branch along. The reason is now
+    rebuilt from the current figures every time and compared; when it comes out
+    identical nothing is touched, so re-deciding the same answer on the same
+    numbers still leaves the reason and the warning exactly where they were.
+    """
+    flips = False
+    if (
+        result.has_points_path
+        and result.surcharge is not None
+        and result.surcharge.is_range
+        and result.cash_total_score_usd != float("inf")
+    ):
+        wins_at_low = result.points_score_low_usd < result.cash_total_score_usd
+        wins_at_high = result.points_score_high_usd < result.cash_total_score_usd
+        flips = wins_at_low != wins_at_high
+    result.verdict_sensitive = flips
+    reason = warning = None
+    if flips:
+        duty = (
+            f" UK Air Passenger Duty of ${apd_usd:,.2f} is counted in both ends."
+            if apd_usd
+            else ""
+        )
+        reason = Reason(
+            code="VERDICT_SENSITIVE",
+            detail=(
+                f"The verdict FLIPS inside the surcharge range: points score "
+                f"${result.points_score_low_usd:,.2f} at the low end and "
+                f"${result.points_score_high_usd:,.2f} at the high end, against "
+                f"${result.cash_total_score_usd:,.2f} cash.{duty} This recommendation "
+                f"is NOT settled - capture the real surcharge before booking."
+            ),
+            data={
+                "low": result.points_score_low_usd,
+                "high": result.points_score_high_usd,
+                "cash": result.cash_total_score_usd,
+            },
+        )
+        warning = (
+            "VERDICT SENSITIVE: the recommendation reverses inside the "
+            "surcharge estimate's own range. Do not treat it as settled."
+        )
+    _restate(result.reasons, lambda x: x.code == "VERDICT_SENSITIVE", reason)
+    _restate(result.warnings, lambda w: w.startswith("VERDICT SENSITIVE:"), warning)
+
+
+def _restate(items: list, matches, replacement) -> None:
+    """Put `replacement` where the item `matches` picked out already was, so a
+    restated sentence does not move in the output; append it if there was none,
+    and drop the old one when there is no replacement. Identical text is left
+    alone entirely."""
+    at = next((i for i, x in enumerate(items) if matches(x)), None)
+    if at is None:
+        if replacement is not None:
+            items.append(replacement)
+        return
+    if replacement is None:
+        del items[at]
+    elif items[at] != replacement:
+        items[at] = replacement
 
 
 def _apd_cabin(result: LegResult) -> Tuple[str, str]:
@@ -2125,6 +2281,7 @@ def apply_apd(
             _add_apd_to_unscored_floor(result, amount, valuation_cpp)
             continue
 
+        before_apd = result.points_total_score_usd
         for attr in (
             "points_total_score_usd",
             "points_score_low_usd",
@@ -2134,6 +2291,9 @@ def apply_apd(
             value = getattr(result, attr)
             if value is not None and value != float("inf"):
                 setattr(result, attr, value + amount)
+        _restate_verdict_after_apd(result, before_apd, amount, valuation_cpp)
+        # H-1: the band has MOVED, so ask again whether it straddles the fare.
+        set_verdict_sensitivity(result, apd_usd=amount)
 
         # The head-to-head numbers are recomputed from the moved score rather
         # than left stale. A leg whose points side has grown by GBP 102 and
@@ -2162,6 +2322,35 @@ def apply_apd(
                     f"own APD. {result.verdict_reason}"
                 ).strip()
     return results
+
+
+def _restate_verdict_after_apd(
+    result: LegResult, before: float, amount: float, valuation_cpp: float
+) -> None:
+    """
+    F-3. THE VERDICT SENTENCE QUOTES THE SCORE IT WAS DECIDED ON.
+
+    `evaluate_leg` writes "Points path scores $280.00 vs $482.00 cash" before
+    APD exists; APD then moves the score to $418.11 - the figure the table, the
+    margin and the trip total all use - and the sentence kept the cleaner
+    $280.00. A reason that quotes a smaller points cost than the one scored is
+    an understatement with a verdict attached. The sentence is restated with
+    the scored figure and names the duty that is in it.
+    """
+    if before is None or before == float("inf"):
+        return
+    after = result.points_total_score_usd
+    cash = result.cash_total_score_usd
+    parts = f"(points ${before:,.2f} + UK APD ${amount:,.2f})"
+    result.verdict_reason = result.verdict_reason.replace(
+        f"Points path scores ${before:,.2f} vs ${cash:,.2f} cash.",
+        f"Points path scores ${after:,.2f} vs ${cash:,.2f} cash {parts}.",
+    ).replace(
+        f"Cash is cheaper: ${cash:,.2f} vs ${before:,.2f} on points at "
+        f"{valuation_cpp * 100:.1f}cpp.",
+        f"Cash is cheaper: ${cash:,.2f} vs ${after:,.2f} on points at "
+        f"{valuation_cpp * 100:.1f}cpp {parts}.",
+    )
 
 
 def leg_points_demand(result: LegResult, wallet: Wallet) -> Dict[str, int]:
@@ -2399,6 +2588,16 @@ def leg_has_no_partner(result: LegResult) -> bool:
     )
 
 
+def _cents(amount: float) -> float:
+    """A money figure as it is printed: to the cent. R6-2 - see `trip_totals`."""
+    if amount in (float("inf"), float("-inf")) or amount != amount:
+        return amount
+    # Formatted, not `round()`: this has to be the figure the table PRINTS, and
+    # `f"{x:,.2f}"` is what prints it. The two agree today; going through the
+    # formatter means they cannot stop agreeing.
+    return float(f"{amount:.2f}")
+
+
 def trip_totals(
     results: List[LegResult], wallet: Optional[Wallet] = None
 ) -> Dict[str, float]:
@@ -2417,8 +2616,21 @@ def trip_totals(
     # baseline is the fare for the day the trip actually says. Building the
     # baseline from an off-date fare would inflate the saving by exactly the
     # bias plan section 4.5 exists to prevent (finding H-5).
+    # R6-2. MONEY IS COUNTED IN CENTS, and every total below is a sum of the
+    # figures as they are PRINTED. The engine kept full precision and rounded
+    # only at the moment of printing, so four legs at $10.005 printed $10.01
+    # each and totalled $40.02: a table that disagreed with itself on the page,
+    # with nothing saying which figure to trust. A captured fare has two
+    # decimals, but an FX-converted one is sub-cent routinely (EUR 643.57 x
+    # 1.1620 = $747.828...), so this is reachable with real data.
+    #
+    # Rounding the PARTS and summing those is the only arrangement in which the
+    # printed table adds up; rounding the sum instead leaves the rows visibly
+    # disagreeing with it. On every committed trip the parts are already whole
+    # cents, so no figure this project has ever printed moves.
+    cents = _cents
     finite = [r for r in results if r.cash_baseline_usd != float("inf")]
-    all_cash = sum(r.cash_baseline_usd for r in finite)
+    all_cash = sum(cents(r.cash_baseline_usd) for r in finite)
 
     # A LEG NOBODY CAN PRICE IS EXCLUDED FROM BOTH SIDES AND COUNTED SEPARATELY.
     #
@@ -2432,13 +2644,14 @@ def trip_totals(
     # own version of pretending a missing number is zero.
     priceable = [r for r in results if r.winner_cost_usd != float("inf")]
     unpriced = [r for r in results if r.winner_cost_usd == float("inf")]
-    optimized = sum(r.winner_cost_usd for r in priceable)
+    optimized = sum(cents(r.winner_cost_usd) for r in priceable)
     # v1: the recommendation is a RANGE whenever any surcharge estimate is one.
     optimized_low = sum(
-        r.winner_cost_low_usd for r in priceable if r.winner_cost_low_usd != float("inf")
+        cents(r.winner_cost_low_usd) for r in priceable
+        if r.winner_cost_low_usd != float("inf")
     )
     optimized_high = sum(
-        r.winner_cost_high_usd
+        cents(r.winner_cost_high_usd)
         for r in priceable
         if r.winner_cost_high_usd != float("inf")
     )
@@ -2446,9 +2659,9 @@ def trip_totals(
         r.points_required for r in results if r.verdict == "points"
     )
     cash_still_owed = sum(
-        (r.points_surcharge_usd + r.mandatory_fees_usd)
+        cents(r.points_surcharge_usd + r.mandatory_fees_usd)
         if r.verdict == "points"
-        else r.cash_total_score_usd
+        else cents(r.cash_total_score_usd)
         for r in results
         if r.cash_total_score_usd != float("inf") or r.verdict == "points"
     )
@@ -2593,6 +2806,20 @@ def trip_totals(
         "legs_indirect_path_unverified_ids": _legs_with(results, "INDIRECT_PATH_UNVERIFIED"),
         "legs_award_unattributed": len(_legs_with(results, "PROGRAM_UNATTRIBUTED")),
         "legs_award_unattributed_ids": _legs_with(results, "PROGRAM_UNATTRIBUTED"),
+        # The operating-airline lookup, by reason code on the CHOSEN award. Always
+        # present, zero when the lookup was never engaged.
+        "legs_metal_lookup_missing": len(_legs_with(results, "METAL_LOOKUP_MISSING")),
+        "legs_metal_lookup_missing_ids": _legs_with(results, "METAL_LOOKUP_MISSING"),
+        "legs_metal_not_recorded_ids": [
+            r.leg.id
+            for r in results
+            if any(
+                x.code == "METAL_LOOKUP_MISSING" and x.data.get("status") == "not_recorded"
+                for x in r.reasons
+            )
+        ],
+        "legs_metal_unknown": len(_legs_with(results, "METAL_UNKNOWN")),
+        "legs_metal_unknown_ids": _legs_with(results, "METAL_UNKNOWN"),
         "rests_on_placeholder_fx": any(r.rests_on_placeholder_fx for r in results),
     }
     # WAY (10). The declarations in `models.TRIP_LEVEL_ANSWERS` are checked

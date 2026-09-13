@@ -169,6 +169,98 @@ This choice decides verdicts: a leg that loses on points at 1cpp may win at 0.5c
 
 ---
 
+## Local UI
+
+A small web page over the same engine, for your own machine:
+
+```bash
+.venv/bin/python -m src.ui                      # opens http://127.0.0.1:8777/
+.venv/bin/python -m src.ui --wallet wallet.json --port 8777 --no-open
+```
+
+Run it from the repo root, with the same interpreter you run the CLI with. It prints `Points optimizer UI: http://127.0.0.1:8777/  (Ctrl-C to stop)`
+and opens your browser unless you pass `--no-open`. `--port 0` picks any free
+port; a port that is already taken is an error, never a silent move to another
+one. The wallet defaults to `./wallet.json` when that file exists.
+
+**Every run in the page IS a CLI run.** The page builds a real
+`python -m src.main` argument list, sends it through the CLI's own parser and
+dispatch, and shows you the result - and the exact command, as "Equivalent
+command", so you can paste it into a terminal and get the same output. Every
+refusal, UNKNOWN, WITHHELD, UNVERIFIED and provenance label on the page is the
+CLI's own sentence; "CLI output" under each result is the full terminal text
+(the one difference: the masked key on the key line is replaced by
+`(masked key not sent to the browser)` - the source stays).
+
+What you can do: pick a trip and run it LIVE, REPLAY or OFFLINE; open any leg
+for everything the CLI knows about it; search one route; build a new trip (it is
+written to `tests/fixtures/trips/NAME.json` by the same builder `--new-trip`
+uses, one traveller, a cabin per leg, a name of at most 120 characters); edit the
+wallet for the session.
+
+The trip list says what each file is. A file that will not load is listed as
+**CANNOT LOAD** with the reason, never hidden and never shown as an empty trip;
+`trip_001` and `trip_002` are listed as **NOT A PER-LEG TRIP** - they are the
+acceptance suite's original single-route inputs and have no `legs` key at all.
+A trip is written only if it does not already exist: two simultaneous writes of
+one name cannot both report success.
+
+**What LIVE spends.** Before any LIVE trip run or search the page states the
+most it can spend and waits for you: a trip can spend up to 25 calls per flight
+leg (one per results page; one page is the only shape seen so far) plus the
+itinerary-lookup cap (default 10); a search up to 25. It also says how many of
+the trip's searches the 6-hour disk cache can answer right now (those are free).
+The top bar shows two counts, because they are two different numbers: what THIS
+server has spent since you started it, which does not reset, and what is left of
+Seats.aero's daily budget, which resets at midnight. Seats.aero also counts
+your other runs today, which the page cannot see. The confirmation is checked by the
+server, not only by the page: it is single-use, lasts five minutes, and is
+bound to the trip file's bytes, the mode, the options and the wallet - change
+any of them and you are asked again. A single-route search is always LIVE and,
+exactly like the CLI search, does not use the disk cache.
+
+**A search has no verdict.** A single-route search has no cash price, so it
+cannot say POINTS or PAY CASH. It shows award space, whether your wallet can
+fund each award, and whether its taxes are trusted. "Score against a fare"
+starts a one-leg trip with the route filled in; type the fare you found.
+
+**REPLAY** offers only the manifests it finds itself: your snapshot directory's
+`MANIFEST.md` and each `tests/fixtures/seats_aero/*/MANIFEST.md` one level deep.
+The page sends a number from that list, never a path.
+
+**Results live in memory only** (the last 20 runs) and are gone when you stop
+the app. Copy the CLI output if you want to keep it. Wallet edits are held in
+memory for the session and never written to `wallet.json`. One run at a time:
+a second run while one is in progress is refused, because the call counter and
+caches are shared.
+
+**The threat model** is another website open in the same browser, and DNS
+rebinding. The app binds `127.0.0.1` only; every request must carry the exact
+`Host` `127.0.0.1:<port>` or `localhost:<port>`; every API request must carry a
+per-launch token that only the page itself receives (a page from an earlier
+launch is told to reload); every POST must come from the app's own origin; no
+cross-origin headers are ever sent; a strict Content-Security-Policy allows no
+inline script. The key never leaves the server: the transcript's key line is
+replaced, and any response that would contain the key or its mask is refused
+instead of sent. Local malware is out of scope - it could read `~/.zshrc`.
+
+**One request does leave your machine**, and it is not the API key: the page
+loads two webfonts from Google (`fonts.googleapis.com`, `fonts.gstatic.com`),
+which tells Google your IP address and when you opened the app. Nothing else -
+no trip, no balance, no award, no key - is ever sent anywhere but Seats.aero.
+Block those two hosts, or run with no network, and the page falls back to your
+system fonts and works exactly the same.
+
+**Keyboard and phone.** Table rows and search cells are focusable: Enter or
+Space opens the detail panel and puts focus on its close button, and Esc closes
+it and gives focus back to the row you opened it from (Esc closes a confirmation
+first, if one is open). Nothing is a focus trap. In the per-leg table the LEG
+and VERDICT columns are pinned - the identifier every other line refers back to,
+and the answer the row carries - so both stay on screen while the middle
+scrolls. Below 720px the tables scroll inside their own frame, the detail panel
+becomes a full-screen sheet, and the top bar wraps; the page works down to
+400px. It is dark only.
+
 ## Live Trip Mode (v3)
 
 **The one feature in v3.** Before it, the tool had two modes that could not meet:
@@ -240,6 +332,8 @@ ones that did not are reported, and the margin says which is which.
 | `--cache-ttl SECONDS` | default 21600 (6h). `0` disables reuse |
 | `--require-all-live` | withhold the margin unless every leg is live; exit non-zero |
 | `--snapshot-dir PATH` | where responses are archived (default the committed corpus) |
+| `--trips auto\|all\|off` | the operating-airline lookup (see below). Default `auto`: only awards whose cash side can depend on the metal. Refused with `--offline`, `--from-snapshot` and a single-route search |
+| `--trips-cap N` | most trips requests one run may send, 1-50, default 10. Cache hits are free |
 
 ### Flexible dates are reported, never scored
 
@@ -292,6 +386,277 @@ and a **break-even** (the surcharge above which points stop winning). Never a
 blank cell, never a dash, never a zero standing in for an unknown. And when the
 floor *already* loses to cash, the verdict is stated as **certain**, because a
 surcharge can only add.
+
+
+## Operating airline (Seats.aero trips lookup)
+
+An availability row names the carriers that **might** fly a cabin (`"VS, DL"`).
+Seats.aero's trips endpoint names the **flights** behind the row. For each live
+award whose cash side can depend on the metal, a live trip run calls
+
+```
+GET https://seats.aero/partnerapi/trips/{availability_id}?include_filtered=false&min_cabin_pct=100
+```
+
+once, matches the returned itineraries to the award (same source, same cabin,
+same `MileageCost`, not mixed-cabin), and prints the flight numbers and the
+carrier they name, with their provenance.
+
+**Under today's rules a lookup changes disclosure only.** It cannot change a
+score, a verdict, a floor, a break-even, the trip range or an exit code - that
+needs a verified answer to "does Seats.aero's `TotalTaxes` already include the
+carrier surcharge?" for the award's source (see "The YQ question" below). Until
+then the committed table is empty and every source is unverified.
+
+### When it calls
+
+| Mode | Calls the trips endpoint? |
+|---|---|
+| `--trip-fixture`, live (the default) | yes - after **every** leg's search has finished, so a lookup can never spend budget a search needed |
+| `--from-snapshot` | never - it reads the lookups the live run **recorded** in `trips_endpoint/MANIFEST.md` |
+| `--offline` | never - there are no live awards |
+| `--origin/--destination/--date` | never - the output ends with "operating airline: NOT LOOKED UP - single-route search does not call the trips endpoint" |
+
+`--trips auto` (the default) looks up an on-date or promoted live award only when
+its program is a **direct** Chase UR partner, its carrier surcharge is not a
+program-wide $0, Seats.aero reports taxes for its source, **and** its leg is for
+one traveller (a 2+ traveller leg is never scored on points) - today that is
+Virgin Atlantic, Flying Blue and JetBlue. United and Aeroplan read
+`NOT_NEEDED_POLICY`: they levy no carrier surcharge whatever the metal, so the
+metal cannot change the answer. KrisFlyer (`singapore`) reads
+`NOT_NEEDED_TAXES_UNREPORTED`: its taxes are never believed and no YQ row can
+exist for it, so no lookup can move its number.
+Off-date (flexible-date) findings are never looked up.
+
+Lookups are deduplicated by availability id (one row carries four cabins and one
+response carries them all), counted on the **same** call counter as search, and
+capped per run. A cache hit is free: it never counts against the cap, and once
+the cap is spent - or after an HTTP 429 on any search or lookup in the run -
+answers already in the disk cache are still read while nothing more is sent. A 2xx response is cached and archived like
+a search response - under `data/cache/seats_aero/trips/` and
+`<snapshot dir>/trips_endpoint/`, with a manifest of its own in the search
+manifest's column layout - whatever its shape. One difference from search: a
+trips snapshot is shared only by re-fetches of the **same** availability id, so
+two ids that got identical bytes (two empty lists) each have their own file, and
+a replay can refuse any row whose file records another id. HTTP errors (404 included),
+timeouts, transport errors, bad JSON and budget refusals are never cached.
+
+### What a lookup can say
+
+Every status except `KNOWN` names its **domain** - the award's possible
+carriers - and none of them is ever printed as a carrier, as "no trips", or as
+a finding about whether the award has flights.
+
+| Status | Reason code | Means | Trip block |
+|---|---|---|---|
+| `KNOWN` | - | the matching itineraries name ONE carrier set by flight number, every carrier in the row's own list | - |
+| `AMBIGUOUS` | - | two or more matching itineraries name DIFFERENT carrier sets; every set is listed | `METAL_UNKNOWN` |
+| `UNKNOWN` | `HTTP_404` | Seats.aero has no itinerary record for the id (the row may have been refreshed since the search). Not a finding about flights | `METAL_UNKNOWN` |
+| `UNKNOWN` | `HTTP_429` | Seats.aero rate-limited this lookup; every later lookup in the run is `RATE_LIMITED_EARLIER` | `METAL_UNKNOWN` |
+| `UNKNOWN` | `HTTP_ERROR` | any other non-2xx | `METAL_UNKNOWN` |
+| `UNKNOWN` | `TIMEOUT` | the request timed out | `METAL_UNKNOWN` |
+| `UNKNOWN` | `TRANSPORT_ERROR` | the request could not be completed | `METAL_UNKNOWN` |
+| `UNKNOWN` | `JSON_ERROR` | the body is not JSON | `METAL_UNKNOWN` |
+| `UNKNOWN` | `SHAPE_ERROR` | not an object, or `data` missing or not a list | `METAL_UNKNOWN` |
+| `UNKNOWN` | `EMPTY_DATA` | `data: []` - an empty itinerary list is NOT a finding about flights | `METAL_UNKNOWN` |
+| `UNKNOWN` | `INCOMPLETE` | the response says there is more (`hasMore`, a cursor, a skip) | `METAL_UNKNOWN` |
+| `UNKNOWN` | `TRIP_UNREADABLE` | an itinerary that could be this award could not be read | `METAL_UNKNOWN` |
+| `UNKNOWN` | `CABIN_UNMAPPED` | an itinerary that could be this award has a cabin word outside economy/premium/business/first | `METAL_UNKNOWN` |
+| `UNKNOWN` | `FLIGHT_NUMBER_UNPARSEABLE` | a flight number with no two-character airline code (an ICAO `BAW123` is not guessed) | `METAL_UNKNOWN` |
+| `UNKNOWN` | `TRIP_INCONSISTENT` | `FlightNumbers` or `Carriers` disagree with the segments, `Order` repeats, or the segments do not run the award's route in one chain | `METAL_UNKNOWN` |
+| `UNKNOWN` | `AVAILABILITY_ID_MISMATCH` | an itinerary for a different availability id | `METAL_UNKNOWN` |
+| `UNKNOWN` | `NO_MATCH` | no readable itinerary at this award's source, cabin and price (the costs seen are named) | `METAL_UNKNOWN` |
+| `UNKNOWN` | `MIXED_CABIN_ONLY` | the only itineraries at this price fly part of the way in a lower cabin | `METAL_UNKNOWN` |
+| `UNKNOWN` | `CARRIER_NOT_IN_ROW_LIST` | a flight-number carrier the row's `{X}Airlines` does not list - two Seats.aero fields disagree | `METAL_UNKNOWN` |
+| `UNKNOWN` | `ROW_CARRIERS_ABSENT` | the row lists no carriers for the cabin, so nothing can be cross-checked | `METAL_UNKNOWN` |
+| `UNKNOWN` | `UNEXPECTED_ERROR` | anything unexpected inside the lookup; the metal pass never raises | `METAL_UNKNOWN` |
+| `NOT_LOOKED_UP` | `TRIPS_OFF` | `--trips off` | `METAL_LOOKUP_MISSING` |
+| `NOT_LOOKED_UP` | `CAP_REACHED` | the per-run cap was reached | `METAL_LOOKUP_MISSING` |
+| `NOT_LOOKED_UP` | `BUDGET_EXHAUSTED` | the call counter is at 0; no request was made | `METAL_LOOKUP_MISSING` |
+| `NOT_LOOKED_UP` | `RATE_LIMITED_EARLIER` | an earlier search or lookup in this run got HTTP 429 | `METAL_LOOKUP_MISSING` |
+| `NOT_LOOKED_UP` | `NO_AVAILABILITY_ID` | the availability row carried no id | `METAL_LOOKUP_MISSING` |
+| `NOT_LOOKED_UP` | `AVAILABILITY_ID_INVALID` | the id is not 10-64 letters and digits; no URL or filename is built from it | `METAL_LOOKUP_MISSING` |
+| `NOT_LOOKED_UP` | `TRANSPORT_HAS_NO_TRIPS` | the transport in use has no itinerary lookup | `METAL_LOOKUP_MISSING` |
+| `NOT_LOOKED_UP` | `NOT_NEEDED_POLICY` | the program levies no carrier surcharge whatever the metal | not counted - cannot change the answer |
+| `NOT_LOOKED_UP` | `NOT_DIRECT_PARTNER` | not a direct Chase UR partner (`--trips all` looks it up anyway) | not counted - cannot change the answer |
+| `NOT_LOOKED_UP` | `NOT_NEEDED_PARTY` | the flight leg is for 2+ travellers and is never scored on points (`--trips all` looks it up anyway) | not counted - cannot change the answer |
+| `NOT_LOOKED_UP` | `NOT_NEEDED_TAXES_UNREPORTED` | Seats.aero reports no taxes for the award's source (`singapore`, `qatar`, `turkish`), so its taxes are never believed and no YQ row can exist for it; no lookup can move its number (`--trips all` looks it up anyway) | not counted - cannot change the answer |
+| `NOT_RECORDED` | `NO_TRIPS_SNAPSHOT` | a replay, and the live run recorded no lookup for this award | `METAL_LOOKUP_MISSING` |
+
+A lookup made (or read from a recording) for an award that is NOT the chosen
+one is printed under its leg as "other live award ...", so every call the run
+spent shows up somewhere. When the row's own list names ONE carrier, a non-KNOWN
+line says "the award's own carrier list names one carrier" instead of "Nothing
+is known" - opening "This lookup established nothing further" on an `UNKNOWN`
+lookup and "No lookup was made on this run" on `NOT LOOKED UP` and
+`NOT RECORDED` - and the per-leg `metal:` line the scorer uses is kept.
+
+`METAL_LOOKUP_MISSING` and `METAL_UNKNOWN` are counted in the trip block for the
+chosen award on each leg, and the block names the legs ("operating airline NOT
+LOOKED UP on B2, B4"). They are counted rather than widened because neither is
+itself an unknown dollar: wherever metal moves a dollar, it does so by leaving
+the surcharge unresolved, which is `SURCHARGE_UNKNOWN` and already widens.
+
+### Marketing, not operating
+
+A `KNOWN` line reads **"operating airline: VS by flight number (VS19)"**, then
+"Seats.aero reports the MARKETING carrier; it does not report who operates the
+flight", and - when the row lists more than one carrier - "A codeshare operated
+by another airline in this award's list (VS, DL) cannot be detected". The words
+"operated by X" are never printed as a finding. A flight-number carrier that the
+row's own list does not contain is `UNKNOWN`, not "the other one".
+
+### The UNVERIFIED label
+
+No real trips response has been captured. The parser is built from the published
+OpenAPI document only, so every `KNOWN`, `AMBIGUOUS` and parse-derived `UNKNOWN`
+line - and the live banner - ends with **"[trips parser UNVERIFIED against a
+real Seats.aero response - built from the published schema only]"**. The cabin
+words other than "business" are assumed, and so is `min_cabin_pct=100`: an
+itinerary with a nonzero `MixedCabinPct` means the server did not honour it,
+and `capture` reports that as blocking drift.
+
+What flips it: a capture written by `python -m src.trips_tools capture` (or by
+`yq-check`, which writes the same capture) is sent back, committed under
+`tests/fixtures/seats_aero/trips_endpoint/real/`, and `TRIPS_SCHEMA_VERIFIED_BY`
+in `src/seats_trips.py` is set to its filename - by the Coder, not by editing
+the source on the Mac. Flipping it (and `TRIPS_TOTALTAXES_UNIT = "cents"`) keeps
+the suite green: every test that describes the unverified state pins both
+constants (`tests/_trips_label_state.py`), and `tests/test_trips_label_flip.py`
+runs the flipped state on a genuine tmp capture.
+`tests/test_trips_verification_label.py` then checks the file is a real capture
+(never one under `synthetic/`), its content hash matches, its `.raw.txt` sibling
+is non-empty and parses to the same page the capture holds (compared as JSON
+with types, so `60000.0` is not `60000`; whitespace and key order do not
+matter), it carries the `_meta` the tool writes (request path and params,
+HTTP 200, parser version, a past `captured_at`), it records the availability row
+of its own id and at least one award in that row is matched by the response,
+its route came from that row (a `capture --availability-id` with no local row
+infers the route from the itineraries and **cannot** flip the label), neither its
+page, any itinerary nor its id is copied from `synthetic/`, and it parses with at
+least one itinerary, none unreadable and no required-field drift. `capture`
+runs this same check and prints the "set `TRIPS_SCHEMA_VERIFIED_BY`" advice
+only when it passes. After drift it says **not** to capture again - the parser
+is fixed against the same file, which then verifies with no new call - and names
+the one test (`test_every_committed_real_capture_parses_without_required_field_drift`)
+that stays red, as expected, until then.
+
+**What these checks cannot do:** stop a file built by hand on purpose. Nothing in
+a capture is signed and every `_meta` field is plain text, so anyone who can
+write `real/` can write a file that passes. The checks catch honest mistakes
+and the committed synthetic example. The defence against a forged capture is
+reviewing the commit that adds it; Tsuki is the only author of `real/`.
+
+A trip's own `TotalTaxes` is shown **raw with both unit readings** and used in no
+figure while `TRIPS_TOTALTAXES_UNIT` is `unverified`. It flips to `cents` only on
+a real capture that passes every check above and whose recorded availability
+row shows a matched itinerary with the same `TotalTaxes` as the row's
+`{X}TotalTaxes`. After that, an itinerary
+whose own figure is unknown, or above the row's by more than max($1, 1%), makes
+the award's taxes UNKNOWN; a lower one is disclosed only.
+
+### The YQ question
+
+`data/yq_inclusion.csv` (`source,airline,verdict,verified_on,evidence,notes`)
+holds one verdict per Seats.aero **source and airline**. It is committed with the
+header only. **An absent row means unverified; a row can never say
+"unverified".** The loader refuses a source it does not map, a source whose taxes
+Seats.aero does not report, an `airline` that is not a two-character code, a
+verdict other than `includes_yq` / `excludes_yq`, a future date, a duplicate
+(source, airline), and evidence that is missing, outside `docs/yq-checks/`, lacks
+the `yq-check record` marker or still has `____` blanks. The record must also be
+**for the row's source** (its title and program line name it), its **one verdict
+line must say the row's verdict** (a record that says `inconclusive` backs
+nothing), it must record an itinerary lookup that was **KNOWN on the row's
+airline** (yq-check writes both lines), and it must have been compared against a
+**nonzero modelled band**. With no band (or $0), a site total equal to the row
+figure is also what a fare with no carrier surcharge shows, so the check cannot
+tell `includes_yq` from `excludes_yq`: yq-check then prints no row, names the
+cabins and routes where the table does model a band, and writes
+`yq-check: NO VERDICT POSSIBLE` into the record, and the loader refuses any
+record carrying that marker or lacking a nonzero band line. Independent statements that must agree,
+so a verdict copied from another source's or airline's record, or typed
+differently from the one written after reading the airline's site, is refused
+rather than scored.
+
+**Decision D1: a verdict covers only the airline it was checked on.** A row
+applies to an award only when that award's own itinerary lookup is KNOWN and
+names exactly the row's airline. A Virgin Atlantic check on a VS flight says
+nothing about how Seats.aero builds the taxes figure for a Virgin Atlantic award
+on an Air France or KLM flight, so that award stays unscoreable - AMBIGUOUS,
+UNKNOWN, NOT LOOKED UP, a different airline and a multi-airline itinerary all
+score exactly as with no row, and the award's line says which check exists and
+why it does not reach it. This was chosen while the table is empty because it is
+cheap now and expensive once numbers have been quoted. **It is reversible:** the
+other option (a) is one verdict per source whatever the metal; choosing it later
+means dropping the `airline` column's role in `live_trip.award_to_candidate` (use
+`verdicts_for_source`) and saying so here.
+
+| Verdict for (source, the award's KNOWN airline) | Scored cash side of a live award (trusted taxes only) |
+|---|---|
+| no row (the default) | today's rule: scoreable only under a program-wide $0 surcharge. Known metal's modelled band is printed and marked **NOT ADDED** |
+| `includes_yq` | the API's taxes are the whole carrier figure; **no band is added**, and the line names the evidence file |
+| `excludes_yq` | the taxes **plus** the modelled band for that airline |
+
+Untrusted taxes (unreported source, 0, negative, unconvertible, below UK APD)
+are unscoreable under every verdict, exactly as before.
+
+`python -m src.trips_tools yq-check` produces the evidence: run it on an award
+**on the program's own metal** (for example a `virginatlantic` J award on VS
+metal), compare the block it prints against the program's own site, and fill in
+the record it writes. The rule is by the site's **total** for one adult on the
+same flight: about the row figure is `includes_yq`; about the row figure plus
+the modelled band (the block prints both, e.g. VS J one way $200-$350) is
+`excludes_yq`; anything else is inconclusive and records nothing. Confirm on the
+site first that the flight is operated by that airline itself (Virgin Atlantic,
+not Delta); the record asks, and the loader refuses anything but "yes". It prints the CSV row with `<VERDICT>` in place of the
+verdict - never a row with a verdict already in it - so the only verdict that can
+be typed is the one on the record's own verdict line. It warns "likely INCONCLUSIVE" when the flight-number
+carrier is not known or has no nonzero surcharge row.
+
+### Replay
+
+`--from-snapshot` reads `trips_endpoint/MANIFEST.md` beside the search manifest
+and never the network. A recorded lookup is used whatever `auto` would have
+decided; an award with no recorded lookup reads `NOT RECORDED`. A selected trips
+row whose file is missing, tampered with or empty **refuses the whole replay**
+(exit `1`); re-fetch it, or delete its row, and that lookup replays as NOT
+RECORDED - but deleting a row **changes the replay's manifest hash**, so a number
+quoted against the old hash will not reproduce (the refusal says so). So does a row whose file is a lookup of a different availability id,
+a row for a leg the trip does not fly, one id recorded twice with different
+bytes, and a trips manifest with no table header (zero bytes, a merge conflict):
+only a manifest whose header is intact and whose rows were deleted reads as "no
+lookups recorded". The manifest hash gains `trips|...` lines **only when trips rows
+exist**, so every hash quoted before this feature reproduces byte for byte. A
+trips row captured under an older trips parser prints **TRIPS LOOKUPS
+REPARSED**.
+
+### trips_tools exit codes
+
+`python -m src.trips_tools` is a separate module so the table in "Exit codes"
+above stays the whole contract of `python -m src.main`.
+
+| Code | Meaning |
+|---|---|
+| 0 | captured and clean: the label check (`schema_verification_problems`) accepts the file, and only then does it print the `TRIPS_SCHEMA_VERIFIED_BY` advice |
+| 1 | nothing captured: usage error, no key, declined at the prompt, HTTP or network error, key material detected, or refused input (an unreported source; a tax figure scoring does not believe - 0, negative, unconvertible, or below the UK APD owed; a search that says there is more) |
+| 5 | captured WITH drift, or captured but refused by the label check (an inferred route, a raw body that is not the page, an out-dir that is not `real/`) and the reasons listed: the file is written; do not flip the label |
+
+Both subcommands resolve the key the way `python -m src.main` does, print the
+key banner, print how many calls they will make, and ask `Continue? [y/N]`
+unless `--yes` is passed. `--refresh` sends the search even when the disk cache
+holds an answer for it (a cached row can carry a stale availability id or
+price); it cannot be combined with `--availability-id`, which makes no search.
+
+```bash
+# at most 2 calls: 1 search (0 if cached) + 1 trips
+.venv/bin/python -m src.trips_tools capture --origin SFO --destination LHR \
+    --date 2027-01-15 --source virginatlantic
+
+# the same capture, plus a YQ record to fill in - one run covers both (2 calls)
+.venv/bin/python -m src.trips_tools yq-check --origin JFK --destination LHR \
+    --date 2027-01-15 --source virginatlantic --cabin J
+```
 
 
 ---
@@ -478,6 +843,24 @@ Every verdict the code can produce is listed here;
 - **Split funding is greedy, not optimal.** Bounded to two currencies with one
   slack transfer (R2). Defensible operationally; not proven optimal.
 - Positioning flights (MRY↔SFO/SJC) stay unpriced input, as in v0.
+- **The trips parser has never seen a real response.** Every operating-airline
+  line says so until a real capture is committed and named. The cabin words other
+  than "business" and `min_cabin_pct=100` are assumptions; the first capture may
+  turn every lookup into `UNKNOWN` - safe, and useless until the parser is fixed.
+- **A flight number names the MARKETING carrier.** A codeshare between two
+  carriers that are both in the award's own list cannot be detected.
+- **No YQ verdict exists yet**, so a lookup changes no number. One verdict is per
+  source and airline and rests on one flight; it may not carry over to other
+  routes, and by decision D1 it never carries over to other metal.
+- **The trips call budget is per process.** It cannot see your other runs today;
+  Seats.aero's real limit shows up as HTTP 429. A 429 on any search or itinerary
+  lookup in a run stops every later trips REQUEST in that run; a lookup the disk
+  cache can answer is still read, because a cache hit sends nothing. The same
+  holds once the per-run cap is spent: nothing more is sent, and cached answers
+  are still read. A lookup neither the cap nor the cache allows reads NOT LOOKED
+  UP and is counted.
+- **An award you cannot book from UR is never pointed at a UR program on the same
+  metal** (for example AAdvantage space on IB metal and Iberia Plus). Not built.
 
 ## Tests
 
@@ -502,6 +885,11 @@ python -m pytest
 | `tests/test_fx_and_flagship.py` | FX provenance, and the flagship LON→MRY case |
 | `tests/test_acceptance.py` | Synthetic fixtures plus the two real January 2027 trips |
 | `tests/test_optimizer.py`, `tests/test_ratios.py`, `tests/test_seats_client.py` | v0 coverage, unchanged |
+| `tests/test_metal_lookup_model.py`, `tests/test_seats_trips_parser.py` | The operating-airline vocabulary, and the trips parser against published-schema payloads |
+| `tests/test_trips_transport.py`, `tests/test_trips_cache.py`, `tests/test_trips_replay.py` | The trips request, its cache and snapshots, and replay |
+| `tests/test_metal_end_to_end.py`, `tests/test_trips_flags.py`, `tests/test_metal_way_ten.py` | The lookup through `apply_live` and the CLI; a lookup moves no number |
+| `tests/test_yq_inclusion.py`, `tests/test_trip_taxes.py`, `tests/test_metal_alternatives.py` | The YQ table and the cash rule, per-itinerary taxes, alternatives from looked-up metal |
+| `tests/test_trips_tools.py`, `tests/test_trips_verification_label.py` | `python -m src.trips_tools`, and what flips the UNVERIFIED label |
 
 The stranded-points constraint is proven by unit test rather than by the real
 trips, because no balance has been supplied and the real runs are unconstrained.

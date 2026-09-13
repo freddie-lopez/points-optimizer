@@ -74,7 +74,11 @@ def _run(fixture: str):
             "--card", "Chase Sapphire Preferred",
             "--transfer-date", "2026-09-15",
         ],
-        cwd=ROOT, capture_output=True, text=True,
+        # MAC-A: the child writes UTF-8 by rule (config.use_utf8_output), so
+        # this reads UTF-8 by rule. `text=True` alone decodes with the LOCALE's
+        # encoding, which under LANG=C is ASCII - and then the test, not the
+        # tool, is what fails on a C-locale machine.
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
     )
     return proc.returncode, proc.stdout + proc.stderr
 

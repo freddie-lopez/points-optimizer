@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="po-token" content="{{PO_TOKEN}}">
+<title>Points Optimizer</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-in">
+    <div class="wordmark" data-testid="wordmark">Points <span>Optimizer</span></div>
+    <nav class="tabs" role="tablist" aria-label="Views">
+      <button class="tab" role="tab" id="tab-search" data-testid="tab-search" aria-selected="false">Search</button>
+      <button class="tab" role="tab" id="tab-trips" data-testid="tab-trips" aria-selected="true">Trips</button>
+    </nav>
+    <div class="bar-right">
+      <span class="pill pill-offline" id="mode-pill" data-testid="mode-pill">OFFLINE</span>
+      <span class="calls mono" id="calls-counter" data-testid="calls-counter" title="Seats.aero also counts your other runs today, which this tool cannot see.">CALLS</span>
+      <span id="wallet-chips" class="wallet-chips"></span>
+      <span class="dim" id="key-source" data-testid="key-source">key: …</span>
+    </div>
+  </div>
+</header>
+
+<div class="banner-error" id="banner-error" data-testid="banner-error" role="alert" hidden></div>
+
+<main class="page" id="page">
+  <div class="no-wallet" id="no-wallet" data-testid="no-wallet" hidden></div>
+
+  <section class="view" id="view-trips" aria-labelledby="tab-trips">
+    <div class="trips-grid">
+      <nav class="triplist" data-testid="trip-list" aria-label="Trips" id="trip-list"></nav>
+      <div class="result" id="trip-main"></div>
+      <aside class="drawer" id="drawer-trips" data-testid="drawer-trips" aria-label="Leg detail" hidden></aside>
+    </div>
+  </section>
+
+  <section class="view" id="view-search" aria-labelledby="tab-search" hidden>
+    <div class="search-grid">
+      <div class="result" id="search-main"></div>
+      <aside class="drawer" id="drawer-search" data-testid="drawer-search" aria-label="Award detail" hidden></aside>
+    </div>
+  </section>
+</main>
+
+<div class="scrim" id="scrim" hidden></div>
+<div class="scrim" id="wallet-scrim" hidden></div>
+</body>
+</html>

@@ -1,0 +1,95 @@
+{
+  "_meta": {
+    "synthetic": true,
+    "endpoint": "trips",
+    "written_by": "hand, from the published OpenAPI schema",
+    "what_is_published": "Field names and types; the example values Source 'lifemiles', Cabin 'business', Carriers 'CM, TK', FlightNumbers 'CM326, TK800', FlightNumber 'CM326', AircraftCode '739', FareClass 'I'.",
+    "what_is_a_placeholder": "Every airport, time, id, price, tax figure, distance and the second segment's details. They were chosen only so that the itinerary is internally consistent; they are NOT from the published example and NOT from a real response.",
+    "availability_id": "OpenApiExample0000000000001",
+    "route": "PTY->IST",
+    "key_redacted": true,
+    "content_hash": "381ab95254f599080a0317a8fc134b98e70ee990d1eee0464862fd5b24ca0f70"
+  },
+  "pages": [
+    {
+      "data": [
+        {
+          "ID": "trip-1",
+          "RouteID": "route-1",
+          "AvailabilityID": "OpenApiExample0000000000001",
+          "AvailabilitySegments": [
+            {
+              "ID": "seg-1",
+              "RouteID": "route-1",
+              "AvailabilityID": "OpenApiExample0000000000001",
+              "AvailabilityTripID": "trip-1",
+              "FlightNumber": "CM326",
+              "Distance": 1500,
+              "FareClass": "I",
+              "AircraftName": "Boeing 737-900",
+              "AircraftCode": "739",
+              "OriginAirport": "PTY",
+              "DestinationAirport": "MIA",
+              "DepartsAt": "2027-01-15T08:00:00Z",
+              "ArrivesAt": "2027-01-15T12:00:00Z",
+              "CreatedAt": "2026-09-11T00:00:00Z",
+              "UpdatedAt": "2026-09-11T00:00:00Z",
+              "Source": "lifemiles",
+              "Order": 0
+            },
+            {
+              "ID": "seg-2",
+              "RouteID": "route-1",
+              "AvailabilityID": "OpenApiExample0000000000001",
+              "AvailabilityTripID": "trip-1",
+              "FlightNumber": "TK800",
+              "Distance": 6000,
+              "FareClass": "I",
+              "AircraftName": "Boeing 777-300ER",
+              "AircraftCode": "77W",
+              "OriginAirport": "MIA",
+              "DestinationAirport": "IST",
+              "DepartsAt": "2027-01-15T17:00:00Z",
+              "ArrivesAt": "2027-01-16T11:00:00Z",
+              "CreatedAt": "2026-09-11T00:00:00Z",
+              "UpdatedAt": "2026-09-11T00:00:00Z",
+              "Source": "lifemiles",
+              "Order": 1
+            }
+          ],
+          "TotalDuration": 1620,
+          "Stops": 1,
+          "Carriers": "CM, TK",
+          "RemainingSeats": 2,
+          "MileageCost": 63000,
+          "TotalTaxes": 12000,
+          "TaxesCurrency": "USD",
+          "TaxesCurrencySymbol": "$",
+          "AllianceCost": 0,
+          "FlightNumbers": "CM326, TK800",
+          "DepartsAt": "2027-01-15T08:00:00Z",
+          "ArrivesAt": "2027-01-16T11:00:00Z",
+          "Cabin": "business",
+          "CreatedAt": "2026-09-11T00:00:00Z",
+          "UpdatedAt": "2026-09-11T00:00:00Z",
+          "Source": "lifemiles"
+        }
+      ],
+      "origin_coordinates": {
+        "Lat": 9.07,
+        "Lon": -79.38
+      },
+      "destination_coordinates": {
+        "Lat": 41.26,
+        "Lon": 28.74
+      },
+      "booking_links": [
+        {
+          "label": "LifeMiles",
+          "link": "https://example.invalid/book",
+          "primary": true
+        }
+      ]
+    }
+  ]
+}

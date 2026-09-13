@@ -1,0 +1,5 @@
+# scenario G12: no wallet (exit 2)
+# argv: --trip-fixture trip_b_europe.json --offline
+# exit: 2
+Wallet error: No currencies supplied. Pass --wallet path.json, or --balance UR=180000. The tool will NOT assume you hold Chase Ultimate Rewards - which cards and balances you have is an 
+input, never a default.

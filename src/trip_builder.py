@@ -43,6 +43,7 @@ parser, or anything in the surcharge path.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -78,6 +79,14 @@ LIVE_ONLY_FLAG = (
 # directory: `--new-trip ../../../etc/whatever` is not a trip name.
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
+# FINDING M-3. A NAME THE APP CANNOT ADDRESS IS NOT A USABLE NAME. There was no
+# length limit at all: a 200-character name was written and then 404ed, because
+# the local UI addresses a trip through `/api/trips/<id>`, whose route allows
+# 121 characters; a ~300-character one raised ENAMETOOLONG from the filesystem
+# and surfaced as an unexpected error rather than a refusal. The limit is the
+# smallest thing in that chain, stated, and checked before anything is written.
+MAX_NAME_LENGTH = 120
+
 
 class TripBuilderError(ValueError):
     """A refusal. NO FILE IS EVER WRITTEN when this is raised."""
@@ -96,6 +105,13 @@ def validate_name(name: str) -> str:
     text = (name or "").strip()
     if not text:
         raise TripBuilderError("--new-trip needs a NAME.")
+    if len(text) > MAX_NAME_LENGTH:
+        raise TripBuilderError(
+            f"--new-trip: that name is {len(text)} characters. The longest name "
+            f"this tool can address is {MAX_NAME_LENGTH}: a longer one is written "
+            f"and then cannot be opened or run, which is worse than refusing it. "
+            f"No file has been written."
+        )
     if not _SAFE_NAME.match(text) or ".." in text:
         raise TripBuilderError(
             f"--new-trip {name!r} is not a usable fixture name. Use letters, "
@@ -146,36 +162,50 @@ def validate_date(value: str, flag: str, today: Optional[date] = None) -> date:
     return parsed
 
 
-def validate_cash(value: str, flag: str) -> float:
-    text = str(value or "").strip()
-    try:
-        amount = float(text)
-    except ValueError:
+def validate_cash(value, flag: str) -> float:
+    """
+    A cash price the builder may write.
+
+    M-1 and R5-1: the rule is `config.unscoreable_price_reason`, which is the
+    same rule the LOADER applies - so what this refuses to write it refuses to
+    read, in the same words. There is no conversion of its own here: `str(value
+    or "")` mapped `0` and `False` to the empty string and reported them as "not
+    a number", which is the boundary being bypassed on the write side.
+    """
+    from src import config
+
+    raw = value.strip() if isinstance(value, str) else value
+    reason = config.unscoreable_price_reason(raw)
+    if reason:
         raise TripBuilderError(
-            f"{flag}: {value!r} is not a number. A cash price is the one figure "
-            f"this builder writes and it is not being guessed."
-        ) from None
-    if amount != amount or amount in (float("inf"), float("-inf")):
-        raise TripBuilderError(f"{flag}: {value!r} is not a finite amount.")
-    if amount <= 0:
-        raise TripBuilderError(
-            f"{flag}: a cash price of {amount} is refused. Zero is not a price - "
-            f"it is silence, and this project has confused the two before. Omit "
-            f"the leg, or capture the real fare."
+            f"{flag}: {reason} A cash price is the one figure this builder "
+            f"writes, and it is not being guessed."
         )
-    return amount
+    return float(raw)
 
 
 def validate_travelers(value) -> int:
     try:
         count = int(str(value).strip())
     except (TypeError, ValueError):
-        raise TripBuilderError(f"--travelers: {value!r} is not a whole number.") from None
+        from src import config
+
+        raise TripBuilderError(
+            f"--travelers: {config.short_number(value)} is not a whole number."
+        ) from None
     if count < 1:
         raise TripBuilderError(
             f"--travelers {count} is refused. A trip with no travellers has no "
             f"cost, and APD is charged PER PASSENGER, so the count is load-bearing."
         )
+    # R2-3: the count multiplies every money figure on the leg, so it has to
+    # survive the same round trip the money does - checked here, before
+    # anything is written, and again at load.
+    from src import config
+
+    unscoreable = config.unscoreable_count_reason(count)
+    if unscoreable:
+        raise TripBuilderError(f"--travelers: {unscoreable}")
     return count
 
 
@@ -193,12 +223,21 @@ def validate_nights(value, flag: str) -> int:
     try:
         nights = int(str(value).strip())
     except (TypeError, ValueError):
-        raise TripBuilderError(f"{flag}: {value!r} is not a whole number of nights.") from None
+        from src import config
+
+        raise TripBuilderError(
+            f"{flag}: {config.short_number(value)} is not a whole number of nights."
+        ) from None
     if nights < 1:
         raise TripBuilderError(
             f"{flag}: {nights} nights is refused. A zero-night stay is not a "
             f"hotel leg."
         )
+    from src import config
+
+    unscoreable = config.unscoreable_count_reason(nights)
+    if unscoreable:
+        raise TripBuilderError(f"{flag}: {unscoreable}")
     return nights
 
 
@@ -213,6 +252,10 @@ class FlightSpec:
     destination: str
     date: date
     cash_usd: float
+    # This leg's cabin, when it differs from the trip's. None = the trip's
+    # cabin. No CLI path sets it (--new-trip takes one --cabin for every leg),
+    # so every CLI-built fixture is unchanged; the local UI's form sets it.
+    cabin: Optional[str] = None
 
 
 @dataclass
@@ -306,20 +349,41 @@ def build_fixture(
             "--new-trip needs at least one --leg or --hotel. An empty trip has "
             "nothing to score and writing the file would suggest otherwise."
         )
+    # R3-1: each field is bounded on its own, and the arithmetic multiplies
+    # them. A fare and a party size that are each scoreable can still make a
+    # party total that is not, so the products this builder determines are
+    # checked HERE, before anything is written, exactly as the loader checks
+    # the products it can compute.
+    from src import config
+
+    for spec in flights:
+        reason = config.unscoreable_cash_reason(spec.cash_usd * travelers)
+        if reason:
+            raise TripBuilderError(
+                f"--leg {spec.origin}:{spec.destination}: the fare for "
+                f"{travelers} travellers cannot be scored: {reason}"
+            )
+    for spec in hotels:
+        reason = config.unscoreable_cash_reason(spec.cash_usd * max(spec.nights, 1))
+        if reason:
+            raise TripBuilderError(
+                f"--hotel {spec.name}: the stay total cannot be scored: {reason}"
+            )
     captured = str(today or date.today())
     legs: List[Dict] = []
 
     for i, spec in enumerate(flights, start=1):
+        leg_cabin = spec.cabin or cabin
         legs.append(
             {
                 "id": f"L{i}",
                 "kind": "flight",
-                "description": describe_flight(spec, travelers, cabin),
+                "description": describe_flight(spec, travelers, leg_cabin),
                 "date": str(spec.date),
                 "origin": spec.origin,
                 "destination": spec.destination,
                 "travelers": travelers,
-                "cabin": cabin,
+                "cabin": leg_cabin,
                 "cash_options": [
                     {
                         "label": (
@@ -364,13 +428,20 @@ def build_fixture(
             }
         )
 
+    leg_cabins = [spec.cabin or cabin for spec in flights]
+    if len(set(leg_cabins)) <= 1:
+        shown = leg_cabins[0] if leg_cabins else cabin
+        cabin_text = f"cabin {shown} ({CABINS[shown]})"
+    else:
+        cabin_text = "cabins by leg: " + ", ".join(
+            f"L{i} {c}" for i, c in enumerate(leg_cabins, start=1)
+        )
     return {
         "id": name,
         "name": name,
         "description": (
             f"Built by --new-trip on {captured}: {len(flights)} flight leg(s), "
-            f"{len(hotels)} hotel leg(s), {travelers} traveller(s), cabin "
-            f"{cabin} ({CABINS[cabin]})."
+            f"{len(hotels)} hotel leg(s), {travelers} traveller(s), {cabin_text}."
         ),
         "source": (
             "user_entered_via_new_trip. Cash prices are what the user typed; "
@@ -398,13 +469,28 @@ def write_fixture(
 
     directory = Path(directory or FIXTURE_DIR)
     path = directory / f"{fixture['id']}.json"
-    if path.exists() and not force:
-        raise TripBuilderError(
-            f"{path} already exists and --force was not given. Refusing to "
-            f"overwrite: the file may hold captures nobody can reproduce."
-        )
     directory.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(fixture, indent=2) + "\n")
+    body = json.dumps(fixture, indent=2) + "\n"
+    # FINDING M-2. EXCLUSIVE CREATE, not "check then write". A one-shot CLI
+    # cannot race itself; the local UI is a threaded server, and two creates of
+    # one name both passed the exists() check and both reported "Wrote ...",
+    # with one trip silently overwriting the other. The kernel decides who wins.
+    if force:
+        path.write_text(body)
+    else:
+        try:
+            with open(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644),
+                      "w", encoding="utf-8") as f:
+                f.write(body)
+        except FileExistsError:
+            raise TripBuilderError(
+                f"{path} already exists and --force was not given. Refusing to "
+                f"overwrite: the file may hold captures nobody can reproduce."
+            ) from None
+        except OSError as e:
+            raise TripBuilderError(
+                f"{path} could not be written ({e.strerror}). Nothing was written."
+            ) from None
 
     try:
         load_trip_fixture(path)

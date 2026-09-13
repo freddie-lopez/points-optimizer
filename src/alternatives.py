@@ -51,7 +51,13 @@ from datetime import date
 from typing import List, Optional
 
 from src.config import cash_to_points_equivalent
-from src.models import Alternative, PointsCandidate, SurchargeEstimate
+from src import seats_trips
+from src.models import (
+    METAL_PROVENANCE_TRIPS,
+    Alternative,
+    PointsCandidate,
+    SurchargeEstimate,
+)
 from src.ratio_manager import RatioManager
 from src.surcharge import SurchargeTable
 
@@ -79,8 +85,13 @@ def find_same_metal_alternatives(
     additional Seats.aero calls - the 1,000/day rate limit must not be spent on
     counterfactuals.
     """
-    metal = (winning_candidate.operating_carrier or "").upper()
-    if not metal or not winning_candidate.has_known_metal:
+    # Known metal, or a KNOWN single-carrier itinerary lookup (by flight number).
+    metal = winning_candidate.metal_for_alternatives
+    from_trips = bool(metal) and (
+        winning_candidate.carrier_source == METAL_PROVENANCE_TRIPS
+        or not winning_candidate.has_known_metal
+    )
+    if not metal:
         # No metal, no alternatives. Guessing which aeroplane it is in order to
         # suggest a cheaper program would be the same error the surcharge model
         # refuses to make.
@@ -138,6 +149,19 @@ def find_same_metal_alternatives(
         else:
             note += f", where {winning_program}'s surcharge on this metal is UNKNOWN"
         note += ". Award price NOT known - look it up."
+        if from_trips:
+            # The metal came from the itinerary lookup, not from a known-metal
+            # source: say what it is (a flight-number carrier) and that the
+            # parser behind it is unverified, the way every other line derived
+            # from that parse does.
+            note += (
+                f" {metal} is the MARKETING carrier named by flight number in "
+                f"Seats.aero's itinerary list; it does not say who operates the "
+                f"flight."
+            )
+            label = seats_trips.trips_parser_label()
+            if label:
+                note += f" {label}"
 
         if ratios_manager.is_avios_family(program) and ratios_manager.is_avios_family(
             winning_program
@@ -158,6 +182,7 @@ def find_same_metal_alternatives(
                 break_even_points=break_even,
                 note=note,
                 partnership_assumed=True,
+                metal_label=seats_trips.trips_parser_label() if from_trips else "",
             )
         )
 

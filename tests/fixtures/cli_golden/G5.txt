@@ -1,0 +1,228 @@
+# scenario G5: Trip B LIVE with the network refused (exit 3)
+# argv: --trip-fixture trip_b_europe.json --balance UR=160000 --card Chase Sapphire Preferred --transfer-date 2026-09-15
+# exit: 3
+Seats.aero key: gold…789   (source: environment)
+
+TRIP B - Europe multi-city, Jan 15-27 2027
+One-way legs, economy, 1 adult on flights / 2 people on hotels. Real cash prices captured by Tsuki on 2026-09-07.
+Source: Google Flights + Accor/NH/Hilton, captured 2026-09-07 by Tsuki. Transcribed verbatim.
+
+Wallet (supplied at runtime - nothing is assumed)
+  UR: 160,000   valued at 1.00 cents/point
+  cards: Chase Sapphire Preferred
+
+Transfer date: 2026-09-15 (ratios and bonuses are looked up on THIS date, not on the travel date - the ratio that applies is the one in force when you transfer)
+
+==============================================================================
+FX rates used (table as of 2026-09-08):
+  1 EUR = 1.1620 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-07 (4 days old)   [BOOKING-SITE IMPLIED: back-derived from the Novotel Madrid dual-currency quote ($747.81 / EUR643.57 = 
+1.1620). One booking page on one date - NOT a market rate.]
+  1 GBP = 1.3540 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-08 (3 days old)   [SOURCED on 2026-09-08. Replaces the 1.2700 placeholder, which had no source and understated the London 
+hotel by about $42. A sourced rate still goes stale - confirm before trusting.]
+  1 CAD = 0.7256 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-08 (3 days old)   [SOURCED on 2026-09-08. Added so the captured CAD 44.60 tax on the real SFO-MAD Aeroplan award can be 
+scored instead of carried as an unknown. Confirm before trusting.]
+  !! FX RATES REQUIRE CONFIRMATION. EUR is back-derived from a single hotel quote; GBP and CAD were looked up on a date and go stale. Every foreign-currency total below inherits that 
+uncertainty.
+  !! Supply a rate with --fx GBP=1.36 to take responsibility for it and clear the marker.
+==============================================================================
+
+Valuation: cash is scored at 1.00 cents per point ($1.00 cash = 100 points-equivalent). Points and cash are ranked on this single yardstick.
+
+Data problems flagged, NOT silently fixed
+  - HOTEL DATES DO NOT LINE UP WITH THE FLIGHTS. Novotel Madrid and NH City Centre Amsterdam are BOTH booked Jan 15-19 2027, which is impossible - you cannot be in two cities on the same 
+four nights. The flight legs imply Madrid ~Jan 16-19, Amsterdam Jan 19-23, London Jan 23-27. Reported, NOT corrected: the right dates are a decision for Tsuki, not a guess for the optimizer.
+  - Trip A and Trip B both start Jan 15 2027. They appear to be ALTERNATIVES, not one itinerary. Scored separately.
+  - Flights are priced for 1 adult, hotels for 2 people. Nothing has been doubled to reconcile this.
+  - No London hotel dates were given beyond '4 nights'. Assumed to be the Jan 23-27 window implied by the flights, but the booking dates were not captured.
+  - Every Google 'from $X' headline in this capture is LOWER than the cheapest option actually listed beneath it (388 vs 395, 35 vs 44, 450 vs 482). The headline fares were not available in 
+the listing; the listed fares are used.
+
+==============================================================================
+LIVE TRIP MODE - points from Seats.aero, cash from captures
+  legs queried: 4   answered with awards: 0   answered with NO award space: 0   API/budget failures: 4   answered but UNREADABLE: 0
+  served from the disk cache: 0 of 4
+  Seats.aero budget: 996 of 1,000 calls remaining today
+  snapshots: snapshots
+  manifest:  snapshots/MANIFEST.md
+  flex-days: 0   refresh: False   cache-ttl: default
+  itinerary lookups (--trips auto, cap 10): 0 live award(s) - 0 request(s) sent, 0 served from the disk cache, 0 replayed from a snapshot
+    operating airline known 0, ambiguous 0, NOT KNOWN 0, NOT LOOKED UP 0, NOT RECORDED 0 (0 of those not looked up or not recorded are gaps in this run; the rest cannot change the answer)
+  Seats.aero calls spent this run: 4 search + 0 trips
+  [trips parser UNVERIFIED against a real Seats.aero response - built from the published schema only]
+  CASH IS FROM SCREENSHOTS AND ALWAYS WILL BE. There is no cash-price API in scope. Hotels are manual - Seats.aero is flights-only.
+  At least one leg was never answered. Nothing is known about award space on those legs; they are NOT reported as having none.
+==============================================================================
+
+                                                                                   Per-leg: cash vs points                                                                                    
+┏━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃     ┃                              ┃ Cheapest ┃ Cash as pts ┃                      ┃       ┃           ┃ Surc… ┃  Score ┃  Score ┃ Provenance                 ┃                            ┃
+┃ Leg ┃ What                         ┃     cash ┃     (@1cpp) ┃ Best points path     ┃ Poin… ┃ Surcharge ┃ sour… ┃ points ┃   cash ┃ points | cash              ┃ Verdict                    ┃
+┡━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ B1  │ MRY->MAD                     │  $395.00 │      39,500 │ no live data         │     - │         - │ -     │      - │ $395.… │ none: API FAILED | unknown │ PAY CASH (no live pts dat… │
+│ B2  │ MAD->AMS                     │   $44.00 │       4,400 │ no live data         │     - │         - │ -     │      - │ $44.00 │ none: API FAILED | unknown │ PAY CASH (no live pts dat… │
+│ B3  │ AMS->LON                     │   $76.00 │       7,600 │ no live data         │     - │         - │ -     │      - │ $76.00 │ none: API FAILED | unknown │ PAY CASH (no live pts dat… │
+│ B4  │ LON->MRY                     │  $482.00 │      48,200 │ no live data         │     - │         - │ -     │      - │ $482.… │ none: API FAILED | unknown │ PAY CASH (no live pts dat… │
+│ B5  │ Novotel Madrid Center (Accor │  $747.83 │      74,783 │ none - not a partner │     - │         - │ -     │      - │ $747.… │ none | unknown             │ PAY CASH (no path)         │
+│ B6  │ NH City Centre Amsterdam     │  $635.09 │      70,071 │ none - not a partner │     - │         - │ -     │      - │ $700.… │ none | unknown             │ PAY CASH (no path)         │
+│ B7  │ Hilton London Hyde Park      │  $680.57 │      68,057 │ none - not a partner │     - │         - │ -     │      - │ $680.… │ none | unknown             │ PAY CASH (no path)         │
+└─────┴──────────────────────────────┴──────────┴─────────────┴──────────────────────┴───────┴───────────┴───────┴────────┴────────┴────────────────────────────┴────────────────────────────┘
+
+Per-leg detail
+
+B1 - MRY->MAD, Jan 15 2027, one-way, economy, 1 adult
+  Verdict: CASH (NO LIVE POINTS DATA) - Pay cash BY DEFAULT, not by finding. Seats.aero COULD NOT BE REACHED for SFO->MAD on 2027-01-15 (SeatsAeroError: Seats.aero API error: Connection 
+refused (golden scenario: the network is down)). THIS IS AN API FAILURE. NOTHING is known about award space on this leg. It is NOT a finding of no availability. No conclusion about award 
+space on this leg can be drawn from this run.
+  Cash: $395 British Airways (American, Iberia, Finnair) SFO-MAD, 1 stop LHR 1h45, 5:25pm-5:05pm+1, 14h40
+  note: Google Flights headline: 'Cheapest from $388'.
+  note: The $401 American option's 46k badge maps to American AAdvantage, which is NOT a Chase UR partner.
+  note: The $401 Delta option had no points badge and Delta SkyMiles is NOT a Chase UR partner.
+  FLAG: Headline said 'from $388' but the cheapest listed option is $395.
+  FLAG: NO option actually departs MRY. All four depart SFO or SJC. Monterey positioning is unpriced.
+  FLAG: Region classified on SFO-MAD, the route actually priced. The leg is named MRY->MAD but no priced option departs MRY.
+  UNVERIFIED: Seats.aero COULD NOT BE REACHED for SFO->MAD on 2027-01-15 (SeatsAeroError: Seats.aero API error: Connection refused (golden scenario: the network is down)). THIS IS AN API 
+FAILURE. NOTHING is known about award space on this leg. It is NOT a finding of no availability.
+
+B2 - MAD->AMS, Jan 19 2027, one-way, economy, 1 adult
+  Verdict: CASH (NO LIVE POINTS DATA) - Pay cash BY DEFAULT, not by finding. Seats.aero COULD NOT BE REACHED for MAD->AMS on 2027-01-19 (SeatsAeroError: Seats.aero API error: Connection 
+refused (golden scenario: the network is down)). THIS IS AN API FAILURE. NOTHING is known about award space on this leg. It is NOT a finding of no availability. No conclusion about award 
+space on this leg can be drawn from this run.
+  Cash: $44 Air Europa nonstop 7:00am-9:40am, 2h40
+  note: Google Flights headline: 'Cheapest from $35'.
+  note: Air Europa (the cheapest cash option at $44) had no points badge and Air Europa SUMA is NOT a Chase UR partner.
+  FLAG: Headline said 'from $35' but the cheapest listed option is $44.
+  UNVERIFIED: Seats.aero COULD NOT BE REACHED for MAD->AMS on 2027-01-19 (SeatsAeroError: Seats.aero API error: Connection refused (golden scenario: the network is down)). THIS IS AN API 
+FAILURE. NOTHING is known about award space on this leg. It is NOT a finding of no availability.
+
+B3 - AMS->LON, Jan 23 2027, one-way, economy, 1 adult
+  Verdict: CASH (NO LIVE POINTS DATA) - Pay cash BY DEFAULT, not by finding. Seats.aero COULD NOT BE REACHED for AMS->LHR on 2027-01-23 (SeatsAeroError: Seats.aero API error: Connection 
+refused (golden scenario: the network is down)). THIS IS AN API FAILURE. NOTHING is known about award space on this leg. It is NOT a finding of no availability. No conclusion about award 
+space on this leg can be drawn from this run.
+  Cash: $76 easyJet AMS-LGW 2:20pm-2:40pm, 1h20 (marked Unsupported - no points option)
+  note: Google Flights headline: 'Cheapest from $76'.
+  note: easyJet is a low-cost carrier with no UR-transferable loyalty currency. All three easyJet options are cash-only by construction.
+  FLAG: The three cheapest options are all easyJet and all marked 'Unsupported' by Google - no points option exists for any of them.
+  FLAG: Destination recorded as LHR (the KLM option). The three cheaper easyJet options land at LGW/LTN/SEN; all are GB and classify identically.
+  UNVERIFIED: Seats.aero COULD NOT BE REACHED for AMS->LHR on 2027-01-23 (SeatsAeroError: Seats.aero API error: Connection refused (golden scenario: the network is down)). THIS IS AN API 
+FAILURE. NOTHING is known about award space on this leg. It is NOT a finding of no availability.
+
+B4 - LON->MRY, Jan 27 2027, one-way, economy, 1 adult
+  Verdict: CASH (NO LIVE POINTS DATA) - Pay cash BY DEFAULT, not by finding. Seats.aero COULD NOT BE REACHED for LHR->SFO on 2027-01-27 (SeatsAeroError: Seats.aero API error: Connection 
+refused (golden scenario: the network is down)). THIS IS AN API FAILURE. NOTHING is known about award space on this leg. It is NOT a finding of no availability. No conclusion about award 
+space on this leg can be drawn from this run.
+  Cash: $482 British Airways (American, Iberia, Finnair) LHR-SFO nonstop 11:45am-2:55pm, 11h10
+  note: Google Flights headline: 'Cheapest from $450'.
+  FLAG: Headline said 'from $450' but the cheapest listed option is $482.
+  FLAG: NO option actually arrives MRY. All three arrive SFO. Return positioning SFO->Monterey is unpriced.
+  FLAG: Region classified on LHR-SFO. departure_country=GB, which is what makes UK Air Passenger Duty applicable on this leg.
+  APD: UK AIR PASSENGER DUTY on B4: this leg DEPARTS GB for US. The amount is UNKNOWN - this table does not cover it. the cabin for this leg is '(none recorded)', which is not one of 
+F/J/W/Y. HMRC's reduced and standard rates differ by more than GBP 140 on a long-haul departure, so a cabin this tool cannot read is an amount it does not know - not the cheaper rate, and 
+not the dearer one. Record the cabin on the leg. UNKNOWN IS NOT ZERO: real cash is owed and its size is not known here, so the points-side total below is a LOWER BOUND.
+  UNVERIFIED: Seats.aero COULD NOT BE REACHED for LHR->SFO on 2027-01-27 (SeatsAeroError: Seats.aero API error: Connection refused (golden scenario: the network is down)). THIS IS AN API 
+FAILURE. NOTHING is known about award space on this leg. It is NOT a finding of no availability.
+
+B5 - Novotel Madrid Center (Accor), Jan 15-19 2027, 4 nights, 2 people, Standard Room queen, 'Stay Longer and Save' non-refundable
+  Verdict: CASH (NO POINTS PATH) - No UR transfer partner covers this leg. Cash is the only option.
+  Cash: Standard Room queen, Stay Longer and Save, non-refundable, 4 nights (EUR643.57 incl. fees/taxes)
+        643.57 EUR -> $747.83 at the FX rate above (rate unconfirmed)
+  note: Quoted in both currencies: $747.81 total incl. fees/taxes = EUR643.57. This dual quote is the ONLY source for the EUR/USD rate used anywhere in this run.
+  note: Accor is not a Chase UR partner. No points path exists.
+  FLAG: DATE CONFLICT: booked Jan 15-19, the same four nights as NH Amsterdam. Impossible. The flights imply Madrid ~Jan 16-19.
+  FLAG: Accor Live Limitless is NOT a Chase UR transfer partner. Cash only - this is a hard constraint, not a missing input.
+
+B6 - NH City Centre Amsterdam, Jan 15-19 2027, 4 nights, 2 adults, Standard Room, room only, non-refundable
+  Verdict: CASH (NO POINTS PATH) - No UR transfer partner covers this leg. Cash is the only option.
+  Cash: Standard Room, room only, non-refundable, 4 nights (EUR451.68 room + EUR94.87 VAT)
+        546.55 EUR -> $635.09 at the FX rate above (rate unconfirmed)
+  Mandatory fees: $65.62 - owed whether you pay cash OR points, and included in BOTH totals.
+  note: Room EUR451.68 + VAT EUR94.87 = EUR546.55 payable at booking.
+  note: City tax EUR56.47 shown separately, likely payable at the property. NOT included in the score below.
+  note: NH Hotels is not a Chase UR partner. No points path exists.
+  FLAG: DATE CONFLICT: booked Jan 15-19, the same four nights as Novotel Madrid. Impossible. The flights imply Amsterdam Jan 19-23.
+  FLAG: NH Rewards / Minor DISCOVERY is NOT a Chase UR transfer partner. Cash only.
+  FLAG: EUR56.47 city tax is MODELLED as a mandatory fee and IS included in the scored total. It is owed on a points stay too.
+
+B7 - Hilton London Hyde Park, 4 nights, Queen Guest Room, GBP125.66/night
+  Verdict: CASH (NO POINTS PATH) - No UR transfer partner covers this leg. Cash is the only option.
+  Cash: Queen Guest Room, 4 nights at GBP125.66/night, taxes included
+        502.64 GBP -> $680.57 at the FX rate above (rate unconfirmed)
+  note: GBP125.66/night x 4 = GBP502.64 total, taxes included.
+  note: Hilton is not a Chase UR partner. No points path exists.
+  FLAG: No check-in date was captured for this hotel - only '4 nights'. Jan 23 is inferred from the flight legs and is NOT confirmed.
+  FLAG: Hilton Honors is an Amex Membership Rewards partner, NOT a Chase UR partner. Cash only under the current UR-only scope.
+  FLAG: This leg is quoted in GBP, and its dollar figure is the least reliable number in the run: it is the largest single line, and the whole of it rests on one FX rate. That rate is 
+'sourced' (looked up 2026-09-08) - better than a placeholder, and still NOT vouched for by anyone. CONFIRM BEFORE TRUSTING.
+
+Live award data, per leg
+
+B1 MRY->MAD, Jan 15 2027, one-way, economy, 1 adult
+  Seats.aero COULD NOT BE REACHED for SFO->MAD on 2027-01-15 (SeatsAeroError: Seats.aero API error: Connection refused (golden scenario: the network is down)). THIS IS AN API FAILURE. 
+NOTHING is known about award space on this leg. It is NOT a finding of no availability.
+  SUPERSEDED BADGE on B1: the fixture claimed British Airways Executive Club 22,500 (google_badge_unverified). Live Seats.aero returned nothing scoreable on this leg's own date. The badge is
+retained, not deleted - it is evidence about the badge, not about the award.
+  SUPERSEDED BADGE on B1: the fixture claimed Air Canada Aeroplan 50,000 (google_badge_unverified). Live Seats.aero returned nothing scoreable on this leg's own date. The badge is retained, 
+not deleted - it is evidence about the badge, not about the award.
+
+B2 MAD->AMS, Jan 19 2027, one-way, economy, 1 adult
+  Seats.aero COULD NOT BE REACHED for MAD->AMS on 2027-01-19 (SeatsAeroError: Seats.aero API error: Connection refused (golden scenario: the network is down)). THIS IS AN API FAILURE. 
+NOTHING is known about award space on this leg. It is NOT a finding of no availability.
+  SUPERSEDED BADGE on B2: the fixture claimed Club Iberia Plus 7,500 (google_badge_unverified). Live Seats.aero returned nothing scoreable on this leg's own date. The badge is retained, not 
+deleted - it is evidence about the badge, not about the award.
+  SUPERSEDED BADGE on B2: the fixture claimed Air France-KLM Flying Blue 7,500 (google_badge_unverified). Live Seats.aero returned nothing scoreable on this leg's own date. The badge is 
+retained, not deleted - it is evidence about the badge, not about the award.
+
+B3 AMS->LON, Jan 23 2027, one-way, economy, 1 adult
+  Seats.aero COULD NOT BE REACHED for AMS->LHR on 2027-01-23 (SeatsAeroError: Seats.aero API error: Connection refused (golden scenario: the network is down)). THIS IS AN API FAILURE. 
+NOTHING is known about award space on this leg. It is NOT a finding of no availability.
+  SUPERSEDED BADGE on B3: the fixture claimed Air France-KLM Flying Blue 4,000 (google_badge_unverified). Live Seats.aero returned nothing scoreable on this leg's own date. The badge is 
+retained, not deleted - it is evidence about the badge, not about the award.
+
+B4 LON->MRY, Jan 27 2027, one-way, economy, 1 adult
+  Seats.aero COULD NOT BE REACHED for LHR->SFO on 2027-01-27 (SeatsAeroError: Seats.aero API error: Connection refused (golden scenario: the network is down)). THIS IS AN API FAILURE. 
+NOTHING is known about award space on this leg. It is NOT a finding of no availability.
+  SUPERSEDED BADGE on B4: the fixture claimed British Airways Executive Club 20,000 (google_badge_unverified). Live Seats.aero returned nothing scoreable on this leg's own date. The badge is
+retained, not deleted - it is evidence about the badge, not about the award.
+  SUPERSEDED BADGE on B4: the fixture claimed United MileagePlus 27,600 (google_badge_unverified). Live Seats.aero returned nothing scoreable on this leg's own date. The badge is retained, 
+not deleted - it is evidence about the badge, not about the award.
+
+                                                                 TRIP B - Europe multi-city, Jan 15-27 2027: totals both ways                                                                 
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Measure                                                                                                                                      ┃                                       Value ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Pay cash for everything                                                                                                                      │                                   $3,126.11 │
+│ Optimizer's recommendation                                                                                                                   │                                   $3,126.11 │
+│ Saving                                                                                                                                       │                                       $0.00 │
+│ Optimizer beats paying cash by                                                                                                               │                                    WITHHELD │
+│   withheld because                                                                                                                           │ --require-all-live and provenance is 'none' │
+│   margin provenance                                                                                                                          │                                        none │
+│   No points price of any provenance entered this margin. 4 flight leg(s) NEVER PRODUCED A USABLE ANSWER (B1, B2, B3, B4): B1 api_error; B2   │                            0 of 4 legs live │
+│ api_error; B3 api_error; B4 api_error. NOTHING is known about award space on those legs, so this margin is NOT a live number and must not be │                                             │
+│ quoted as one.                                                                                                                               │                                             │
+│ Points spent                                                                                                                                 │                                           0 │
+│ Cash still owed                                                                                                                              │                                   $3,126.11 │
+│ Legs where points win                                                                                                                        │                                           0 │
+│ Legs with NO UR path at all                                                                                                                  │                                           3 │
+│ Legs whose points side was NEVER PRICED                                                                                                      │                          4 (B1, B2, B3, B4) │
+│ (no award data - NOT a claim about partners)                                                                                                 │                                             │
+│ Legs where a UR partner exists but no                                                                                                        │                                           0 │
+│ award price was captured                                                                                                                     │                                             │
+│ Legs where UK APD is OWED but its amount                                                                                                     │                                      1 (B4) │
+│ is UNKNOWN (NOT $0)                                                                                                                          │                                             │
+│ Flight legs where Seats.aero was NEVER REACHED                                                                                               │                          4 (B1, B2, B3, B4) │
+│ (this says NOTHING about award space)                                                                                                        │                                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────┘
+
+THE TRIP MARGIN IS WITHHELD. --require-all-live was passed and the margin's provenance is 'none', not 'live'. No points price of any provenance entered this margin. 4 flight leg(s) NEVER 
+PRODUCED A USABLE ANSWER (B1, B2, B3, B4): B1 api_error; B2 api_error; B3 api_error; B4 api_error. NOTHING is known about award space on those legs, so this margin is NOT a live number and 
+must not be quoted as one. Per-leg results above are unaffected and remain valid. Re-run without --require-all-live to see the mixed-provenance number, clearly labelled as mixed.
+
+ Residue: what is left in each account afterwards 
+┏━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━┳━━━━━━┓
+┃ Currency ┃ Starting ┃ Spent ┃ Remaining ┃ Note ┃
+┡━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━╇━━━━━━┩
+│ UR       │  160,000 │     0 │   160,000 │      │
+└──────────┴──────────┴───────┴───────────┴──────┘
+
+Legs with NO points path at all (no partner exists): B5, B6, B7
+
+Legs whose points side was NEVER PRICED (no award price captured and none fetched - this says NOTHING about whether a partner covers them): B1, B2, B3, B4

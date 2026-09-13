@@ -1,0 +1,28 @@
+# scenario G10: search, API error
+# argv: --origin SFO --destination MAD --date 2027-01-15 --balance UR=160000 --card Chase Sapphire Preferred
+# exit: 0
+Seats.aero key: gold…789   (source: environment)
+
+Route: SFO -> MAD
+Dates: 2027-01-15 to 2027-02-14
+Passengers: 1
+  UR: 160,000   valued at 1.00 cents/point
+  cards: Chase Sapphire Preferred
+
+==============================================================================
+FX rates used (table as of 2026-09-08):
+  1 EUR = 1.1620 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-07 (4 days old)   [BOOKING-SITE IMPLIED: back-derived from the Novotel Madrid dual-currency quote ($747.81 / EUR643.57 = 
+1.1620). One booking page on one date - NOT a market rate.]
+  1 GBP = 1.3540 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-08 (3 days old)   [SOURCED on 2026-09-08. Replaces the 1.2700 placeholder, which had no source and understated the London 
+hotel by about $42. A sourced rate still goes stale - confirm before trusting.]
+  1 CAD = 0.7256 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-08 (3 days old)   [SOURCED on 2026-09-08. Added so the captured CAD 44.60 tax on the real SFO-MAD Aeroplan award can be 
+scored instead of carried as an unknown. Confirm before trusting.]
+  !! FX RATES REQUIRE CONFIRMATION. EUR is back-derived from a single hotel quote; GBP and CAD were looked up on a date and go stale. Every foreign-currency total below inherits that 
+uncertainty.
+  !! Supply a rate with --fx GBP=1.36 to take responsibility for it and clear the marker.
+==============================================================================
+
+Seats.aero could NOT be reached: Seats.aero API error: Connection refused (golden scenario: the network is down)
+This is an API failure, NOT a finding of no award availability. No conclusion about award space can be drawn from this run.
+operating airline: NOT LOOKED UP - single-route search does not call the trips endpoint; use --trip-fixture or `python -m src.trips_tools capture`
+No strategies found.

@@ -57,8 +57,10 @@ from src.seats_client import (
     PARSER_VERSION,
     coverage_of_pages as seats_client_coverage,
     RawSearchResult,
+    RawTripsResult,
     SeatsAeroError,
     SeatsClient,
+    TripsLookupError,
 )
 
 # The prefix that marks a manifest hash in output. Short enough to read aloud,
@@ -561,10 +563,11 @@ def verify(rows: List[ManifestRow], snapshot_dir: Path) -> List[Problem]:
                 Problem(
                     "content_hash_unknown",
                     row,
-                    "this row predates v5 and carries no content_hash column, "
-                    "so there is nothing to check the file against. It reads as "
-                    "UNKNOWN, never as 'matches'. Re-fetch the leg to write a "
-                    "v5 row, or replay a manifest that has one.",
+                    "this row was written by an older version of the tool and "
+                    "carries no content_hash column, so there is nothing to check "
+                    "the file against. It reads as UNKNOWN, never as 'matches'. "
+                    "Re-fetch the leg to write a row that has one, or replay a "
+                    "manifest whose rows do.",
                 )
             )
         elif not _CONTENT_HASH_COLUMN.fullmatch(row.content_hash.strip().lower()):
@@ -605,7 +608,7 @@ def verify(rows: List[ManifestRow], snapshot_dir: Path) -> List[Problem]:
                     row,
                     "the row records BUDGET_EXHAUSTED against an archived "
                     "snapshot. A budget failure is never cached and never "
-                    "archived (finding H-1), so a row claiming one describes a "
+                    "archived, so a row claiming one describes a "
                     "response that cannot exist. The manifest is corrupt.",
                 )
             )
@@ -623,6 +626,8 @@ def manifest_hash(
     snapshot_dir: Path,
     itinerary: Optional[List["LegQuery"]] = None,
     trip_id: Optional[str] = None,
+    trips_rows: Optional[List[ManifestRow]] = None,
+    trips_dir: Optional[Path] = None,
 ) -> str:
     """
     `mh_` + 16 hex over the selected rows' CONTENT. What a margin is quoted at.
@@ -655,6 +660,17 @@ def manifest_hash(
         lines.append(
             f"leg|{query.leg_id}|{query.origin}->{query.destination}|{query.date}"
         )
+    # THE ITINERARY LOOKUPS, ONLY WHEN THERE ARE ANY. A replay with no trips
+    # rows appends nothing, so every hash quoted before the lookup existed is
+    # reproduced byte for byte (pinned in tests/test_trips_hash_stability.py).
+    if trips_rows:
+        tdir = Path(trips_dir) if trips_dir is not None else directory / TRIPS_SUBDIR
+        for row in trips_rows:
+            recomputed = recompute_content_hash(tdir / row.snapshot_name)
+            lines.append(
+                f"trips|{row.leg_id}|{row.route}|{row.dates}|{row.snapshot_name}|"
+                f"{recomputed}"
+            )
     blob = "\n".join(sorted(lines))
     digest = hashlib.sha256(blob.encode("utf-8")).hexdigest()
     return f"{HASH_PREFIX}{digest[:HASH_CHARS]}"
@@ -663,6 +679,173 @@ def manifest_hash(
 def parser_versions(rows: List[ManifestRow]) -> List[str]:
     """The distinct parser versions the selected rows were captured under."""
     return sorted({r.parser_version_display for r in rows})
+
+
+# ---------------------------------------------------------------------------
+# The trips manifest (the operating-airline lookup)
+# ---------------------------------------------------------------------------
+
+TRIPS_SUBDIR = response_cache.TRIPS_SNAPSHOT_SUBDIR
+TRIPS_ROUTE_PREFIX = "trips:"
+
+
+def trips_availability_id(row: ManifestRow) -> str:
+    """The availability id a trips row records, or "" if its route cell is not one."""
+    route = (row.route or "").strip()
+    if not route.startswith(TRIPS_ROUTE_PREFIX):
+        return ""
+    return route[len(TRIPS_ROUTE_PREFIX):].strip()
+
+
+@dataclass
+class TripsReplaySet:
+    """The trips rows a replay will use, and every reason it cannot."""
+
+    manifest_path: Optional[Path] = None
+    selection: Optional[ReplaySelection] = None
+    problems: List[Problem] = field(default_factory=list)
+
+    @property
+    def selected(self) -> List[ManifestRow]:
+        return list(self.selection.selected) if self.selection else []
+
+    @property
+    def directory(self) -> Optional[Path]:
+        return self.manifest_path.parent if self.manifest_path else None
+
+
+TRIPS_TABLE_HEADER = "| fetched_at (UTC) | leg | route | dates |"
+
+# Manager review, should-fix 6. Deleting a trips row (or the trips manifest) is
+# the documented remedy for a bad trips snapshot, and it changes what the replay
+# hash covers: the hash is over the rows that are replayed.
+HASH_CHANGE_NOTE = (
+    "Deleting a trips row CHANGES THE REPLAY'S MANIFEST HASH: a number quoted "
+    "against the old hash will not reproduce against the edited manifest."
+)
+
+
+def _recorded_id(path: Path) -> Tuple[Optional[str], str]:
+    """(the availability id a trips envelope records, problem)."""
+    try:
+        meta = (json.loads(path.read_text()) or {}).get("_meta") or {}
+    except (OSError, ValueError, AttributeError) as e:
+        return None, f"{path.name} cannot be read ({e})"
+    ids = {
+        str(v)
+        for v in (meta.get("availability_id"), (meta.get("request") or {}).get("availability_id"))
+        if v
+    }
+    if len(ids) != 1:
+        return None, (
+            f"{path.name} records {sorted(ids) or 'no'} availability id(s); a trips "
+            f"snapshot records exactly one"
+        )
+    return ids.pop(), ""
+
+
+def load_trips_replay_set(
+    snapshot_dir: Path, trip_id: Optional[str], leg_ids: Optional[List[str]] = None
+) -> TripsReplaySet:
+    """
+    The trips rows beside a search manifest, verified exactly like search rows.
+
+    No `trips_endpoint/MANIFEST.md` is not a problem: that replay simply has no
+    lookups recorded, and every lookup it would have made reads NOT RECORDED. A
+    manifest that EXISTS is held to the no-partial-replay rule - a selected row
+    whose file is missing, tampered with or empty refuses the whole run.
+    """
+    manifest = Path(snapshot_dir) / TRIPS_SUBDIR / response_cache.MANIFEST_NAME
+    out = TripsReplaySet()
+    if not manifest.exists():
+        return out
+    out.manifest_path = manifest
+    try:
+        rows = parse_manifest(manifest)
+    except ManifestError as e:
+        try:
+            text = manifest.read_text()
+        except OSError:
+            out.problems.append(Problem("trips_manifest_unreadable", None, str(e)))
+            return out
+        if TRIPS_TABLE_HEADER not in text:
+            # Zero bytes, a merge conflict, any text that is not a manifest:
+            # refused, never read as "no lookups recorded" while the recordings
+            # sit beside it.
+            out.problems.append(
+                Problem(
+                    "trips_manifest_unreadable",
+                    None,
+                    f"{manifest} has no manifest table header, so it is not a "
+                    f"trips manifest. It is NOT being read as 'no lookups "
+                    f"recorded'. Restore it, or delete the file to replay with "
+                    f"no lookups. {HASH_CHANGE_NOTE}",
+                )
+            )
+            return out
+        # A trips manifest whose rows were all deleted (the table header is
+        # still there) records NO lookups. That is the documented remedy for a
+        # bad trips snapshot, and every lookup then replays as NOT RECORDED.
+        # (A SEARCH manifest with no rows is still refused.)
+        rows = []
+    out.selection = select_replay_set(rows, trip_id)
+    out.problems.extend(out.selection.problems)
+    out.problems.extend(verify(out.selection.selected, manifest.parent))
+    from src import seats_trips
+
+    seen: Dict[str, ManifestRow] = {}
+    missing_files = {p.row.snapshot_name for p in out.problems if p.row is not None}
+    for row in out.selection.selected:
+        aid = trips_availability_id(row)
+        if not seats_trips.valid_availability_id(aid):
+            out.problems.append(
+                Problem(
+                    "trips_row_unreadable",
+                    row,
+                    f"the route cell {row.route!r} is not 'trips:<availability "
+                    f"id>', so there is no lookup to replay it as.",
+                )
+            )
+            continue
+        if leg_ids is not None and row.leg_id not in leg_ids:
+            out.problems.append(
+                Problem(
+                    "trips_row_for_unknown_leg",
+                    row,
+                    f"the row is for leg {row.leg_id!r}, which this trip does not "
+                    f"have as a flight leg. It was recorded for a different trip "
+                    f"or fixture; replaying it here would attribute it to "
+                    f"whichever award happens to share the id.",
+                )
+            )
+        path = manifest.parent / row.snapshot_name
+        if row.snapshot_name not in missing_files and path.is_file():
+            recorded, why = _recorded_id(path)
+            if recorded is None or recorded != aid:
+                out.problems.append(
+                    Problem(
+                        "trips_snapshot_is_another_lookup",
+                        row,
+                        why
+                        or f"{row.snapshot_name} is a lookup of availability "
+                        f"{recorded}, not of {aid}. Its bytes say nothing about "
+                        f"{aid}.",
+                    )
+                )
+        earlier = seen.get(aid)
+        if earlier is not None and earlier.content_hash != row.content_hash:
+            out.problems.append(
+                Problem(
+                    "duplicate_trips_lookup",
+                    row,
+                    f"availability {aid} is recorded twice with DIFFERENT bytes "
+                    f"({earlier.describe()} and this row). There is no rule that "
+                    f"picks one; delete the row that should not be replayed. "
+                    f"{HASH_CHANGE_NOTE}",
+                )
+            )
+        seen.setdefault(aid, row)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -698,11 +881,17 @@ class SnapshotTransport(SeatsClient):
     # Instance-level in __init__; declared here so the attribute is documented.
     spends_api_budget = False
 
+    # The metal pass asks this to decide NOT RECORDED vs a live lookup: a replay
+    # has recorded trips rows or it has none, and it never asks the network.
+    trips_replay = True
+
     def __init__(
         self,
         rows: List[ManifestRow],
         snapshot_dir: Path,
         manifest_hash_value: str = "",
+        trips_rows: Optional[List[ManifestRow]] = None,
+        trips_dir: Optional[Path] = None,
     ):
         # __init__ is NOT called on the base class: it resolves an API key, and
         # a replay must not require one. Only the run-state bookkeeping is
@@ -725,6 +914,85 @@ class SnapshotTransport(SeatsClient):
         self.CACHE: Dict[str, Any] = {}
         self.CACHE_META: Dict[str, Dict[str, Any]] = {}
         self._init_run_state()
+        # The recorded itinerary lookups, by availability id. None given means
+        # this replay has no trips manifest at all.
+        self.trips_rows: List[ManifestRow] = list(trips_rows or [])
+        self.trips_dir = (
+            Path(trips_dir) if trips_dir is not None else self.snapshot_dir / TRIPS_SUBDIR
+        )
+        self.has_trips_manifest = trips_rows is not None
+        self._trips_by_id: Dict[str, ManifestRow] = {}
+        for row in sorted(
+            self.trips_rows,
+            key=lambda r: r.fetched_at or datetime.min.replace(tzinfo=timezone.utc),
+        ):
+            aid = trips_availability_id(row)
+            if aid:
+                self._trips_by_id[aid] = row
+
+    def trips_raw(self, availability_id: str, **_ignored):
+        """
+        The RECORDED trips response for this id, or NOT RECORDED. Never the network.
+
+        Overrides `SeatsClient.trips_raw` so a replay cannot inherit an HTTP
+        path. Keyword arguments the live transport takes (cache, ttl, leg, ...)
+        are accepted and ignored: nothing here consults a cache or writes one.
+        """
+        row = self._trips_by_id.get(availability_id or "")
+        if row is None:
+            where = (
+                f"{TRIPS_SUBDIR}/MANIFEST.md has no row for it"
+                if self.has_trips_manifest
+                else f"the replayed manifest has no {TRIPS_SUBDIR}/MANIFEST.md"
+            )
+            raise TripsLookupError("NO_TRIPS_SNAPSHOT", where)
+        path = self.trips_dir / row.snapshot_name
+        envelope = json.loads(path.read_text())
+        pages = envelope.get("pages") or []
+        meta = envelope.get("_meta") or {}
+        recorded, why = _recorded_id(path)
+        if recorded != availability_id:
+            # `load_trips_replay_set` refuses this before scoring; the transport
+            # still must not answer for an id its file is not about.
+            raise TripsLookupError(
+                "AVAILABILITY_ID_MISMATCH",
+                why or f"{row.snapshot_name} is a lookup of {recorded}, not {availability_id}",
+            )
+        if len(pages) != 1:
+            raise TripsLookupError(
+                "SHAPE_ERROR",
+                f"{row.snapshot_name} holds {len(pages)} pages; a trips response is one",
+            )
+        payload = pages[0]
+        from src import seats_trips
+
+        stored = response_cache.provenance_from_meta(meta)
+        recomputed, recomputed_why = seats_trips.trips_coverage(payload)
+        incomplete = bool(stored.get("incomplete")) or recomputed
+        reasons = [
+            r
+            for r in (str(stored.get("incomplete_reason") or ""), recomputed_why)
+            if r
+        ]
+        return RawTripsResult(
+            payload=payload,
+            http_status=meta.get("http_status"),
+            served_from_cache=False,
+            fetched_at=_parse_dt(str(meta.get("fetched_at") or "")),
+            request=dict(meta.get("request") or {}),
+            request_key=str(meta.get("request_key") or ""),
+            snapshot_name=row.snapshot_name,
+            manifest_key="",
+            incomplete=incomplete,
+            incomplete_reason="; ".join(reasons) if incomplete else "",
+            request_sent=False,
+            replayed_from_snapshot=True,
+            snapshot_content_hash=response_cache.content_hash(pages),
+            snapshot_parser_version=str(
+                meta.get("parser_version") or row.parser_version or UNKNOWN
+            ),
+            snapshot_captured_at=_parse_dt(str(meta.get("fetched_at") or "")),
+        )
 
     def rows_for(self, leg_id: str) -> Optional[ManifestRow]:
         return self._by_leg.get(leg_id)

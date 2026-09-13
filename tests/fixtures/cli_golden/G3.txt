@@ -1,0 +1,143 @@
+# scenario G3: Trip C offline
+# argv: --trip-fixture trip_c_lon_mry_surcharge.json --offline --balance UR=160000 --card Chase Sapphire Preferred --transfer-date 2026-09-15 --show-alternatives
+# exit: 0
+
+TRIP C - the surcharge case (LON->MRY, plus a same-metal comparison)
+C1 is Trip B's real LON->MRY leg, scored with the surcharge model. C2 is a constructed business-cabin leg that exercises the same-metal alternatives engine, which C1's economy cabin cannot.
+Source: C1 transcribes the real LON->MRY capture (Google Flights, 2026-09-07, Tsuki). C2 is CONSTRUCTED for acceptance testing and is NOT a real captured itinerary - its award prices are 
+labelled synthetic and must never be quoted as real.
+
+Wallet (supplied at runtime - nothing is assumed)
+  UR: 160,000   valued at 1.00 cents/point
+  cards: Chase Sapphire Preferred
+
+Transfer date: 2026-09-15 (ratios and bonuses are looked up on THIS date, not on the travel date - the ratio that applies is the one in force when you transfer)
+
+==============================================================================
+FX rates used (table as of 2026-09-08):
+  1 EUR = 1.1620 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-07 (4 days old)   [BOOKING-SITE IMPLIED: back-derived from the Novotel Madrid dual-currency quote ($747.81 / EUR643.57 = 
+1.1620). One booking page on one date - NOT a market rate.]
+  1 GBP = 1.3540 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-08 (3 days old)   [SOURCED on 2026-09-08. Replaces the 1.2700 placeholder, which had no source and understated the London 
+hotel by about $42. A sourced rate still goes stale - confirm before trusting.]
+  1 CAD = 0.7256 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-08 (3 days old)   [SOURCED on 2026-09-08. Added so the captured CAD 44.60 tax on the real SFO-MAD Aeroplan award can be 
+scored instead of carried as an unknown. Confirm before trusting.]
+  !! FX RATES REQUIRE CONFIRMATION. EUR is back-derived from a single hotel quote; GBP and CAD were looked up on a date and go stale. Every foreign-currency total below inherits that 
+uncertainty.
+  !! Supply a rate with --fx GBP=1.36 to take responsibility for it and clear the marker.
+==============================================================================
+
+Valuation: cash is scored at 1.00 cents per point ($1.00 cash = 100 points-equivalent). Points and cash are ranked on this single yardstick.
+
+Data problems flagged, NOT silently fixed
+  - C2 IS SYNTHETIC. Its points prices are invented for the purpose of exercising the alternatives engine and are labelled as such on every candidate. C1 is real captured data.
+  - C1's British Airways option carries a carrier-imposed surcharge that was NOT captured. Scoring it as $0 would show a saving of roughly $282 that does not exist. The surcharge is modelled
+as a range, never as zero.
+
+                                                                                    Per-leg: cash vs points                                                                                   
+┏━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━
+┃     ┃                   ┃ Cheape… ┃ Cash as … ┃                                    ┃      ┃         ┃ Surc… ┃                      Score ┃   Score ┃ Provenance    ┃                        
+┃ Leg ┃ What              ┃    cash ┃   (@1cpp) ┃ Best points path                   ┃ Poi… ┃ Surcha… ┃ sour… ┃                     points ┃    cash ┃ points | cash ┃ Verdict                
+┡━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━
+│ C1  │ LON->MRY          │ $482.00 │    48,200 │ United MileagePlus @ 1:1           │ 28,… │   $0.00 │ mode… │                    $418.11 │ $482.00 │ badge | unkn… │ POINTS                 
+│ C2  │ SYNTHETIC: JFK->… │ $1,800… │   180,000 │ British Airways Executive Club @ … │ 50,… │ UNKNOWN │ unkn… │ ? (win if surch < $1,300.… │ $1,800… │ badge | unkn… │ WITHHELD (surch unknow…
+└─────┴───────────────────┴─────────┴───────────┴────────────────────────────────────┴──────┴─────────┴───────┴────────────────────────────┴─────────┴───────────────┴────────────────────────
+
+Per-leg detail
+
+C1 - LON->MRY, Jan 27 2027, one-way, economy, 1 adult (real capture; arrives SFO)
+  Verdict: POINTS - Points path scores $418.11 vs $482.00 cash (points $280.00 + UK APD $138.11).
+  Cash: $482 British Airways LHR-SFO nonstop 3:20pm-6:45pm, 11h25
+  Points: United LHR-SFO nonstop (badge 27.6k pts)
+        UR 28,000 -> United MileagePlus 28,000 @ 1:1 [Chase Sapphire Preferred]
+        spend: 28,000 UR
+        stranded: 400 (within the unavoidable transfer increment)
+        metal: UA (source: captured), cabin Y
+  Surcharge: $0.00  via United MileagePlus / metal=* / * / cabin=* / dep=*
+        source: project research seed table 2026-09-08 - NOT corroborated against a published source
+        PROGRAM POLICY not a route observation. United does not pass carrier-imposed surcharges through on awards. Government taxes and airport charges including UK APD are still owed and 
+are NOT modelled here.
+  Margin: points save $63.89 (13.3% of the cash price)
+  note: This is Trip B's B4 leg, isolated so the surcharge behaviour can be pinned by a test.
+  note: Departing LHR is the worst case in the surcharge model: UK Air Passenger Duty stacks on top of the carrier-imposed surcharge.
+  FLAG: NO option actually arrives MRY. All arrive SFO. Return positioning SFO->Monterey is unpriced.
+  FLAG: The economy surcharge for British Airways ex-LHR is NOT in the model. The research behind data/surcharges.csv is business-cabin only, and economy figures were deliberately not 
+extrapolated from it.
+  UNVERIFIED: Surcharge note: PROGRAM POLICY not a route observation. United does not pass carrier-imposed surcharges through on awards. Government taxes and airport charges including UK APD
+are still owed and are NOT modelled here.
+  UNVERIFIED: Points price for United LHR-SFO nonstop (badge 27.6k pts) is UNVERIFIED (google_badge_unverified). Google Flights '27.6k pts' badge. UNVERIFIED. United levies no 
+carrier-imposed surcharge as a matter of program policy, which is why this resolves to a confirmed $0. UK departure taxes are still owed and are NOT modelled.
+  UNVERIFIED: Program attribution for United LHR-SFO nonstop (badge 27.6k pts) -> United MileagePlus is an ASSUMPTION; the source did not name the program.
+  UNVERIFIED: British Airways LHR-SFO nonstop (badge 20k pts): NOT SCORED - its carrier-imposed surcharge is UNKNOWN (not $0). At 20,000 UR its cost floor is $200.00 before any surcharge, 
+against $280.00 for the option chosen above.
+  UNVERIFIED: SAME ROUTE, DIFFERENT PROGRAM, NO CARRIER SURCHARGE: United MileagePlus carries $0 in carrier-imposed surcharge here as a matter of program policy, while British Airways 
+Executive Club could not be scored at all because its surcharge on this metal is unknown. Government taxes and airport charges are still owed on both and are not modelled.
+  APD: UK AIR PASSENGER DUTY on C1: this leg DEPARTS GB for US. ADDED to the points-side cash total: GBP 102.00 x 1 = GBP 102.00 = $138.11 per the reduced rate. Band B chosen because HMRC 
+bands by distance from London to the DESTINATION COUNTRY'S CAPITAL: Washington DC, 3665 miles. APD is owed on award tickets too and does not care which program or which airline; the captured
+CASH fare already contains it, which is why it is added to the points side only. Source: https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty. The GBP->USD conversion 
+above is marked [CONFIRM BEFORE TRUSTING]; this APD figure inherits that uncertainty.
+
+C2 - SYNTHETIC: JFK->DUB, business, on Aer Lingus metal, priced in British Airways Executive Club
+  Verdict: CASH (SURCHARGE UNKNOWN) - A points path exists (British Airways Executive Club, 50,000 points) but the carrier-imposed surcharge on this metal is UNKNOWN, so it cannot be scored 
+against $1,800.00 cash. It is NOT $0, and it must not be treated as $0. Points win only if the surcharge is below $1,300.00.
+  Cash: SYNTHETIC $1,800 business fare JFK-DUB
+  Points: SYNTHETIC BA Executive Club award on Aer Lingus metal, JFK-DUB business
+        UR 50,000 -> British Airways Executive Club 50,000 @ 1:1 [Chase Sapphire Preferred]
+        spend: 50,000 UR
+        metal: EI (source: captured), cabin J
+  Surcharge: UNKNOWN - this is NOT $0.
+        Break-even: points beat cash only if the surcharge is below $1,300.00.
+        Cannot model a surcharge for 'SYNTHETIC BA Executive Club award on Aer Lingus metal, JFK-DUB business'. No surcharge rule for British Airways Executive Club on EI metal, NA-EU J 
+departing US. This is NOT zero - the figure is simply not known.
+  note: CONSTRUCTED CASE, not a capture. It exists to exercise alternatives.find_same_metal_alternatives(): the same EI aeroplane can be ticketed in Aer Lingus AerClub, whose surcharge band 
+IS modelled, while BA Executive Club's surcharge on EI metal is not.
+  FLAG: SYNTHETIC POINTS PRICE. 50,000 Avios is invented for this test and is not a real award price.
+  UNVERIFIED: Points price for SYNTHETIC BA Executive Club award on Aer Lingus metal, JFK-DUB business is UNVERIFIED (synthetic_test_fixture). SYNTHETIC. Invented for acceptance testing. 
+Never quote this number.
+  UNVERIFIED: SYNTHETIC BA Executive Club award on Aer Lingus metal, JFK-DUB business: the carrier-imposed surcharge is UNKNOWN, so this points option CANNOT be scored against cash. It is 
+NOT $0. Points beat cash only if the surcharge is below $1,300.00.
+
+C2 - same-metal alternatives
+  Aer Lingus AerClub on EI metal - surcharge $60-$100 (pt $75)
+    UNPRICED counterfactual: beats the option above if its award price is below 172,500 points. NOT scored - go look it up.
+    Bookability inferred from alliance membership, not from a verified partnership. Confirm before relying on it.
+    Aer Lingus AerClub can ticket EI metal and carries $60-$100 (pt $75) in carrier-imposed surcharge, where British Airways Executive Club's surcharge on this metal is UNKNOWN. Award price 
+NOT known - look it up. NOTE: Aer Lingus AerClub and British Airways Executive Club spend the SAME Avios but price awards from DIFFERENT charts. Do not assume the British Airways Executive 
+Club price applies.
+
+                                                    TRIP C - the surcharge case (LON->MRY, plus a same-metal comparison): totals both ways                                                    
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Measure                                                                                                                                                          ┃                   Value ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Pay cash for everything                                                                                                                                          │               $2,282.00 │
+│ Optimizer's recommendation                                                                                                                                       │               $2,218.11 │
+│ Saving                                                                                                                                                           │                  $63.89 │
+│ Optimizer beats paying cash by                                                                                                                                   │ 2.80% - 63.27%  (badge) │
+│   low end = what is actually defensible                                                                                                                          │          2.80%  (badge) │
+│   high end = only if every unknown surcharge is $0                                                                                                               │         63.27%  (badge) │
+│   margin provenance                                                                                                                                              │                   badge │
+│   NO leg was scored against live availability. The points prices here come from: google_badge_unverified, synthetic_test_fixture - a MIX. The                    │        0 of 2 legs live │
+│ google_badge_unverified ones are Google Flights badges, of which exactly one has ever been corroborated. This is not a live margin.                              │                         │
+│ Points spent                                                                                                                                                     │                  28,000 │
+│   drawn from                                                                                                                                                     │               28,000 UR │
+│ Cash still owed                                                                                                                                                  │               $1,800.00 │
+│ Legs where points win                                                                                                                                            │                       1 │
+│ Legs with NO UR path at all                                                                                                                                      │                       0 │
+│ Legs where a UR partner exists but no                                                                                                                            │                       0 │
+│ award price was captured                                                                                                                                         │                         │
+│ Legs where a points path exists but its                                                                                                                          │                       1 │
+│ surcharge is UNKNOWN (NOT $0)                                                                                                                                    │                         │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴─────────────────────────┘
+
+NO leg was scored against live availability. The points prices here come from: google_badge_unverified, synthetic_test_fixture - a MIX. The google_badge_unverified ones are Google Flights 
+badges, of which exactly one has ever been corroborated. This is not a live margin.
+
+The headline above is a RANGE and must not be quoted as a single number. The spread is carrier-imposed surcharges that are not known. The low end is what the tool can defend today; the high 
+end assumes every unknown surcharge turns out to be $0, which is the assumption that turns an unknown into a saving that is not there.
+
+ Residue: what is left in each account afterwards  
+┏━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━┳━━━━━━┓
+┃ Currency ┃ Starting ┃  Spent ┃ Remaining ┃ Note ┃
+┡━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━╇━━━━━━┩
+│ UR       │  160,000 │ 28,000 │   132,000 │      │
+└──────────┴──────────┴────────┴───────────┴──────┘
+Legs where a points path exists but its carrier-imposed surcharge is UNKNOWN (NOT $0): C2

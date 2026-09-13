@@ -1,0 +1,9 @@
+# scenario G13: replay refused: a snapshot is missing (exit 1)
+# argv: --trip-fixture trip_b_europe.json --balance UR=160000 --card Chase Sapphire Preferred --transfer-date 2026-09-15 --from-snapshot snapshots/MANIFEST.md
+# exit: 1
+Seats.aero key: not required (--from-snapshot replays committed bytes)
+THIS MANIFEST CANNOT BE REPLAYED and NOTHING has been scored.
+  - [snapshot_missing] row 24: B2 MAD->AMS 2027-01-19..2027-01-19 -> B2_MAD_AMS_2027-01-19_<STAMP>.json: snapshots/B2_MAD_AMS_2027-01-19_<STAMP>.json does not exist. The 
+manifest is no longer replayable: the bytes a number would be quoted from are gone, and there is no partial-replay mode.
+There is no partial-replay mode. A percentage printed next to a hash that covers only part of the run would look more trustworthy than one printed next to nothing. Re-fetch the missing legs 
+live, or replay a manifest whose snapshots are all present and intact. The manifest is NOT being updated to match the files.

@@ -1,0 +1,238 @@
+# scenario G8: exit 4, funding report forced overdrawn (SYNTHETIC)
+# argv: --trip-fixture trip_b_europe.json --offline --balance UR=160000 --card Chase Sapphire Preferred --transfer-date 2026-09-15
+# exit: 4
+
+TRIP B - Europe multi-city, Jan 15-27 2027
+One-way legs, economy, 1 adult on flights / 2 people on hotels. Real cash prices captured by Tsuki on 2026-09-07.
+Source: Google Flights + Accor/NH/Hilton, captured 2026-09-07 by Tsuki. Transcribed verbatim.
+
+Wallet (supplied at runtime - nothing is assumed)
+  UR: 160,000   valued at 1.00 cents/point
+  cards: Chase Sapphire Preferred
+
+Transfer date: 2026-09-15 (ratios and bonuses are looked up on THIS date, not on the travel date - the ratio that applies is the one in force when you transfer)
+
+==============================================================================
+FX rates used (table as of 2026-09-08):
+  1 EUR = 1.1620 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-07 (4 days old)   [BOOKING-SITE IMPLIED: back-derived from the Novotel Madrid dual-currency quote ($747.81 / EUR643.57 = 
+1.1620). One booking page on one date - NOT a market rate.]
+  1 GBP = 1.3540 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-08 (3 days old)   [SOURCED on 2026-09-08. Replaces the 1.2700 placeholder, which had no source and understated the London 
+hotel by about $42. A sourced rate still goes stale - confirm before trusting.]
+  1 CAD = 0.7256 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-08 (3 days old)   [SOURCED on 2026-09-08. Added so the captured CAD 44.60 tax on the real SFO-MAD Aeroplan award can be 
+scored instead of carried as an unknown. Confirm before trusting.]
+  !! FX RATES REQUIRE CONFIRMATION. EUR is back-derived from a single hotel quote; GBP and CAD were looked up on a date and go stale. Every foreign-currency total below inherits that 
+uncertainty.
+  !! Supply a rate with --fx GBP=1.36 to take responsibility for it and clear the marker.
+==============================================================================
+
+Valuation: cash is scored at 1.00 cents per point ($1.00 cash = 100 points-equivalent). Points and cash are ranked on this single yardstick.
+
+Data problems flagged, NOT silently fixed
+  - HOTEL DATES DO NOT LINE UP WITH THE FLIGHTS. Novotel Madrid and NH City Centre Amsterdam are BOTH booked Jan 15-19 2027, which is impossible - you cannot be in two cities on the same 
+four nights. The flight legs imply Madrid ~Jan 16-19, Amsterdam Jan 19-23, London Jan 23-27. Reported, NOT corrected: the right dates are a decision for Tsuki, not a guess for the optimizer.
+  - Trip A and Trip B both start Jan 15 2027. They appear to be ALTERNATIVES, not one itinerary. Scored separately.
+  - Flights are priced for 1 adult, hotels for 2 people. Nothing has been doubled to reconcile this.
+  - No London hotel dates were given beyond '4 nights'. Assumed to be the Jan 23-27 window implied by the flights, but the booking dates were not captured.
+  - Every Google 'from $X' headline in this capture is LOWER than the cheapest option actually listed beneath it (388 vs 395, 35 vs 44, 450 vs 482). The headline fares were not available in 
+the listing; the listed fares are used.
+
+                                                                                    Per-leg: cash vs points                                                                                   
+┏━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━
+┃     ┃                            ┃ Cheap… ┃ Cash as … ┃                                ┃      ┃         ┃ Surc… ┃                   Score ┃  Score ┃ Provenance    ┃                        
+┃ Leg ┃ What                       ┃   cash ┃   (@1cpp) ┃ Best points path               ┃ Poi… ┃ Surcha… ┃ sour… ┃                  points ┃   cash ┃ points | cash ┃ Verdict                
+┡━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━
+│ B1  │ MRY->MAD                   │ $395.… │    39,500 │ Air Canada Aeroplan @ 1:1      │ 50,… │   $0.00 │ mode… │                 $500.00 │ $395.… │ badge | unkn… │ PAY CASH               
+│ B2  │ MAD->AMS                   │ $44.00 │     4,400 │ Club Iberia Plus @ 1:1         │ 8,0… │ UNKNOWN │ unkn… │               >= $80.00 │ $44.00 │ badge | unkn… │ PAY CASH               
+│ B3  │ AMS->LON                   │ $76.00 │     7,600 │ Air France-KLM Flying Blue @ … │ 4,0… │ UNKNOWN │ unkn… │ ? (win if surch < $36.… │ $76.00 │ badge | unkn… │ WITHHELD (surch unknow…
+│ B4  │ LON->MRY                   │ $482.… │    48,200 │ United MileagePlus @ 1:1       │ 28,… │   $0.00 │ mode… │                 $418.11 │ $482.… │ badge | unkn… │ POINTS                 
+│ B5  │ Novotel Madrid Center (Ac… │ $747.… │    74,783 │ none - not a partner           │    - │       - │ -     │                       - │ $747.… │ none | unkno… │ PAY CASH (no path)     
+│ B6  │ NH City Centre Amsterdam   │ $635.… │    70,071 │ none - not a partner           │    - │       - │ -     │                       - │ $700.… │ none | unkno… │ PAY CASH (no path)     
+│ B7  │ Hilton London Hyde Park    │ $680.… │    68,057 │ none - not a partner           │    - │       - │ -     │                       - │ $680.… │ none | unkno… │ PAY CASH (no path)     
+└─────┴────────────────────────────┴────────┴───────────┴────────────────────────────────┴──────┴─────────┴───────┴─────────────────────────┴────────┴───────────────┴────────────────────────
+
+Per-leg detail
+
+B1 - MRY->MAD, Jan 15 2027, one-way, economy, 1 adult
+  Verdict: CASH - Cash is cheaper: $395.00 vs $500.00 on points at 1.0cpp. Do NOT burn points here.
+  Cash: $395 British Airways (American, Iberia, Finnair) SFO-MAD, 1 stop LHR 1h45, 5:25pm-5:05pm+1, 14h40
+  Points: Air Canada SFO-MAD via YUL (badge 50k pts)
+        UR 50,000 -> Air Canada Aeroplan 50,000 @ 1:1 [Chase Sapphire Preferred]
+        spend: 50,000 UR
+        metal: AC (source: assumed), cabin Y
+  Surcharge: $0.00  via Air Canada Aeroplan / metal=* / * / cabin=* / dep=*
+        source: project research seed table 2026-09-08 - NOT corroborated against a published source
+        PROGRAM POLICY. Asserted for PARTNER awards. Verify before extending to AC's own metal. Government taxes still owed and not modelled here. Applied without a confirmed operating 
+carrier because this is a program-wide policy row, which does not depend on the metal.
+  Margin: points cost $105.00 MORE than cash (26.6% worse)
+  note: Google Flights headline: 'Cheapest from $388'.
+  note: The $401 American option's 46k badge maps to American AAdvantage, which is NOT a Chase UR partner.
+  note: The $401 Delta option had no points badge and Delta SkyMiles is NOT a Chase UR partner.
+  FLAG: Headline said 'from $388' but the cheapest listed option is $395.
+  FLAG: NO option actually departs MRY. All four depart SFO or SJC. Monterey positioning is unpriced.
+  FLAG: Region classified on SFO-MAD, the route actually priced. The leg is named MRY->MAD but no priced option departs MRY.
+  UNVERIFIED: Surcharge note: PROGRAM POLICY. Asserted for PARTNER awards. Verify before extending to AC's own metal. Government taxes still owed and not modelled here. Applied without a 
+confirmed operating carrier because this is a program-wide policy row, which does not depend on the metal.
+  UNVERIFIED: Points price for Air Canada SFO-MAD via YUL (badge 50k pts) is UNVERIFIED (google_badge_unverified). Google Flights '50k pts' badge. CONFIRMED BY SEATS.AERO 2026-09-08: a real 
+SFO-MAD search returned an Aeroplan economy award on 2027-01-15 at exactly 50,000 miles with 9 seats and CAD 44.60 in taxes (tests/fixtures/seats_aero/sfo_mad_real.json). The badge was right
+on THIS leg - which is a fact about this leg, not a licence to trust badges generally; the other badges in this trip remain unverified. The real response also shows the operating metal is 
+NOT AC alone: it lists AC, LH, UA and VL as possible carriers. Aeroplan's zero surcharge is a program-wide policy and does not depend on the metal, so every one of them resolves to the same 
+$0 and the verdict is unaffected. The CAD 44.60 in taxes is NOT included below - CAD has no configured FX rate, so it is an explicit unknown that can only make the points side worse.
+  UNVERIFIED: Program attribution for Air Canada SFO-MAD via YUL (badge 50k pts) -> Air Canada Aeroplan is an ASSUMPTION; the source did not name the program.
+  UNVERIFIED: British Airways SFO-MAD via LHR (badge 22.5k pts): NOT SCORED - its carrier-imposed surcharge is UNKNOWN (not $0). At 23,000 UR its cost floor is $230.00 before any surcharge, 
+against $500.00 for the option chosen above.
+  UNVERIFIED: SAME ROUTE, DIFFERENT PROGRAM, NO CARRIER SURCHARGE: Air Canada Aeroplan carries $0 in carrier-imposed surcharge here as a matter of program policy, while British Airways 
+Executive Club could not be scored at all because its surcharge on this metal is unknown. Government taxes and airport charges are still owed on both and are not modelled.
+
+B2 - MAD->AMS, Jan 19 2027, one-way, economy, 1 adult
+  Verdict: CASH - Cash is cheaper: $44.00 vs at least $80.00 on points at 1.0cpp. The carrier-imposed surcharge is UNKNOWN, but it can only ADD to the points side, so cash wins whatever it 
+turns out to be. Do NOT burn points here.
+  Cash: $44 Air Europa nonstop 7:00am-9:40am, 2h40
+  Points: Iberia MAD-AMS nonstop (badge 7.5k pts)
+        UR 8,000 -> Club Iberia Plus 8,000 @ 1:1 [Chase Sapphire Preferred]
+        spend: 8,000 UR
+        stranded: 500 (within the unavoidable transfer increment)
+        metal: IB (source: captured), cabin Y
+  Surcharge: UNKNOWN - this is NOT $0.
+        Break-even: points beat cash only if the surcharge is below $0.00.
+        Cannot model a surcharge for 'Iberia MAD-AMS nonstop (badge 7.5k pts)'. No surcharge rule for Club Iberia Plus on IB metal, EU-EU Y departing ES. This is NOT zero - the figure is 
+simply not known.
+  note: Google Flights headline: 'Cheapest from $35'.
+  note: Air Europa (the cheapest cash option at $44) had no points badge and Air Europa SUMA is NOT a Chase UR partner.
+  FLAG: Headline said 'from $35' but the cheapest listed option is $44.
+  UNVERIFIED: Points price for Iberia MAD-AMS nonstop (badge 7.5k pts) is UNVERIFIED (google_badge_unverified). Google Flights '7.5k pts' badge. UNVERIFIED.
+  UNVERIFIED: Program attribution for Iberia MAD-AMS nonstop (badge 7.5k pts) -> Club Iberia Plus is an ASSUMPTION; the source did not name the program.
+  UNVERIFIED: Iberia MAD-AMS nonstop (badge 7.5k pts): the carrier-imposed surcharge is UNKNOWN, so this points option CANNOT be scored against cash. It is NOT $0. Points beat cash only if 
+the surcharge is below $0.00.
+
+B3 - AMS->LON, Jan 23 2027, one-way, economy, 1 adult
+  Verdict: CASH (SURCHARGE UNKNOWN) - A points path exists (Air France-KLM Flying Blue, 4,000 points) but the carrier-imposed surcharge on this metal is UNKNOWN, so it cannot be scored 
+against $76.00 cash. It is NOT $0, and it must not be treated as $0. Points win only if the surcharge is below $36.00.
+  Cash: $76 easyJet AMS-LGW 2:20pm-2:40pm, 1h20 (marked Unsupported - no points option)
+  Points: KLM AMS-LHR (badge 4k pts)
+        UR 4,000 -> Air France-KLM Flying Blue 4,000 @ 1:1 [Chase Sapphire Preferred]
+        spend: 4,000 UR
+        metal: KL (source: captured), cabin Y
+  Surcharge: UNKNOWN - this is NOT $0.
+        Break-even: points beat cash only if the surcharge is below $36.00.
+        Cannot model a surcharge for 'KLM AMS-LHR (badge 4k pts)'. No surcharge rule for Air France-KLM Flying Blue on KL metal, EU-EU Y departing NL. This is NOT zero - the figure is simply
+not known.
+  note: Google Flights headline: 'Cheapest from $76'.
+  note: easyJet is a low-cost carrier with no UR-transferable loyalty currency. All three easyJet options are cash-only by construction.
+  FLAG: The three cheapest options are all easyJet and all marked 'Unsupported' by Google - no points option exists for any of them.
+  FLAG: Destination recorded as LHR (the KLM option). The three cheaper easyJet options land at LGW/LTN/SEN; all are GB and classify identically.
+  UNVERIFIED: Points price for KLM AMS-LHR (badge 4k pts) is UNVERIFIED (google_badge_unverified). Google Flights '4k pts' badge. UNVERIFIED.
+  UNVERIFIED: Program attribution for KLM AMS-LHR (badge 4k pts) -> Air France-KLM Flying Blue is an ASSUMPTION; the source did not name the program.
+  UNVERIFIED: KLM AMS-LHR (badge 4k pts): the carrier-imposed surcharge is UNKNOWN, so this points option CANNOT be scored against cash. It is NOT $0. Points beat cash only if the surcharge 
+is below $36.00.
+
+B4 - LON->MRY, Jan 27 2027, one-way, economy, 1 adult
+  Verdict: POINTS - Points path scores $418.11 vs $482.00 cash (points $280.00 + UK APD $138.11).
+  Cash: $482 British Airways (American, Iberia, Finnair) LHR-SFO nonstop 11:45am-2:55pm, 11h10
+  Points: United LHR-SFO nonstop (badge 27.6k pts)
+        UR 28,000 -> United MileagePlus 28,000 @ 1:1 [Chase Sapphire Preferred]
+        spend: 28,000 UR
+        stranded: 400 (within the unavoidable transfer increment)
+        metal: UA (source: assumed), cabin Y
+  Surcharge: $0.00  via United MileagePlus / metal=* / * / cabin=* / dep=*
+        source: project research seed table 2026-09-08 - NOT corroborated against a published source
+        PROGRAM POLICY not a route observation. United does not pass carrier-imposed surcharges through on awards. Government taxes and airport charges including UK APD are still owed and 
+are NOT modelled here. Applied without a confirmed operating carrier because this is a program-wide policy row, which does not depend on the metal.
+  Margin: points save $63.89 (13.3% of the cash price)
+  note: Google Flights headline: 'Cheapest from $450'.
+  FLAG: Headline said 'from $450' but the cheapest listed option is $482.
+  FLAG: NO option actually arrives MRY. All three arrive SFO. Return positioning SFO->Monterey is unpriced.
+  FLAG: Region classified on LHR-SFO. departure_country=GB, which is what makes UK Air Passenger Duty applicable on this leg.
+  UNVERIFIED: Surcharge note: PROGRAM POLICY not a route observation. United does not pass carrier-imposed surcharges through on awards. Government taxes and airport charges including UK APD
+are still owed and are NOT modelled here. Applied without a confirmed operating carrier because this is a program-wide policy row, which does not depend on the metal.
+  UNVERIFIED: Points price for United LHR-SFO nonstop (badge 27.6k pts) is UNVERIFIED (google_badge_unverified). Google Flights '27.6k pts' badge. UNVERIFIED. Also subject to uncaptured UK 
+departure taxes. United MileagePlus levies no carrier-imposed surcharge as a matter of program policy, so this resolves to a confirmed $0 regardless of metal. GOVERNMENT TAXES AND UK AIR 
+PASSENGER DUTY ARE STILL OWED ON THIS LEG AND ARE NOT MODELLED - the $0 covers the carrier surcharge only.
+  UNVERIFIED: Program attribution for United LHR-SFO nonstop (badge 27.6k pts) -> United MileagePlus is an ASSUMPTION; the source did not name the program.
+  UNVERIFIED: British Airways LHR-SFO nonstop (badge 20k pts): NOT SCORED - its carrier-imposed surcharge is UNKNOWN (not $0). At 20,000 UR its cost floor is $200.00 before any surcharge, 
+against $280.00 for the option chosen above.
+  UNVERIFIED: SAME ROUTE, DIFFERENT PROGRAM, NO CARRIER SURCHARGE: United MileagePlus carries $0 in carrier-imposed surcharge here as a matter of program policy, while British Airways 
+Executive Club could not be scored at all because its surcharge on this metal is unknown. Government taxes and airport charges are still owed on both and are not modelled.
+  APD: UK AIR PASSENGER DUTY on B4: this leg DEPARTS GB for US. ADDED to the points-side cash total: GBP 102.00 x 1 = GBP 102.00 = $138.11 per the reduced rate. Band B chosen because HMRC 
+bands by distance from London to the DESTINATION COUNTRY'S CAPITAL: Washington DC, 3665 miles. APD is owed on award tickets too and does not care which program or which airline; the captured
+CASH fare already contains it, which is why it is added to the points side only. Source: https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty. The GBP->USD conversion 
+above is marked [CONFIRM BEFORE TRUSTING]; this APD figure inherits that uncertainty.
+
+B5 - Novotel Madrid Center (Accor), Jan 15-19 2027, 4 nights, 2 people, Standard Room queen, 'Stay Longer and Save' non-refundable
+  Verdict: CASH (NO POINTS PATH) - No UR transfer partner covers this leg. Cash is the only option.
+  Cash: Standard Room queen, Stay Longer and Save, non-refundable, 4 nights (EUR643.57 incl. fees/taxes)
+        643.57 EUR -> $747.83 at the FX rate above (rate unconfirmed)
+  note: Quoted in both currencies: $747.81 total incl. fees/taxes = EUR643.57. This dual quote is the ONLY source for the EUR/USD rate used anywhere in this run.
+  note: Accor is not a Chase UR partner. No points path exists.
+  FLAG: DATE CONFLICT: booked Jan 15-19, the same four nights as NH Amsterdam. Impossible. The flights imply Madrid ~Jan 16-19.
+  FLAG: Accor Live Limitless is NOT a Chase UR transfer partner. Cash only - this is a hard constraint, not a missing input.
+
+B6 - NH City Centre Amsterdam, Jan 15-19 2027, 4 nights, 2 adults, Standard Room, room only, non-refundable
+  Verdict: CASH (NO POINTS PATH) - No UR transfer partner covers this leg. Cash is the only option.
+  Cash: Standard Room, room only, non-refundable, 4 nights (EUR451.68 room + EUR94.87 VAT)
+        546.55 EUR -> $635.09 at the FX rate above (rate unconfirmed)
+  Mandatory fees: $65.62 - owed whether you pay cash OR points, and included in BOTH totals.
+  note: Room EUR451.68 + VAT EUR94.87 = EUR546.55 payable at booking.
+  note: City tax EUR56.47 shown separately, likely payable at the property. NOT included in the score below.
+  note: NH Hotels is not a Chase UR partner. No points path exists.
+  FLAG: DATE CONFLICT: booked Jan 15-19, the same four nights as Novotel Madrid. Impossible. The flights imply Amsterdam Jan 19-23.
+  FLAG: NH Rewards / Minor DISCOVERY is NOT a Chase UR transfer partner. Cash only.
+  FLAG: EUR56.47 city tax is MODELLED as a mandatory fee and IS included in the scored total. It is owed on a points stay too.
+
+B7 - Hilton London Hyde Park, 4 nights, Queen Guest Room, GBP125.66/night
+  Verdict: CASH (NO POINTS PATH) - No UR transfer partner covers this leg. Cash is the only option.
+  Cash: Queen Guest Room, 4 nights at GBP125.66/night, taxes included
+        502.64 GBP -> $680.57 at the FX rate above (rate unconfirmed)
+  note: GBP125.66/night x 4 = GBP502.64 total, taxes included.
+  note: Hilton is not a Chase UR partner. No points path exists.
+  FLAG: No check-in date was captured for this hotel - only '4 nights'. Jan 23 is inferred from the flight legs and is NOT confirmed.
+  FLAG: Hilton Honors is an Amex Membership Rewards partner, NOT a Chase UR partner. Cash only under the current UR-only scope.
+  FLAG: This leg is quoted in GBP, and its dollar figure is the least reliable number in the run: it is the largest single line, and the whole of it rests on one FX rate. That rate is 
+'sourced' (looked up 2026-09-08) - better than a placeholder, and still NOT vouched for by anyone. CONFIRM BEFORE TRUSTING.
+
+
+==============================================================================
+THIS TRIP CANNOT BE FUNDED FROM YOUR BALANCE.
+THIS PLAN CANNOT BE EXECUTED: it spends 200,000 UR against a balance of 160,000. No margin is quoted for a plan the balance cannot fund.
+The margin below is WITHHELD. Nothing is quoted for a plan the points do not exist for.
+==============================================================================
+                                                                 TRIP B - Europe multi-city, Jan 15-27 2027: totals both ways                                                                 
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Measure                                                                                      ┃                                                                                       Value ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Pay cash for everything                                                                      │                                                                                   $3,126.11 │
+│ Optimizer's recommendation                                                                   │                                                                                   $3,062.22 │
+│ Saving                                                                                       │                                                                                      $63.89 │
+│ Optimizer beats paying cash by                                                               │                                                                WITHHELD - PLAN NOT FUNDABLE │
+│   withheld because                                                                           │  THIS PLAN CANNOT BE EXECUTED: it spends 200,000 UR against a balance of 160,000. No margin │
+│                                                                                              │                                               is quoted for a plan the balance cannot fund. │
+│   margin provenance                                                                          │                                                                                       badge │
+│   NO leg was scored against live availability. Every points price here is a Google Flights   │                                                                            0 of 4 legs live │
+│ badge, of which exactly one has ever been corroborated. This is not a live margin.           │                                                                                             │
+│ Points spent                                                                                 │                                                                                      28,000 │
+│   drawn from                                                                                 │                                                                                   28,000 UR │
+│ Cash still owed                                                                              │                                                                                   $2,644.11 │
+│ Legs where points win                                                                        │                                                                                           1 │
+│ Legs with NO UR path at all                                                                  │                                                                                           3 │
+│ Legs where a UR partner exists but no                                                        │                                                                                           0 │
+│ award price was captured                                                                     │                                                                                             │
+│ Legs where a points path exists but its                                                      │                                                                                           1 │
+│ surcharge is UNKNOWN (NOT $0)                                                                │                                                                                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────┘
+
+NO leg was scored against live availability. Every points price here is a Google Flights badge, of which exactly one has ever been corroborated. This is not a live margin.
+
+The headline above is a RANGE and must not be quoted as a single number. The spread is carrier-imposed surcharges that are not known. The low end is what the tool can defend today; the high 
+end assumes every unknown surcharge turns out to be $0, which is the assumption that turns an unknown into a saving that is not there.
+
+ Residue: what is left in each account afterwards  
+┏━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━┳━━━━━━┓
+┃ Currency ┃ Starting ┃  Spent ┃ Remaining ┃ Note ┃
+┡━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━╇━━━━━━┩
+│ UR       │  160,000 │ 28,000 │   132,000 │      │
+└──────────┴──────────┴────────┴───────────┴──────┘
+
+Legs with NO points path at all (no partner exists): B5, B6, B7
+Legs where a points path exists but its carrier-imposed surcharge is UNKNOWN (NOT $0): B3
+
+THE RECOMMENDATION ABOVE CANNOT BE EXECUTED FROM YOUR BALANCE. THIS PLAN CANNOT BE EXECUTED: it spends 200,000 UR against a balance of 160,000. No margin is quoted for a plan the balance 
+cannot fund.

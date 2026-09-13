@@ -8,7 +8,13 @@
 wallet.json
 
 # Python runtime droppings. None of these are inputs to anything.
-.venv/
+# `.venv` WITHOUT a trailing slash, deliberately: with the slash git ignores a
+# DIRECTORY of that name and nothing else, so a .venv SYMLINK (one worktree
+# sharing another's interpreter) was still picked up by `git add -A` and
+# committed - a path on the build machine, in the bundle, breaking the checkout
+# and with it every documented `.venv/bin/python` command. No slash ignores
+# whichever of the two it is.
+.venv
 __pycache__/
 *.pyc
 .pytest_cache/

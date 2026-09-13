@@ -1,0 +1,87 @@
+# scenario G7: never-priced legs + a 2-traveller flight leg, offline
+# argv: --trip-fixture tests/fixtures/cli_golden/inputs/g7_never_priced_couple.json --offline --balance UR=160000 --card Chase Sapphire Preferred --transfer-date 2026-09-15
+# exit: 0
+
+g7_never_priced_couple
+Built by --new-trip on 2026-09-11: 2 flight leg(s), 0 hotel leg(s), 1 traveller(s), cabin J (business). Leg L2 edited by hand to 2 travellers (golden scenario G7).
+Source: user_entered_via_new_trip. Cash prices are what the user typed; nothing here was captured from a booking page by this tool.
+
+Wallet (supplied at runtime - nothing is assumed)
+  UR: 160,000   valued at 1.00 cents/point
+  cards: Chase Sapphire Preferred
+
+Transfer date: 2026-09-15 (ratios and bonuses are looked up on THIS date, not on the travel date - the ratio that applies is the one in force when you transfer)
+
+==============================================================================
+FX rates used (table as of 2026-09-08):
+  1 EUR = 1.1620 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-07 (4 days old)   [BOOKING-SITE IMPLIED: back-derived from the Novotel Madrid dual-currency quote ($747.81 / EUR643.57 = 
+1.1620). One booking page on one date - NOT a market rate.]
+  1 GBP = 1.3540 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-08 (3 days old)   [SOURCED on 2026-09-08. Replaces the 1.2700 placeholder, which had no source and understated the London 
+hotel by about $42. A sourced rate still goes stale - confirm before trusting.]
+  1 CAD = 0.7256 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-08 (3 days old)   [SOURCED on 2026-09-08. Added so the captured CAD 44.60 tax on the real SFO-MAD Aeroplan award can be 
+scored instead of carried as an unknown. Confirm before trusting.]
+  !! FX RATES REQUIRE CONFIRMATION. EUR is back-derived from a single hotel quote; GBP and CAD were looked up on a date and go stale. Every foreign-currency total below inherits that 
+uncertainty.
+  !! Supply a rate with --fx GBP=1.36 to take responsibility for it and clear the marker.
+==============================================================================
+
+Valuation: cash is scored at 1.00 cents per point ($1.00 cash = 100 points-equivalent). Points and cash are ranked on this single yardstick.
+
+Data problems flagged, NOT silently fixed
+  - THIS FIXTURE CARRIES NO POINTS PRICES AT ALL. It was built by --new-trip, which refuses to write a points_candidates key - not an empty one, none. The only way any leg here can be scored
+on points is --live (real Seats.aero award space) or --from-snapshot (a committed replay of one). A hand-written points price is a badge number wearing a capture's clothes, and quoting those
+is the bug this whole project exists to stop. If you add a points_candidates key by hand, this sentence is no longer true of this file and should come out with it.
+
+                                                                                 Per-leg: cash vs points                                                                                  
+┏━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃     ┃          ┃  Cheapest ┃ Cash as pts ┃                  ┃        ┃           ┃ Surch. ┃  Score ┃     Score ┃ Provenance                                  ┃                         ┃
+┃ Leg ┃ What     ┃      cash ┃     (@1cpp) ┃ Best points path ┃ Points ┃ Surcharge ┃ source ┃ points ┃      cash ┃ points | cash                               ┃ Verdict                 ┃
+┡━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ L1  │ SFO->LHR │ $2,400.00 │     240,000 │ never priced     │      - │         - │ -      │      - │ $2,400.00 │ none | user_entered_via_new_trip 2026-09-11 │ PAY CASH (never priced) │
+│ L2  │ LHR->SFO │ $1,850.00 │     185,000 │ never priced     │      - │         - │ -      │      - │ $1,850.00 │ none | user_entered_via_new_trip 2026-09-11 │ PAY CASH (never priced) │
+└─────┴──────────┴───────────┴─────────────┴──────────────────┴────────┴───────────┴────────┴────────┴───────────┴─────────────────────────────────────────────┴─────────────────────────┘
+
+Per-leg detail
+
+L1 - SFO->LHR, Jan 15 2027, one-way, business, 1 adult
+  Verdict: CASH (NO POINTS PATH) - NO AWARD PRICE WAS CAPTURED FOR THIS LEG and none was fetched, so the points side was never priced. NOTHING is claimed about whether a UR transfer partner 
+covers SFO->LHR - that question was never reached. Score it with --live or --from-snapshot, or add a captured award price to the fixture.
+  Cash: SFO->LHR Jan 15 2027, entered by the user
+
+L2 - LHR->SFO, Jan 29 2027, one-way, business, 2 adults
+  Verdict: CASH (NO POINTS PATH) - NO AWARD PRICE WAS CAPTURED FOR THIS LEG and none was fetched, so the points side was never priced. NOTHING is claimed about whether a UR transfer partner 
+covers LHR->SFO - that question was never reached. Score it with --live or --from-snapshot, or add a captured award price to the fixture.
+  Cash: LHR->SFO Jan 29 2027, entered by the user
+  APD: UK AIR PASSENGER DUTY on L2: this leg DEPARTS GB for US. ADDED to the points-side cash total: GBP 244.00 x 2 = GBP 488.00 = $660.75 per the standard rate. Band B chosen because HMRC 
+bands by distance from London to the DESTINATION COUNTRY'S CAPITAL: Washington DC, 3665 miles. APD is owed on award tickets too and does not care which program or which airline; the captured
+CASH fare already contains it, which is why it is added to the points side only. Source: https://www.gov.uk/guidance/rates-and-allowances-for-air-passenger-duty. The GBP->USD conversion 
+above is marked [CONFIRM BEFORE TRUSTING]; this APD figure inherits that uncertainty.
+
+                   g7_never_priced_couple: totals both ways                    
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┓
+┃ Measure                                                  ┃            Value ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━┩
+│ Pay cash for everything                                  │        $4,250.00 │
+│ Optimizer's recommendation                               │        $4,250.00 │
+│ Saving                                                   │            $0.00 │
+│ Optimizer beats paying cash by                           │    0.00%  (none) │
+│   margin provenance                                      │             none │
+│   No points price of any provenance entered this margin. │ 0 of 2 legs live │
+│ Points spent                                             │                0 │
+│ Cash still owed                                          │        $4,250.00 │
+│ Legs where points win                                    │                0 │
+│ Legs with NO UR path at all                              │                0 │
+│ Legs whose points side was NEVER PRICED                  │       2 (L1, L2) │
+│ (no award data - NOT a claim about partners)             │                  │
+│ Legs where a UR partner exists but no                    │                0 │
+│ award price was captured                                 │                  │
+└──────────────────────────────────────────────────────────┴──────────────────┘
+
+ Residue: what is left in each account afterwards 
+┏━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━┳━━━━━━┓
+┃ Currency ┃ Starting ┃ Spent ┃ Remaining ┃ Note ┃
+┡━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━╇━━━━━━┩
+│ UR       │  160,000 │     0 │   160,000 │      │
+└──────────┴──────────┴───────┴───────────┴──────┘
+
+Legs whose points side was NEVER PRICED (no award price captured and none fetched - this says NOTHING about whether a partner covers them): L1, L2

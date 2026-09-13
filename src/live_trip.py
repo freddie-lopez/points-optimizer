@@ -28,13 +28,17 @@ THREE RULES THAT ARE NOT NEGOTIABLE HERE:
 3. A LEG THAT FAILS DOES NOT FAIL THE TRIP. Score the legs that worked, report
    the ones that did not, and say which is which.
 """
-from dataclasses import dataclass
+import dataclasses
+from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+from src import seats_trips
 from src.models import (
+    METAL_PROVENANCE_TRIPS,
+    METAL_REASONS,
     Award,
     CashOption,
     DateRange,
@@ -44,10 +48,12 @@ from src.models import (
     LiveLegOutcome,
     LiveQuerySpec,
     LiveQueryState,
+    MetalLookup,
+    MetalStatus,
     PointsCandidate,
     PointsProvenance,
 )
-from src.seats_client import SeatsAeroError, SeatsClient
+from src.seats_client import SeatsAeroError, SeatsClient, TripsLookupError
 from src.surcharge import SurchargeTable, default_table
 
 # The provenance string a live candidate carries. DISTINCT from
@@ -93,6 +99,24 @@ class LiveOptions:
     # never as live.
     allow_badge_fallback: bool = True
     surcharges: Optional[SurchargeTable] = None
+    # THE OPERATING-AIRLINE LOOKUP. None means NOT ENGAGED: no metal pass runs
+    # and the output is byte-identical to a run before the lookup existed. The
+    # CLI always passes a mode ("auto", "all" or "off"); direct callers and
+    # their stub clients keep the old behaviour by not passing one.
+    trips_mode: Optional[str] = None
+    # Per-run ceiling on trips HTTP requests actually SENT (cache hits are free).
+    trips_cap: int = 10
+    # Filled by `apply_live` when the metal pass runs: what it did, for the
+    # banner. Never read by any scorer.
+    metal_report: Optional[object] = None
+    # data/yq_inclusion.csv, loaded and validated. None means "load the
+    # committed table" - which is header-only, i.e. every source unverified.
+    yq_table: Optional[Dict[str, object]] = None
+
+
+TRIPS_MODES = ("auto", "all", "off")
+DEFAULT_TRIPS_CAP = 10
+TRIPS_CAP_MIN, TRIPS_CAP_MAX = 1, 50
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +134,12 @@ def _query_spec(leg: Leg, flex_days: int) -> LiveQuerySpec:
         end_date=leg.date + timedelta(days=max(flex_days, 0)),
         flex_days=max(flex_days, 0),
     )
+
+
+def leg_search_window(leg: Leg, flex_days: int) -> DateRange:
+    """The date range `query_leg` asks Seats.aero for on this leg."""
+    spec = _query_spec(leg, flex_days)
+    return DateRange(spec.start_date, spec.end_date)
 
 
 def _not_queried(leg: Leg, why: str) -> LiveLegOutcome:
@@ -165,7 +195,7 @@ def query_leg(
         awards = client.search(
             spec.origin,
             spec.destination,
-            DateRange(spec.start_date, spec.end_date),
+            leg_search_window(leg, opts.flex_days),
             cache=opts.cache,
             cache_ttl=opts.cache_ttl,
             refresh=opts.refresh,
@@ -418,7 +448,13 @@ def query_leg(
 
 
 def _taxes_are_the_whole_carrier_cash_figure(
-    leg: Leg, award: Award, surcharges: SurchargeTable
+    leg: Leg,
+    award: Award,
+    surcharges: SurchargeTable,
+    *,
+    yq_verdict=None,
+    metal: Optional[MetalLookup] = None,
+    yq_scope_note: str = "",
 ) -> Tuple[bool, str]:
     """
     May `{X}TotalTaxes` be taken as the COMPLETE carrier-side cash figure?
@@ -457,6 +493,7 @@ def _taxes_are_the_whole_carrier_cash_figure(
         carrier_is_known=False,
     )
     if est.is_known and est.amount_high == 0.0:
+        # CASE A. Today's rule, unchanged.
         return True, (
             f"{program} levies no carrier-imposed surcharge as a matter of "
             f"PROGRAM POLICY, which is metal-independent, so there is nothing to "
@@ -464,14 +501,94 @@ def _taxes_are_the_whole_carrier_cash_figure(
             f"complete carrier-side cash cost. GOVERNMENT TAXES AND AIRPORT "
             f"CHARGES BEYOND WHAT SEATS.AERO REPORTS ARE STILL NOT MODELLED."
         )
+    source = award.program_source_code or "(no source)"
+    if yq_verdict is not None and yq_verdict.includes:
+        # CASE B. The source's taxes were VERIFIED to contain the surcharge on
+        # THIS airline (D1: the caller passes a verdict only when the award's
+        # itinerary lookup is KNOWN on the airline the check was run on), so
+        # they are the whole carrier figure and no band is added on top.
+        return True, (
+            f"Seats.aero's taxes for the {source!r} source on {yq_verdict.airline} "
+            f"metal were VERIFIED to include carrier-imposed surcharges "
+            f"({yq_verdict.evidence}, {yq_verdict.verified_on}), and the itinerary "
+            f"lookup names {yq_verdict.airline} by flight number for this award, so "
+            f"the API's tax figure is taken as the complete carrier-side cash cost "
+            f"and NO modelled surcharge is added on top of it. That check was one "
+            f"flight on one date; it may not hold for every route in this program."
+            + _parser_tail()
+        )
+    if yq_verdict is not None and yq_verdict.excludes:
+        if metal is not None and metal.status in (MetalStatus.KNOWN, MetalStatus.AMBIGUOUS):
+            # CASE C. Scoreability is decided by whether the band resolves for
+            # the itinerary's metal - `resolve_leg_surcharge`, not here.
+            return False, (
+                f"Seats.aero's taxes for the {source!r} source were VERIFIED to "
+                f"EXCLUDE carrier-imposed surcharges ({yq_verdict.evidence}), so "
+                f"the modelled surcharge for the metal the itinerary lookup found "
+                f"({', '.join(metal.all_carriers)}, by flight number) is ADDED to "
+                f"the API's taxes. Seats.aero names the MARKETING carrier; a "
+                f"codeshare between carriers in the award's own list cannot be "
+                f"detected." + _parser_tail()
+            )
+        # CASE D. The surcharge must be added and the metal that keys it is not
+        # known, so the cash side is unknown.
+        status = (
+            "was never looked up (no itinerary lookup ran)"
+            if metal is None
+            else f"is {metal.status.value.replace('_', ' ').upper()}"
+            + (f" ({metal.reason_code})" if metal.reason_code else "")
+        )
+        return False, (
+            f"NOT SCORED: Seats.aero's taxes for the {source!r} source were "
+            f"VERIFIED to EXCLUDE carrier-imposed surcharges "
+            f"({yq_verdict.evidence}), so a surcharge must be added - and the "
+            f"operating airline {status}, so which surcharge is not known. "
+            f"Reported as a floor plus a break-even."
+        )
+    # CASE E: unverified. Today's rule.
     return False, (
         f"NOT SCORED: Seats.aero reports a tax figure for this award, but "
         f"{program}'s carrier-imposed surcharge here is "
         f"{'a nonzero modeled band' if est.is_known else 'UNKNOWN'}, and it has "
         f"never been observed whether the API's 'total taxes' already includes "
         f"it. Adding them could double count; ignoring the surcharge would "
-        f"undercount, which is the v0 bug. Reported as a floor plus a break-even "
+        f"undercount and turn an unknown charge into a saving that is not there. "
+        f"Reported as a floor plus a break-even "
         f"instead of as a number the tool cannot defend."
+        + (f" {yq_scope_note}" if yq_scope_note else "")
+    )
+
+
+def _known_airline(metal: Optional[MetalLookup]) -> Optional[str]:
+    """The one airline a KNOWN itinerary lookup names, else None (D1)."""
+    if metal is None or metal.status is not MetalStatus.KNOWN or len(metal.carriers) != 1:
+        return None
+    return metal.carriers[0]
+
+
+def _yq_scope_note(source: str, verdicts, metal: Optional[MetalLookup]) -> str:
+    """Why a YQ check recorded for this source does not apply to this award (D1)."""
+    if not verdicts:
+        return ""
+    checked = ", ".join(f"{v.airline} ({v.verdict}, {v.evidence})" for v in verdicts)
+    if metal is None:
+        why = "was never looked up"
+    elif metal.status is MetalStatus.KNOWN and len(metal.carriers) == 1:
+        why = f"is {metal.carriers[0]} by flight number, a different airline"
+    elif metal.status is MetalStatus.KNOWN:
+        why = (
+            f"is several airlines by flight number ({', '.join(metal.carriers)}), "
+            f"not one"
+        )
+    else:
+        why = f"is {metal.status.value.replace('_', ' ').upper()}" + (
+            f" ({metal.reason_code})" if metal.reason_code else ""
+        )
+    return (
+        f"A YQ check is recorded for the {source!r} source on {checked}. It covers "
+        f"only an award whose itinerary lookup is KNOWN on that airline, and this "
+        f"award's operating airline {why}, so the check does not apply here."
+        + _parser_tail()
     )
 
 
@@ -558,6 +675,8 @@ def award_to_candidate(
     outcome: LiveLegOutcome,
     surcharges: SurchargeTable,
     snapshot_name: str = "",
+    metal: Optional[MetalLookup] = None,
+    yq_table: Optional[Dict[str, object]] = None,
 ) -> PointsCandidate:
     """
     Convert one parsed live Award into a PointsCandidate for the existing scorer.
@@ -567,8 +686,37 @@ def award_to_candidate(
     unknown (`None`). "This award is real and you cannot reach this program from
     UR" is a finding, and dropping the row would hide real availability.
     """
+    from src import yq_inclusion
+
     carriers = list(award.candidate_carriers)
-    scoreable, why = _taxes_are_the_whole_carrier_cash_figure(leg, award, surcharges)
+    # D1: a verdict applies only when the itinerary lookup is KNOWN and names the
+    # one airline the check was run on. Anything else - AMBIGUOUS, UNKNOWN, NOT
+    # LOOKED UP, or another airline - is scored exactly as with no verdict, and
+    # says why the recorded check does not reach it.
+    yq_verdict = yq_inclusion.verdict_for(
+        award.program_source_code, _known_airline(metal), yq_table
+    )
+    yq_scope_note = (
+        ""
+        if yq_verdict is not None
+        else _yq_scope_note(
+            award.program_source_code or "(no source)",
+            yq_inclusion.verdicts_for_source(award.program_source_code, yq_table),
+            metal,
+        )
+    )
+    scoreable, why = _taxes_are_the_whole_carrier_cash_figure(
+        leg, award, surcharges, yq_verdict=yq_verdict, metal=metal,
+        yq_scope_note=yq_scope_note,
+    )
+    policy_zero = bool(scoreable) and not (yq_verdict is not None and yq_verdict.includes)
+    band_from_metal = bool(
+        yq_verdict is not None
+        and yq_verdict.excludes
+        and metal is not None
+        and metal.status in (MetalStatus.KNOWN, MetalStatus.AMBIGUOUS)
+        and not policy_zero
+    )
 
     # What this function believes about the taxes. Starts as the parser's view
     # and can only get LESS certain here (see the UK duty check below).
@@ -582,6 +730,23 @@ def award_to_candidate(
         # Nothing USABLE: the figure is known to be incomplete, which is not the
         # same as "exists in a currency we cannot price".
         taxes_reported_amount = None
+    # PER-ITINERARY TAXES. Inert while their unit is unverified; once verified,
+    # an itinerary whose own figure is unknown or higher than the row's makes
+    # the award's taxes UNKNOWN, because which one you book decides the cash.
+    if taxes_known:
+        widen, trip_note = seats_trips.trip_taxes_view(
+            metal, award, float(award.cash_component),
+            below_duty=lambda a: taxes_below_owed_uk_duty(leg, a),
+        )
+        if widen:
+            taxes_known = False
+            taxes_note = trip_note
+            taxes_reported_amount = None
+        elif trip_note and metal is not None:
+            metal = dataclasses.replace(
+                metal,
+                trip_taxes_note="; ".join(p for p in (metal.trip_taxes_note, trip_note) if p),
+            )
 
     # FINDING C-2. THE PROGRAM-POLICY $0 IS A STATEMENT ABOUT THE CARRIER
     # SURCHARGE. IT SAYS NOTHING ABOUT TAXES.
@@ -626,7 +791,14 @@ def award_to_candidate(
             f"floor plus a break-even instead of as a number the tool cannot defend."
         )
 
-    if len(carriers) == 1 and scoreable:
+    if band_from_metal and not taxes_unknown:
+        # CASE C: the metal the itinerary lookup found keys the modelled band.
+        # A single carrier is known metal; several resolve together or not at
+        # all (`resolve_leg_surcharge` -> `resolve_ambiguous_metal`).
+        single = metal.status is MetalStatus.KNOWN and len(metal.carriers) == 1
+        operating = metal.carriers[0] if single else ""
+        carrier_source = METAL_PROVENANCE_TRIPS
+    elif len(carriers) == 1 and scoreable:
         operating, carrier_source = carriers[0], "seats_aero"
     elif len(carriers) == 1:
         operating, carrier_source = carriers[0], LIVE_UNRESOLVED_CARRIER_SOURCE
@@ -659,6 +831,13 @@ def award_to_candidate(
     snapshot = f", snapshot {snapshot_name}" if snapshot_name else ""
 
     taxes_are_the_surcharge = bool(scoreable and taxes_known)
+    if not taxes_are_the_surcharge:
+        whole_because = ""
+    elif policy_zero:
+        whole_because = "program_policy"
+    else:
+        whole_because = f"yq_included_verified:{yq_verdict.evidence}"
+    metal_note = _metal_band_note(leg, award, surcharges, metal, yq_verdict, policy_zero)
     program_missing = not (award.program or "").strip()
     label_program = award.program or "(program NOT NAMED by the response)"
 
@@ -699,6 +878,64 @@ def award_to_candidate(
         carrier_source=carrier_source,
         cabin=award.award_type,
         is_round_trip=False,
+        metal=metal,
+        availability_id=str((award.raw_diagnostics or {}).get("availability_id") or ""),
+        program_source_code=award.program_source_code,
+        row_carriers=list(award.candidate_carriers),
+        observed_taxes_whole_because=whole_because,
+        metal_surcharge_note=metal_note,
+    )
+
+
+def _parser_tail() -> str:
+    """ " <trips parser label>" while the parser is unverified, else "" (R2-7)."""
+    from src import seats_trips
+
+    label = seats_trips.trips_parser_label()
+    return f" {label}" if label else ""
+
+
+def _metal_band_note(leg, award, surcharges, metal, yq_verdict, policy_zero) -> str:
+    """
+    The modelled surcharge for the metal the lookup found, when it is NOT
+    ADDED because nobody has verified what Seats.aero's taxes contain.
+
+    Disclosure only. Empty when there is no known metal, when the program's
+    policy is a $0 surcharge, or when a verdict exists (then the band is either
+    added - excludes_yq - or irrelevant - includes_yq).
+    """
+    if metal is None or metal.status not in (MetalStatus.KNOWN, MetalStatus.AMBIGUOUS):
+        return ""
+    if policy_zero or yq_verdict is not None:
+        return ""
+    from src import regions
+
+    try:
+        region = regions.classify(leg.origin, leg.destination)
+        country = regions.departure_country(leg.origin)
+    except Exception:  # noqa: BLE001 - an unknown airport means no band, stated below
+        region, country = award.route_region or "", ""
+    est = surcharges.resolve_ambiguous_metal(
+        award.program, list(metal.all_carriers), region or "", award.award_type,
+        country or "", is_round_trip=False,
+    )
+    carriers = ", ".join(metal.all_carriers)
+    source = award.program_source_code or "(no source)"
+    # The metal named here came from the trips parser, so the line carries its
+    # label while the parser is unverified (Re-test 2, R2-7).
+    tail = _parser_tail()
+    if not est.is_known:
+        return (
+            f"modelled carrier surcharge for {carriers} metal under {award.program}: "
+            f"NONE MODELLED - the table does not resolve it for this metal. Nothing "
+            f"is added either way.{tail}"
+        )
+    return (
+        f"modelled carrier surcharge for {carriers} metal under {award.program}: "
+        f"{est.render()} one-way - NOT ADDED: whether Seats.aero's taxes for "
+        f"{source!r} already include it is UNVERIFIED (data/yq_inclusion.csv has "
+        f"no row for {source!r} on {carriers} metal), so adding it could double "
+        f"count.{tail}"
     )
 
 
@@ -755,6 +992,15 @@ def apply_live(
     """
     surcharges = opts.surcharges or default_table()
     outcomes: List[LiveLegOutcome] = []
+    # PHASE 1 collects (leg, outcome, awards); PHASE 2 looks up metal once every
+    # search has finished, so an itinerary lookup can never spend budget a
+    # search needed; PHASE 3 records each leg exactly as before, with the metal
+    # attached. `_record` reads nothing `query_leg` does not write, so moving it
+    # after the loop changes no leg's result - the unchanged suite is the proof.
+    queried: List[Tuple[Leg, LiveLegOutcome, List[Award]]] = []
+    engaged = opts.trips_mode is not None
+    spends = bool(getattr(client, "spends_api_budget", True)) and client is not None
+    budget_at_start = SeatsClient._budget_remaining() if (engaged and spends) else None
 
     flight_legs = [leg for leg in fixture.legs if leg.kind == "flight"]
     remaining_flight_legs = len(flight_legs)
@@ -763,7 +1009,7 @@ def apply_live(
     for leg in fixture.legs:
         if leg.kind != "flight":
             outcome, awards = query_leg(leg, client, opts)
-            _record(leg, outcome, awards, opts, surcharges)
+            queried.append((leg, outcome, awards))
             outcomes.append(outcome)
             continue
 
@@ -803,15 +1049,376 @@ def apply_live(
                     f"request was made for it."
                 ),
             )
-            _record(leg, outcome, [], opts, surcharges)
+            queried.append((leg, outcome, []))
             outcomes.append(outcome)
             continue
 
         outcome, awards = query_leg(leg, client, opts)
-        _record(leg, outcome, awards, opts, surcharges)
+        queried.append((leg, outcome, awards))
         outcomes.append(outcome)
 
+    metal_by_award: Optional[Dict[int, MetalLookup]] = None
+    if engaged:
+        budget_after_search = (
+            SeatsClient._budget_remaining() if budget_at_start is not None else None
+        )
+        metal_by_award, report = metal_pass(queried, client, opts, surcharges)
+        if budget_at_start is not None:
+            report.search_calls = budget_at_start - budget_after_search
+            report.trips_calls = budget_after_search - SeatsClient._budget_remaining()
+        opts.metal_report = report
+
+    if opts.yq_table is None:
+        from src import yq_inclusion
+
+        opts.yq_table = yq_inclusion.load()
+    for leg, outcome, awards in queried:
+        _record(leg, outcome, awards, opts, surcharges, metal_by_award)
+
     return fixture, outcomes
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: the operating-airline lookup
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MetalPassReport:
+    """What the metal pass did on this run. For the banner; never scored."""
+
+    mode: str = ""
+    cap: int = DEFAULT_TRIPS_CAP
+    replay: bool = False
+    candidates: int = 0
+    requests_sent: int = 0
+    served_from_cache: int = 0
+    replayed: int = 0
+    by_status: Dict[str, int] = field(default_factory=dict)
+    not_looked_up_missing: int = 0
+    rate_limited: bool = False
+    # (availability id, parser version) for replayed trips snapshots read under
+    # a different trips parser than this one.
+    reparsed: List[Tuple[str, str]] = field(default_factory=list)
+    # Seats.aero calls this run spent, split. None when nothing spends budget
+    # (a replay) - never 0 by default, which would read as "measured: none".
+    search_calls: Optional[int] = None
+    trips_calls: Optional[int] = None
+
+
+def _metal_domain(award: Award) -> Dict[str, Any]:
+    carriers = tuple(award.candidate_carriers or ())
+    return {"possible_carriers": carriers} if carriers else {"domain_unbounded": True}
+
+
+def _not_looked_up(award: Award, code: str, detail: str) -> MetalLookup:
+    return MetalLookup(
+        status=MetalStatus.NOT_LOOKED_UP,
+        availability_id=str((award.raw_diagnostics or {}).get("availability_id") or ""),
+        reason_code=code,
+        detail=detail,
+        row_carriers=tuple(award.candidate_carriers or ()),
+        **_metal_domain(award),
+    )
+
+
+def _why_not_looked_up(
+    award: Award, surcharges: SurchargeTable, mode: str, leg: Optional[Leg] = None
+) -> Optional[Tuple[str, str]]:
+    """
+    (reason code, detail) when this award is not looked up in this mode, else
+    None. `auto` looks up only an award whose cash side can depend on the metal:
+    a DIRECT UR partner's, whose carrier surcharge is not a program-wide $0.
+    """
+    if mode == "all":
+        return None
+    if award.ur_transferable is not True:
+        return (
+            "NOT_DIRECT_PARTNER",
+            award.program or award.program_source_code or "this award's program",
+        )
+    est = surcharges.resolve(
+        award.program,
+        "",
+        award.route_region or "",
+        award.award_type,
+        "",
+        is_round_trip=False,
+        carrier_is_known=False,
+    )
+    if est.is_known and est.amount_high == 0.0:
+        return ("NOT_NEEDED_POLICY", award.program)
+    from src.seats_client import TAXES_UNREPORTED_SOURCES
+
+    if str(award.program_source_code or "").strip().lower() in TAXES_UNREPORTED_SOURCES:
+        # Seats.aero reports no taxes for this source, so its awards' taxes are
+        # never believed and no YQ verdict can exist for it (the loader refuses
+        # the row): no lookup can move its number. The same reasoning as the
+        # party skip (Manager review, should-fix 1).
+        return ("NOT_NEEDED_TAXES_UNREPORTED", award.program_source_code)
+    travelers = int(getattr(leg, "travelers", 1) or 1) if leg is not None else 1
+    if travelers > 1:
+        # A leg for 2+ travellers is never scored on points (party pricing is
+        # not modelled), so a lookup there buys a line nothing can use.
+        return ("NOT_NEEDED_PARTY", str(travelers))
+    if mode == "off":
+        return ("TRIPS_OFF", "--trips off")
+    return None
+
+
+def _partition_awards(leg: Leg, awards: List[Award]):
+    """(on_date, promoted, off_date) - THE DATE RULE, written once."""
+    cash_by_date = _cash_dates(leg)
+    on_date: List[Award] = []
+    promoted: List[Award] = []
+    off_date: List[Award] = []
+    for award in awards:
+        if award.date == leg.date:
+            on_date.append(award)
+        elif award.date in cash_by_date:
+            promoted.append(award)
+        else:
+            off_date.append(award)
+    return on_date, promoted, off_date
+
+
+def metal_pass(
+    queried: List[Tuple[Leg, LiveLegOutcome, List[Award]]],
+    client,
+    opts: LiveOptions,
+    surcharges: SurchargeTable,
+) -> Tuple[Dict[int, MetalLookup], MetalPassReport]:
+    """
+    One MetalLookup per LIVE CANDIDATE (on-date or promoted), keyed by id(award).
+
+    NEVER RAISES, like `query_leg`. Every candidate gets a lookup, and every
+    lookup that did not establish metal says which of the named ways it failed,
+    with the award's possible carriers. Lookups are deduplicated by availability
+    id: one row carries four cabins and one response carries them all.
+    """
+    mode = opts.trips_mode or "auto"
+    replay = bool(getattr(client, "trips_replay", False))
+    report = MetalPassReport(mode=mode, cap=opts.trips_cap, replay=replay)
+    has_trips = client is not None and callable(getattr(client, "trips_raw", None))
+    fetched: Dict[str, Any] = {}
+    parsed_cache: Dict[Tuple[str, str, str], Any] = {}
+    out: Dict[int, MetalLookup] = {}
+    state = {"sent": 0, "rate_limited_by": ""}
+    # A 429 on a SEARCH in phase 1 is the same rate limit: no trips request is
+    # sent after it either.
+    if getattr(client, "saw_http_429", False) is True:
+        state["rate_limited_by"] = "a search earlier in this run"
+    spends = client is not None and bool(getattr(client, "spends_api_budget", True))
+
+    def peek(aid: str):
+        """A disk-cache answer, which costs no call. None when there is none."""
+        cached = getattr(client, "cached_trips", None)
+        if replay or opts.refresh or opts.cache is None or not callable(cached):
+            return None
+        try:
+            return cached(aid, opts.cache, opts.cache_ttl)
+        except Exception:  # noqa: BLE001 - a peek never decides anything by raising
+            return None
+
+    def fetch(leg: Leg, award: Award, aid: str):
+        if aid in fetched:
+            return fetched[aid]
+        before = SeatsClient._budget_remaining() if spends else None
+        try:
+            entry = client.trips_raw(
+                aid,
+                cache=opts.cache,
+                cache_ttl=opts.cache_ttl,
+                refresh=opts.refresh,
+                leg_id=leg.id,
+                trip_id=opts.trip_id,
+                award_date=str(award.date),
+                route=str(award.route or "").replace("-", "->", 1),
+            )
+            if getattr(entry, "request_sent", False):
+                state["sent"] += 1
+        except TripsLookupError as e:
+            entry = e
+            if e.request_sent:
+                state["sent"] += 1
+            if e.code == "HTTP_429" and not state["rate_limited_by"]:
+                state["rate_limited_by"] = f"availability {aid}"
+        except Exception as e:  # noqa: BLE001 - the metal pass never raises
+            entry = e
+            # The transport counts a call BEFORE it sends. If the shared counter
+            # moved, a request may have left, so it counts against the cap too.
+            if before is not None and SeatsClient._budget_remaining() < before:
+                state["sent"] += 1
+        fetched[aid] = entry
+        return entry
+
+    def from_entry(award: Award, aid: str, entry) -> MetalLookup:
+        base = dict(
+            availability_id=aid,
+            row_carriers=tuple(award.candidate_carriers or ()),
+            **_metal_domain(award),
+        )
+        if isinstance(entry, TripsLookupError):
+            code = entry.code
+            if code in METAL_REASONS[MetalStatus.NOT_LOOKED_UP]:
+                return MetalLookup(
+                    status=MetalStatus.NOT_LOOKED_UP, reason_code=code,
+                    detail=str(entry), **base,
+                )
+            if code in METAL_REASONS[MetalStatus.NOT_RECORDED]:
+                return MetalLookup(
+                    status=MetalStatus.NOT_RECORDED, reason_code=code,
+                    detail=str(entry), on_replay=True, **base,
+                )
+            if code in METAL_REASONS[MetalStatus.UNKNOWN]:
+                return MetalLookup(
+                    status=MetalStatus.UNKNOWN, reason_code=code,
+                    detail=str(entry), on_replay=replay, **base,
+                )
+            return MetalLookup(
+                status=MetalStatus.UNKNOWN, reason_code="UNEXPECTED_ERROR",
+                detail=f"unrecognised lookup code {code!r}: {entry}",
+                on_replay=replay, **base,
+            )
+        if isinstance(entry, Exception):
+            return MetalLookup(
+                status=MetalStatus.UNKNOWN, reason_code="UNEXPECTED_ERROR",
+                detail=f"{type(entry).__name__}: {entry}", on_replay=replay, **base,
+            )
+        facts = seats_trips.AwardFacts.from_award(award)
+        pkey = (aid, facts.origin, facts.destination)
+        if pkey not in parsed_cache:
+            parsed_cache[pkey] = seats_trips.parse_trips_payload(
+                entry.payload, aid, (facts.origin, facts.destination)
+            )
+            _annotate_trips_row(opts, entry, parsed_cache[pkey])
+            # WAY (9): the transport unioned the coverage it STORED with the one
+            # it recomputed from the bytes. Honour that union here, so a record
+            # that says the list was cut short can never read as whole.
+            parsed = parsed_cache[pkey]
+            if getattr(entry, "incomplete", False) and not parsed.incomplete:
+                parsed.incomplete = True
+                parsed.incomplete_reason = (
+                    str(getattr(entry, "incomplete_reason", "") or "")
+                    or "the stored response is recorded as INCOMPLETE"
+                )
+        lookup = seats_trips.match_award(parsed_cache[pkey], facts)
+        return dataclasses.replace(
+            lookup,
+            served_from_cache=bool(entry.served_from_cache),
+            fetched_at=entry.fetched_at,
+            on_replay=replay,
+            replayed_from_snapshot=bool(getattr(entry, "replayed_from_snapshot", False)),
+            snapshot_name=str(
+                entry.snapshot_name or "" if getattr(entry, "replayed_from_snapshot", False) else ""
+            ),
+            snapshot_content_hash=str(getattr(entry, "snapshot_content_hash", "") or ""),
+            snapshot_parser_version=str(getattr(entry, "snapshot_parser_version", "") or ""),
+        )
+
+    def one(leg: Leg, award: Award) -> MetalLookup:
+        aid = str((award.raw_diagnostics or {}).get("availability_id") or "")
+        why = _why_not_looked_up(award, surcharges, mode, leg)
+        if replay:
+            # A recorded lookup is used WHATEVER the qualification: it is
+            # evidence the live run had.
+            if has_trips and seats_trips.valid_availability_id(aid):
+                entry = fetch(leg, award, aid)
+                if not (
+                    isinstance(entry, TripsLookupError) and entry.code == "NO_TRIPS_SNAPSHOT"
+                ) or not why:
+                    return from_entry(award, aid, entry)
+            if why:
+                return _not_looked_up(award, *why)
+        elif why:
+            return _not_looked_up(award, *why)
+        if not aid:
+            return _not_looked_up(
+                award, "NO_AVAILABILITY_ID",
+                f"{award.program or 'this award'} {award.award_type} on {award.date}",
+            )
+        if not seats_trips.valid_availability_id(aid):
+            return _not_looked_up(award, "AVAILABILITY_ID_INVALID", repr(aid)[:80])
+        if not has_trips:
+            return _not_looked_up(
+                award, "TRANSPORT_HAS_NO_TRIPS", type(client).__name__
+            )
+        if aid not in fetched:
+            blocked = None
+            if state["rate_limited_by"]:
+                blocked = ("RATE_LIMITED_EARLIER", f"HTTP 429 on {state['rate_limited_by']}")
+            elif not replay and state["sent"] >= opts.trips_cap:
+                blocked = ("CAP_REACHED", str(opts.trips_cap))
+            if blocked:
+                # Nothing more may be SENT - but an answer already on disk costs
+                # no call, so it is read rather than reported as not looked up.
+                hit = peek(aid)
+                if hit is None:
+                    return _not_looked_up(award, *blocked)
+                fetched[aid] = hit
+        return from_entry(award, aid, fetch(leg, award, aid))
+
+    for leg, outcome, awards in queried:
+        if leg.kind != "flight" or not awards:
+            continue
+        on_date, promoted, _ = _partition_awards(leg, awards)
+        for award in on_date + promoted:
+            try:
+                lookup = one(leg, award)
+            except Exception as e:  # noqa: BLE001 - the metal pass never raises
+                lookup = MetalLookup(
+                    status=MetalStatus.UNKNOWN,
+                    availability_id=str((award.raw_diagnostics or {}).get("availability_id") or ""),
+                    reason_code="UNEXPECTED_ERROR",
+                    detail=f"{type(e).__name__}: {e}",
+                    row_carriers=tuple(award.candidate_carriers or ()),
+                    on_replay=replay,
+                    **_metal_domain(award),
+                )
+            out[id(award)] = lookup
+            report.candidates += 1
+            report.by_status[lookup.status.value] = (
+                report.by_status.get(lookup.status.value, 0) + 1
+            )
+            if lookup.is_missing_lookup:
+                report.not_looked_up_missing += 1
+
+    for aid, entry in fetched.items():
+        if isinstance(entry, Exception):
+            continue
+        if entry.served_from_cache:
+            report.served_from_cache += 1
+        if getattr(entry, "replayed_from_snapshot", False):
+            report.replayed += 1
+            version = str(getattr(entry, "snapshot_parser_version", "") or "")
+            if version != seats_trips.TRIPS_PARSER_VERSION:
+                report.reparsed.append((aid, version or "unknown"))
+    report.requests_sent = state["sent"]
+    report.rate_limited = bool(state["rate_limited_by"])
+    return out, report
+
+
+def _annotate_trips_row(opts: LiveOptions, entry, parsed) -> None:
+    """Fill the trips manifest row this fetch wrote, now that it is parsed."""
+    cache = getattr(opts, "cache", None)
+    name = getattr(entry, "snapshot_name", None)
+    if cache is None or not name or entry.served_from_cache:
+        return
+    if getattr(entry, "replayed_from_snapshot", False):
+        return
+    trips_cache = cache.for_trips() if hasattr(cache, "for_trips") else None
+    if trips_cache is None or trips_cache.snapshot_dir is None:
+        return
+    try:
+        trips_cache.annotate_manifest(
+            name, parsed.manifest_state, len(parsed.readable),
+            manifest_key=getattr(entry, "manifest_key", "") or "",
+        )
+    except OSError as e:
+        cache.warnings.append(
+            f"COULD NOT ANNOTATE the trips manifest row for {name} "
+            f"({type(e).__name__}: {e})."
+        )
 
 
 def _record(
@@ -820,6 +1427,7 @@ def _record(
     awards: List[Award],
     opts: LiveOptions,
     surcharges: SurchargeTable,
+    metal_by_award: Optional[Dict[int, MetalLookup]] = None,
 ) -> None:
     """
     Attach one leg's live result to the leg. Sets provenance on EVERY leg.
@@ -847,20 +1455,8 @@ def _record(
         )
         return
 
-    cash_by_date = _cash_dates(leg)
-    on_date: List[Award] = []
-    promoted: List[Award] = []
-    findings: List[FlexibleFinding] = []
-
-    for award in awards:
-        if award.date == leg.date:
-            on_date.append(award)
-        elif award.date in cash_by_date:
-            promoted.append(award)
-        else:
-            findings.append(_finding(leg, award))
-
-    leg.flexible_date_findings = findings
+    on_date, promoted, off_date = _partition_awards(leg, awards)
+    leg.flexible_date_findings = [_finding(leg, award) for award in off_date]
 
     usable = on_date + promoted
     if promoted:
@@ -887,6 +1483,8 @@ def _record(
         award_to_candidate(
             leg, a, outcome, surcharges,
             snapshot_name=(outcome.snapshot_path.name if outcome.snapshot_path else ""),
+            metal=(metal_by_award or {}).get(id(a)),
+            yq_table=opts.yq_table,
         )
         for a in usable
     ]

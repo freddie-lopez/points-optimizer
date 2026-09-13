@@ -1,0 +1,113 @@
+# scenario G2: Trip A offline
+# argv: --trip-fixture trip_a_mry_nyc.json --offline --balance UR=160000 --card Chase Sapphire Preferred --transfer-date 2026-09-15
+# exit: 0
+
+TRIP A - Monterey to New York, Jan 15-18 2027
+Round trip, economy. Real cash prices captured by Tsuki on 2026-09-07 for January 2027.
+Source: Google Flights + Marriott.com, captured 2026-09-07 by Tsuki. Transcribed verbatim.
+
+Wallet (supplied at runtime - nothing is assumed)
+  UR: 160,000   valued at 1.00 cents/point
+  cards: Chase Sapphire Preferred
+
+Transfer date: 2026-09-15 (ratios and bonuses are looked up on THIS date, not on the travel date - the ratio that applies is the one in force when you transfer)
+
+==============================================================================
+FX rates used (table as of 2026-09-08):
+  1 EUR = 1.1620 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-07 (4 days old)   [BOOKING-SITE IMPLIED: back-derived from the Novotel Madrid dual-currency quote ($747.81 / EUR643.57 = 
+1.1620). One booking page on one date - NOT a market rate.]
+  1 GBP = 1.3540 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-08 (3 days old)   [SOURCED on 2026-09-08. Replaces the 1.2700 placeholder, which had no source and understated the London 
+hotel by about $42. A sourced rate still goes stale - confirm before trusting.]
+  1 CAD = 0.7256 USD [CONFIRM BEFORE TRUSTING]   sourced 2026-09-08 (3 days old)   [SOURCED on 2026-09-08. Added so the captured CAD 44.60 tax on the real SFO-MAD Aeroplan award can be 
+scored instead of carried as an unknown. Confirm before trusting.]
+  !! FX RATES REQUIRE CONFIRMATION. EUR is back-derived from a single hotel quote; GBP and CAD were looked up on a date and go stale. Every foreign-currency total below inherits that 
+uncertainty.
+  !! Supply a rate with --fx GBP=1.36 to take responsibility for it and clear the marker.
+==============================================================================
+
+Valuation: cash is scored at 1.00 cents per point ($1.00 cash = 100 points-equivalent). Points and cash are ranked on this single yardstick.
+
+Data problems flagged, NOT silently fixed
+  - Trip A and Trip B both start Jan 15 2027. They appear to be ALTERNATIVES, not one itinerary. Scored separately; totals are NOT combined.
+  - Flights are priced for 1 adult. The hotel is priced for 2 guests. This inconsistency is reported, not silently corrected - nothing is doubled.
+
+                                                                               Per-leg: cash vs points                                                                                
+┏━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃     ┃                    ┃ Cheapest ┃ Cash as pts ┃                            ┃          ┃           ┃ Surch.  ┃      Score ┃   Score ┃ Provenance      ┃                         ┃
+┃ Leg ┃ What               ┃     cash ┃     (@1cpp) ┃ Best points path           ┃   Points ┃ Surcharge ┃ source  ┃     points ┃    cash ┃ points | cash   ┃ Verdict                 ┃
+┡━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ A1  │ MRY-JFK round trip │  $367.00 │      36,700 │ JetBlue TrueBlue @ 1:1     │   43,000 │   UNKNOWN │ unknown │ >= $430.00 │ $367.00 │ badge | unknown │ PAY CASH                │
+│ A2  │ Marriott NYC       │  $833.26 │      83,326 │ Marriott Bonvoy (no price) │ <83,326? │         - │ -       │          - │ $833.26 │ none | unknown  │ PAY CASH (pts unpriced) │
+└─────┴────────────────────┴──────────┴─────────────┴────────────────────────────┴──────────┴───────────┴─────────┴────────────┴─────────┴─────────────────┴─────────────────────────┘
+
+Per-leg detail
+
+A1 - MRY-JFK round trip, Jan 15-18 2027, economy, 1 adult
+  Verdict: CASH - Cash is cheaper: $367.00 vs at least $430.00 on points at 1.0cpp. The carrier-imposed surcharge is UNKNOWN, but it can only ADD to the points side, so cash wins whatever it
+turns out to be. Do NOT burn points here.
+  Cash: $367 American (SkyWest/American Eagle) MRY-JFK, 1 stop PHX 2h59, 6:00am-7:00pm, 10h
+  Points: JetBlue SFO-JFK nonstop (badge 21.3k pts one-way, x2 for round trip)
+        UR 43,000 -> JetBlue TrueBlue 43,000 @ 1:1 [Chase Sapphire Preferred]
+        spend: 43,000 UR
+        stranded: 400 (within the unavoidable transfer increment)
+        metal: B6 (source: captured), cabin Y
+  Surcharge: UNKNOWN - this is NOT $0.
+        Break-even: points beat cash only if the surcharge is below $0.00.
+        Cannot model a surcharge for 'JetBlue SFO-JFK nonstop (badge 21.3k pts one-way, x2 for round trip)'. No surcharge rule for JetBlue TrueBlue on B6 metal, NA-NA Y departing US. This is
+NOT zero - the figure is simply not known.
+  note: Google Flights headline: 'Cheapest from $367'.
+  note: Listed cash prices are ROUND TRIP. The points badges are labelled '(one-way)'.
+  note: American AAdvantage (the two $367 options) is NOT a Chase UR transfer partner.
+  note: Alaska Mileage Plan (the $389 option) is NOT a Chase UR transfer partner.
+  note: Only the JetBlue option maps to a UR partner (TrueBlue), and it is also the most expensive cash fare.
+  FLAG: INFERENCE: round-trip points cost is modelled as 2x the one-way badge. Google showed only a one-way badge; the return leg's award price was not captured and may differ.
+  FLAG: Two options depart SFO, not MRY. Positioning Monterey->SFO is not priced anywhere in this data.
+  FLAG: Region classified on SFO-JFK, the route actually priced. The leg is named MRY-JFK but the priced option departs SFO.
+  UNVERIFIED: Points price for JetBlue SFO-JFK nonstop (badge 21.3k pts one-way, x2 for round trip) is UNVERIFIED (google_badge_unverified). Google Flights '21.3k pts (one-way)' badge, 
+doubled for round trip. Google badges often reflect dynamic revenue pricing, NOT partner saver award space. Not confirmed against Seats.aero. Metal is unambiguous (JetBlue nonstop, JetBlue's
+own aeroplane), but no surcharge row exists for JetBlue TrueBlue, so the surcharge resolves to UNKNOWN rather than to $0.
+  UNVERIFIED: Program attribution for JetBlue SFO-JFK nonstop (badge 21.3k pts one-way, x2 for round trip) -> JetBlue TrueBlue is an ASSUMPTION; the source did not name the program.
+  UNVERIFIED: JetBlue SFO-JFK nonstop (badge 21.3k pts one-way, x2 for round trip): the carrier-imposed surcharge is UNKNOWN, so this points option CANNOT be scored against cash. It is NOT 
+$0. Points beat cash only if the surcharge is below $0.00.
+
+A2 - Marriott NYC, Jan 15-18 2027, 3 nights, 1 room 2 guests, Traditional King city view, 'Long Term Stay rate'
+  Verdict: CASH (POINTS UNPRICED) - Marriott Bonvoy IS a UR partner, but no award price was captured, so the points option cannot be scored. Points would win below 83,326 points.
+  Cash: Traditional King city view, Long Term Stay rate, 3 nights ($597.00 room + $236.26 est. taxes/fees)
+        ! Plus a daily destination fee charged at check-in, amount not captured, not payable with points.
+  note: Room 3 nights $597.00 + estimated taxes/fees $236.26 = $833.26 total.
+  note: A daily destination fee is charged at check-in and CANNOT be paid with points. It is owed on a points stay too.
+  note: Marriott Bonvoy IS a Chase UR transfer partner at 1:1.
+  FLAG: NO Marriott Bonvoy award price was captured. The points option therefore cannot be scored - only a break-even is reported.
+  FLAG: The daily destination fee amount was not captured, so no total including it can be computed.
+  FLAG: The destination fee is NOT modelled as a MandatoryFee because its AMOUNT was never captured. Inventing a figure to make the model look complete is exactly what this tool must not do.
+It remains a note.
+  UNVERIFIED: No award price was captured for Marriott Bonvoy. Break-even is 83,326 points: below that, points beat cash; above it, pay cash. NOT scored - input missing.
+
+                                                               TRIP A - Monterey to New York, Jan 15-18 2027: totals both ways                                                                
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┓
+┃ Measure                                                                                                                                                                 ┃            Value ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━┩
+│ Pay cash for everything                                                                                                                                                 │        $1,200.26 │
+│ Optimizer's recommendation                                                                                                                                              │        $1,200.26 │
+│ Saving                                                                                                                                                                  │            $0.00 │
+│ Optimizer beats paying cash by                                                                                                                                          │   0.00%  (badge) │
+│   margin provenance                                                                                                                                                     │            badge │
+│   NO leg was scored against live availability. Every points price here is a Google Flights badge, of which exactly one has ever been corroborated. This is not a live   │ 0 of 1 legs live │
+│ margin.                                                                                                                                                                 │                  │
+│ Points spent                                                                                                                                                            │                0 │
+│ Cash still owed                                                                                                                                                         │        $1,200.26 │
+│ Legs where points win                                                                                                                                                   │                0 │
+│ Legs with NO UR path at all                                                                                                                                             │                0 │
+│ Legs where a UR partner exists but no                                                                                                                                   │                1 │
+│ award price was captured                                                                                                                                                │                  │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴──────────────────┘
+
+NO leg was scored against live availability. Every points price here is a Google Flights badge, of which exactly one has ever been corroborated. This is not a live margin.
+
+ Residue: what is left in each account afterwards 
+┏━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━┳━━━━━━┓
+┃ Currency ┃ Starting ┃ Spent ┃ Remaining ┃ Note ┃
+┡━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━╇━━━━━━┩
+│ UR       │  160,000 │     0 │   160,000 │      │
+└──────────┴──────────┴───────┴───────────┴──────┘
+Legs where a partner exists but no award price was captured: A2

@@ -5,6 +5,7 @@ Everything here is a named, single-source-of-truth constant. Nothing in this
 module should be duplicated as a magic number elsewhere in the codebase.
 """
 import os
+import re
 from datetime import date
 from pathlib import Path
 from typing import Dict, Optional
@@ -255,20 +256,417 @@ CASH_VALUATION_CPP: float = 0.01
 DEFAULT_VALUATION_CPP: float = CASH_VALUATION_CPP
 
 
+class UnscoreableNumber(ValueError):
+    """
+    A number this tool cannot put on its scale, named and explained.
+
+    A ValueError ON PURPOSE. `main` prints every ValueError as one red line and
+    exits 1, and the UI renders that as a refusal - so a number that cannot be
+    scored takes the path a bad date or a missing key already takes, instead of
+    arriving as an `OverflowError` traceback nobody can act on.
+    """
+
+
+# ---------------------------------------------------------------------------
+# THE BOUNDARY. Every number that comes from outside this process - a trip
+# fixture, a Seats.aero response, a snapshot, a wallet file - enters through
+# `scoreable_amount` or `scoreable_count`, and every conversion the scorer then
+# performs on it is total: it returns a number or raises UnscoreableNumber, and
+# never OverflowError.
+#
+# WHY IT IS A BOUNDARY AND NOT ANOTHER PATCH. Four rounds of this family (M-1,
+# R2-3, R3-1, R4-1/R4-2) were each one hole further along the same pipe: a field
+# was bounded, then a product of two bounded fields was not; a product was
+# bounded, then a conversion of a bounded product was not. The property that
+# actually has to hold is not "these shapes are refused" but:
+#
+#     NOTHING THAT REACHES THE OPTIMIZER CAN OVERFLOW, AND NOTHING THAT
+#     OVERFLOWS ANYWHERE REACHES THE READER AS A TRACEBACK.
+#
+# Three things hold it, and they are deliberately redundant:
+#   1. this boundary - a parsed number is finite and survives the fixture's own
+#      JSON round trip, so `inf` never enters;
+#   2. the conversions below (`cash_to_points_equivalent`,
+#      `points_to_cash_equivalent`, `convert_to_usd`) refuse instead of raising,
+#      so ANY product or conversion of accepted numbers - whatever combination
+#      of fields, rates, counts and run-time knobs produced it - is a refusal
+#      and not a crash. This is the one that closes the family: it does not
+#      depend on anybody having enumerated the multiplications;
+#   3. `main` and the UI treat ArithmeticError exactly as they treat ValueError,
+#      so an overflow down some path nobody has thought of is still one line and
+#      exit 1, never a traceback or a 500.
+# ---------------------------------------------------------------------------
+
+
+def unscoreable_price_reason(amount, cpp: float = CASH_VALUATION_CPP) -> str:
+    """
+    Why this amount is not a PRICE, or "".
+
+    FINDING R5-1. `trip_builder.validate_cash` refused zero and negatives in the
+    project's own words - "Zero is not a price, it is silence, and this project
+    has confused the two before" - and the LOADER had no such rule, so a
+    hand-edited fixture carrying `0`, `-0.0`, `-50.0`, `true` or `1e-320` was
+    SCORED on the figure: `$0.00` and `Cash is cheaper: $0.00 vs at least
+    $430.00`, a boolean rendered as a dollar, a fare that prints as zero. The
+    overflow boundary made the top of the number line safe; this is the bottom
+    of it, and the bottom is where this project's own failure mode lives.
+
+    The rule lives here rather than in the builder so that BOTH surfaces get it
+    in the same words: what is refused at write is refused at load.
+
+    A price is not the same thing as an amount. A $0.00 carrier surcharge is a
+    real, meaningful figure this codebase insists on printing; a $0.00 fare is
+    silence. So `unscoreable_cash_reason` still accepts zero, and only the
+    fields that are PRICES go through this.
+    """
+    base = unscoreable_cash_reason(amount, cpp)
+    if base:
+        return base
+    value = float(amount)
+    # `1e-320` is positive and renders as $0.00. Rounding to the cent is what
+    # the reader is shown, so that is what the rule is on.
+    if round(value, 2) == 0:
+        return (
+            f"a cash price of {short_number(value)} is refused. Zero is not a "
+            f"price "
+            f"- it is silence, and this project has confused the two before. "
+            f"Omit the leg, or capture the real fare."
+        )
+    return ""
+
+
+def scoreable_amount(value, what: str, cpp: float = CASH_VALUATION_CPP) -> float:
+    """A money figure from outside, as a float this tool can score, or raise."""
+    reason = unscoreable_cash_reason(value, cpp)
+    if reason:
+        raise UnscoreableNumber(f"{what}: {reason}")
+    return float(value)
+
+
+def scoreable_price(value, what: str, cpp: float = CASH_VALUATION_CPP) -> float:
+    """A money figure that is being read AS A PRICE - a fare, a nightly rate."""
+    reason = unscoreable_price_reason(value, cpp)
+    if reason:
+        raise UnscoreableNumber(f"{what}: {reason}")
+    return float(value)
+
+
+def scoreable_points(value, what: str, cpp: float = CASH_VALUATION_CPP) -> int:
+    """
+    An award price in points, stated by a file or an API.
+
+    FINDING R5-2. A points price of `0` or `-42600` passed the count boundary
+    (both are finite and round-trip), was then dropped silently by the scorer,
+    and the leg reported "none - not a partner" - a claim about transfer
+    partnerships that nothing checked, on a leg whose own file names a program.
+    That is F-1's shape reached from another direction, so the value is refused
+    where it enters instead of being dropped where nobody can see it.
+    """
+    count = scoreable_count(value, what, cpp)
+    if count <= 0:
+        raise UnscoreableNumber(
+            f"{what}: an award price of {short_number(count)} is refused. It is "
+            f"not a price, and a silently dropped one makes the leg report "
+            f"\"none - not a partner\" - a claim about partnerships that "
+            f"nothing checked."
+        )
+    return count
+
+
+def scoreable_count(value, what: str, cpp: float = CASH_VALUATION_CPP) -> int:
+    """A whole-number field from outside, as an int this tool can score, or raise."""
+    reason = unscoreable_count_reason(value, cpp)
+    if reason:
+        raise UnscoreableNumber(f"{what}: {reason}")
+    return int(value)
+
+
+def _finite(value: float, what: str, inputs: str) -> float:
+    """`value`, or a refusal naming what was being computed from what."""
+    import math as _math
+
+    if not _math.isfinite(value):
+        raise UnscoreableNumber(
+            f"{what} is too large to score: {inputs} multiply past what a run "
+            f"can hold."
+        )
+    return value
+
+
 def cash_to_points_equivalent(cash_usd: float, cpp: float = CASH_VALUATION_CPP) -> int:
     """
     Convert a cash amount to its points-equivalent at `cpp` cents per point.
 
     At the default 1cpp: $367.00 -> 36,700 points.
+
+    Total: an amount whose quotient overflows is refused here rather than
+    reaching `int(inf)`, which raises OverflowError from inside the scorer.
     """
     if cpp <= 0:
         raise ValueError("valuation cpp must be positive")
-    return int(round(cash_usd / cpp))
+    try:
+        quotient = cash_usd / cpp
+    except OverflowError:
+        quotient = float("inf")
+    _finite(
+        quotient,
+        f"the points-equivalent of {short_number(cash_usd)}",
+        f"${short_number(cash_usd)} at {cpp * 100:.2f} cents per point",
+    )
+    return int(round(quotient))
+
+
+def short_number(value) -> str:
+    """
+    A number as a person can read it, for an error message.
+
+    FINDING R3-3. `unscoreable_count_reason` shortened `10 ** 400` to "a
+    401-digit number" and its CALLERS then wrapped the reason in `{value!r}`,
+    so the line the reader actually saw was 401 digits followed by a sentence
+    saying the number would not be printed. Shortening belongs at the point of
+    printing, which is here: every message that names a value goes through it.
+    Anything a person could read is returned unchanged, so a legal award price
+    is still printed in full.
+    """
+    text = repr(value)
+    if len(text) <= 30:
+        return text
+    if isinstance(value, int) and not isinstance(value, bool):
+        return f"a {len(str(abs(value)))}-digit number"
+    return f"{text[:24]}… ({len(text)} characters)"
+
+
+def unscoreable_cash_reason(amount, cpp: float = CASH_VALUATION_CPP) -> str:
+    """
+    Why this cash amount cannot be carried through a fixture and scored, or "".
+
+    FINDING M-1. `validate_cash` bounded NaN and infinity, and nothing bounded
+    the finite values whose POINTS-EQUIVALENT is infinite: `1e308` is a finite
+    fare, and `cash_to_points_equivalent` divides it by 0.01, overflows to
+    `inf`, and `int(inf)` raises OverflowError - a traceback from the CLI, a
+    500 from the UI, and a fixture on disk that breaks every later run over that
+    directory. The rule is mechanical rather than a made-up ceiling: an amount
+    is refused only when it cannot survive the round trip a fixture makes it
+    take (write as JSON, read back, convert at the run's valuation).
+    """
+    import json as _json
+    import math as _math
+
+    if isinstance(amount, bool):
+        # R5-1: `true` was read as $1.00. A boolean is not a dollar figure, and
+        # the count path has always said so.
+        return f"{amount!r} is not a number."
+    try:
+        value = float(amount)
+    except (TypeError, ValueError):
+        return f"{short_number(amount)} is not a number."
+    except OverflowError:
+        # An int too large to be a float at all - `float(10 ** 400)`. Reached
+        # through a money field, and it used to escape this function entirely.
+        return (
+            f"{short_number(amount)} is too large to score: it cannot even be "
+            f"held as a dollar amount, so no run could ever put it on the scale."
+        )
+    if not _math.isfinite(value):
+        return f"{short_number(amount)} is not a finite amount."
+    try:
+        if _json.loads(_json.dumps(value)) != value:
+            return (
+                f"{short_number(value)} does not survive being written to the "
+                f"fixture and read back unchanged."
+            )
+    except (ValueError, OverflowError):
+        return f"{short_number(value)} cannot be written to a fixture as JSON."
+    # R6-1. NO MONEY FIELD IN THIS MODEL IS EVER NEGATIVE - not a fare, not a
+    # carrier surcharge, not a mandatory fee. A negative one was read as a
+    # discount that is not there: `mandatory_fees.amount: -500.0` scored a leg
+    # at $-133.00 with a cash-as-points of -13,300, and fed the trip totals.
+    # R5-1 caught it on fares only, because the clause lived in the PRICE rule;
+    # it belongs here, where every money field passes.
+    if value < 0:
+        return (
+            f"a money figure of {short_number(value)} is refused. A negative "
+            f"amount is not a discount - it is a broken figure, and it would "
+            f"feed the trip totals as one."
+        )
+    if cpp <= 0:
+        return "the valuation is not positive."
+    equivalent = value / cpp
+    if not _math.isfinite(equivalent):
+        return (
+            f"{short_number(value)} is too large to score: at {cpp * 100:.2f} "
+            f"cents per point its points-equivalent overflows, so no run could "
+            f"ever compare it against points."
+        )
+    return ""
+
+
+def unscoreable_count_reason(count, cpp: float = CASH_VALUATION_CPP) -> str:
+    """
+    Why this whole-number field cannot be carried through a fixture and scored,
+    or "".
+
+    FINDING R2-3. M-1 bounded CASH and nothing else, so `{"points": 10**400}` -
+    legal JSON, and a hand-written or externally supplied fixture can carry it -
+    loaded fine and then reached `funding._score`, where `points * valuation`
+    raises `OverflowError: int too large to convert to float`: a traceback out
+    of the CLI and a 500 from the UI, which is exactly the class M-1 claimed to
+    close. The rule is the same mechanical one and for the same reason: it is
+    not a ceiling on how many points an award may cost, but a refusal to carry a
+    figure that no run could ever put on the scale with a fare.
+    """
+    import json as _json
+    import math as _math
+
+    if isinstance(count, bool):
+        return f"{count!r} is not a whole number."
+    try:
+        value = int(count)
+    except (TypeError, ValueError, OverflowError):
+        return f"{short_number(count)} is not a whole number."
+    try:
+        if _json.loads(_json.dumps(value)) != value:
+            return (
+                f"{short_number(value)} does not survive being written to the fixture "
+                f"and read back unchanged."
+            )
+    except (ValueError, OverflowError):
+        return f"{short_number(value)} cannot be written to a fixture as JSON."
+    try:
+        equivalent = value * cpp
+    except OverflowError:
+        equivalent = float("inf")
+    if not _math.isfinite(equivalent):
+        return (
+            f"{short_number(value)} is too large to score: multiplied out at "
+            f"{cpp * 100:.2f} cents per point the arithmetic overflows, so no "
+            f"run could ever put it on the scale beside a fare."
+        )
+    return ""
 
 
 def points_to_cash_equivalent(points: int, cpp: float = CASH_VALUATION_CPP) -> float:
-    """Convert points to their cash-equivalent at `cpp` cents per point."""
-    return points * cpp
+    """
+    Convert points to their cash-equivalent at `cpp` cents per point.
+
+    Total, for the same reason as its opposite: `10 ** 400 * 0.01` raises
+    OverflowError rather than returning `inf`, so the refusal has to be here.
+    """
+    try:
+        product = points * cpp
+    except OverflowError:
+        product = float("inf")
+    return _finite(
+        product,
+        f"the cash-equivalent of {short_number(points)} points",
+        f"{short_number(points)} points at {cpp * 100:.2f} cents per point",
+    )
+
+
+# ---------------------------------------------------------------------------
+# THE SAME BOUNDARY, FOR SHAPE - MAC-2
+#
+# The section above says what a NUMBER from outside may be. This one says what
+# a FILE from outside may be shaped like, for the same reason and in the same
+# place: so the answer is a rule somebody wrote down, not whatever the
+# interpreter happens to do with its stack.
+#
+# `json.loads` recurses once per level of nesting, so a deeply nested document
+# raises RecursionError - on some interpreters. The same 400-level file is
+# refused in this sandbox and READ on Tsuki's macOS Python, whose scanner gets
+# further before the limit bites, which is how the suite came to pass on one
+# machine and fail on the other. Depth is checked here instead, before anything
+# parses, by SCANNING the text: the scan uses no stack of its own, so its answer
+# is a fact about the file.
+#
+# The limits are bounds, not ceilings anyone will meet. See each loader for what
+# its own shape actually measures (`trip_loader.MAX_NESTING_DEPTH`), and for why
+# counts inside the file - legs, keys - are deliberately not limited.
+# ---------------------------------------------------------------------------
+
+MAX_JSON_NESTING_DEPTH = 32
+MAX_INPUT_FILE_BYTES = 4 * 1024 * 1024
+
+# A JSON string literal, so quoted text cannot contribute brackets to the count.
+_JSON_STRING = re.compile(r'"(?:[^"\\]|\\.)*"', re.DOTALL)
+_NOT_A_BRACKET = re.compile(r"[^\[\]{}]+")
+
+
+def json_nesting_depth(text: str) -> int:
+    """
+    The deepest level of `[`/`{` nesting in this JSON text, counted WITHOUT
+    parsing it and WITHOUT recursing.
+
+    Brackets inside string literals are not nesting, so the literals are removed
+    first; everything that is not a bracket is then dropped, and what is left is
+    short enough to walk in Python whatever the file's size. Unbalanced text is
+    not this function's problem - it returns the deepest level it saw, and the
+    parser refuses the file for its own reasons afterwards.
+    """
+    brackets = _NOT_A_BRACKET.sub("", _JSON_STRING.sub("", text))
+    depth = deepest = 0
+    for ch in brackets:
+        if ch in "[{":
+            depth += 1
+            if depth > deepest:
+                deepest = depth
+        else:
+            depth -= 1
+    return deepest
+
+
+def too_deeply_nested_reason(what: str, depth: int, limit: int = MAX_JSON_NESTING_DEPTH) -> str:
+    """The ONE sentence a too-deeply-nested file gets, on every platform,
+    whether the rule caught it or a RecursionError backstop did."""
+    return f"{what} is nested {depth} levels deep, and may be at most {limit}."
+
+
+def too_large_reason(what: str, size: int, limit: int = MAX_INPUT_FILE_BYTES) -> str:
+    """The same, for a file too large to hold in memory to read."""
+    return f"{what} is {size:,} bytes, and may be at most {limit:,}."
+
+
+def use_utf8_output() -> None:
+    """
+    Write this process's output as UTF-8, whatever the shell's locale says.
+
+    MAC-A. Python picks stdout's encoding from the locale, so under `LANG=C` it
+    is ASCII - and this tool's output is not ASCII: rich draws its tables with
+    box-drawing characters and every masked key carries U+2026. `python -m
+    src.main` therefore scored a whole trip and then died with a
+    UnicodeEncodeError partway through printing it, which is the worst of the
+    three possible outcomes: the work was done, the answer was lost, and what
+    the reader got was a traceback.
+
+    FORCED RATHER THAN REFUSED, deliberately. Refusing to run at all under a C
+    locale would take the tool away from any CI that has not set one, to protect
+    a terminal that might render a box character oddly. A terminal that cannot
+    show UTF-8 still gets every figure; a crash gives nothing. This is the one
+    thing that is decided by the machine and should not be: what the tool prints
+    is the same text everywhere, and only its rendering is the terminal's
+    business.
+
+    Called from the process entry points ONLY. Nothing in-process (the UI, the
+    tests) touches the real stdout, so nothing else's behaviour changes.
+    """
+    import sys
+
+    for stream in (sys.stdout, sys.stderr):
+        encoding = (getattr(stream, "encoding", "") or "").lower().replace("-", "")
+        if encoding in ("utf8", "utf8mb4"):
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            # Not a text stream this process owns (a pipe someone replaced, a
+            # test's StringIO). Left exactly as it is.
+            continue
+        try:
+            reconfigure(encoding="utf-8")
+        except (OSError, ValueError):
+            # Detached, closed, or already being written to. The run then
+            # behaves as it did before this function existed, which is the
+            # honest fallback: we do not have a stream to fix.
+            continue
 
 
 # ---------------------------------------------------------------------------
@@ -475,7 +873,19 @@ def convert_to_usd(amount: float, currency: str) -> float:
         raise ValueError(
             f"No FX rate configured for {cur!r}. Add it to config.FX_RATES_TO_USD."
         )
-    return amount * FX_RATES_TO_USD[cur]
+    # R4-2: the bound taken when the file was read is on the number AS STATED,
+    # and what gets scored is that number times a rate. 1.6e306 EUR passes on
+    # its own and is `inf` once converted, so the converted figure is checked
+    # here - where the conversion happens and the rate is known.
+    try:
+        product = amount * FX_RATES_TO_USD[cur]
+    except OverflowError:
+        product = float("inf")
+    return _finite(
+        product,
+        f"{short_number(amount)} {cur} in USD",
+        f"{short_number(amount)} {cur} at {FX_RATES_TO_USD[cur]}",
+    )
 
 
 def is_placeholder_rate(currency: str) -> bool:

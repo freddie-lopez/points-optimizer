@@ -1,0 +1,51 @@
+{
+  "id": "g7_never_priced_couple",
+  "name": "g7_never_priced_couple",
+  "description": "Built by --new-trip on 2026-09-11: 2 flight leg(s), 0 hotel leg(s), 1 traveller(s), cabin J (business). Leg L2 edited by hand to 2 travellers (golden scenario G7).",
+  "source": "user_entered_via_new_trip. Cash prices are what the user typed; nothing here was captured from a booking page by this tool.",
+  "trip_level_flags": [
+    "THIS FIXTURE CARRIES NO POINTS PRICES AT ALL. It was built by --new-trip, which refuses to write a points_candidates key - not an empty one, none. The only way any leg here can be scored on points is --live (real Seats.aero award space) or --from-snapshot (a committed replay of one). A hand-written points price is a badge number wearing a capture's clothes, and quoting those is the bug this whole project exists to stop. If you add a points_candidates key by hand, this sentence is no longer true of this file and should come out with it."
+  ],
+  "legs": [
+    {
+      "id": "L1",
+      "kind": "flight",
+      "description": "SFO->LHR, Jan 15 2027, one-way, business, 1 adult",
+      "date": "2027-01-15",
+      "origin": "SFO",
+      "destination": "LHR",
+      "travelers": 1,
+      "cabin": "J",
+      "cash_options": [
+        {
+          "label": "SFO->LHR Jan 15 2027, entered by the user",
+          "amount": 2400.0,
+          "currency": "USD",
+          "source": "user_entered_via_new_trip",
+          "captured_on": "2026-09-11",
+          "date": "2027-01-15"
+        }
+      ]
+    },
+    {
+      "id": "L2",
+      "kind": "flight",
+      "description": "LHR->SFO, Jan 29 2027, one-way, business, 2 adults",
+      "date": "2027-01-29",
+      "origin": "LHR",
+      "destination": "SFO",
+      "travelers": 2,
+      "cabin": "J",
+      "cash_options": [
+        {
+          "label": "LHR->SFO Jan 29 2027, entered by the user",
+          "amount": 1850.0,
+          "currency": "USD",
+          "source": "user_entered_via_new_trip",
+          "captured_on": "2026-09-11",
+          "date": "2027-01-29"
+        }
+      ]
+    }
+  ]
+}
