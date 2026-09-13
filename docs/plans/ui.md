@@ -354,30 +354,41 @@ counted in `coverage_note`.
 
 ### 4.7 Design system (the spec; implement exactly)
 
-Deliberately single-theme dark. A departure-board instrument in black and oxblood.
+Rewritten for the restyle to direction C ("Graphite"): a blue-black ground, one blue
+accent for identity and one coral accent for the single primary action. The approved
+reference is `docs/design/restyle-ref/DirectionC.dc.html` (+ `.png`); the decisions
+are in `docs/plans/ui-restyle.md`. Single-theme dark.
 
-**Tokens** (`:root` in app.css): `--ink #0A0809` page · `--coal #121011` panels/table body · `--ash #1B1718` inputs, hover rows, raised · `--seam #2B2325` 1px hairlines · `--bone #ECE4E3` primary text · `--smoke #9C8F8F` secondary/labels · `--oxblood #7A1620` primary button fill, selected-row left edge, active tab · `--ember #B4323C` focus ring, accent hover, links. Semantic (never the accent): `--win #5E9E73` · `--warn #C8923A` · `--unknown #7D7475`.
+**Tokens** (`:root` in app.css): `--bg #0F141B` page ground · `--panel #171D26` panels, table body, drawer, modal, mode cards · `--raised #1F2733` inputs, hover rows, selected rows, table header band · `--line #2A3442` every hairline · `--text #E9EDF3` primary text · `--muted #8C98A8` labels, secondary text · `--accent #7DA9FF` wordmark mark, active tab, selected trip/row, active mode card, IATA codes, links, focus ring, input focus (`--accent-ink #0B1220` text on an accent fill; `--accent-tint rgba(125,169,255,.10)` selection tint) · `--accent2 #FF8A65` the ONE primary action (`.btn-primary`: Run, Run search, Spend up to N calls, Write, Apply, Score against a fare; `--accent2-ink #1A0E08`, hover `--accent2-hover #FFA184`). Semantic (never the accent): `--warn #F0B85A` caution text, chip borders, flags (`--warn-bg #2B2314` / `--warn-line #6A5320` for warn fills) · `--win #5FD3A0` POINTS only, never a cash figure · `--unknown #8791A0` the dashed UNKNOWN border. Radius `--radius 6px` (panels, buttons, inputs, cards, modal), `--radius-chip 4px` (chips). `--glow` is a radial gradient on `body` behind the top-left of the page.
 
-**Type**: Archivo (Google Fonts `<link>`, variable wdth/wght) 400/500 for UI text; wordmark and section labels Archivo `font-stretch:125%`, 600, uppercase, `letter-spacing:.08em`. IBM Plex Mono with `font-variant-numeric: tabular-nums` for IATA codes, flight numbers, miles, dollars, dates, leg ids. Fallbacks: `-apple-system, "Helvetica Neue", Arial, sans-serif` / `ui-monospace, Menlo, monospace`. Scale 12/13/14 (base)/16/20. Radius ≤ 3px. No shadows except the drawer (`0 0 0 1px var(--seam), -12px 0 32px rgba(0,0,0,.6)`). No gradients, except the WITHHELD hatch. No emoji. No version numbers in UI copy (the project's no-changelog rule).
+**Type**: Figtree (Google Fonts `<link>`, 400/500/600) for UI text; section labels 11px 600 uppercase `letter-spacing:.06em` `--muted`; the wordmark 16px 600 sentence case with a 10px accent square before it; tabs 14px 500 sentence case. Red Hat Mono (400/500) with `font-variant-numeric: tabular-nums` for IATA codes, flight numbers, miles, dollars, dates, leg ids. Fallbacks: `-apple-system, "Helvetica Neue", Arial, sans-serif` / `ui-monospace, "SF Mono", Menlo, monospace`. Scale 12/13/14 (base)/16/20, plus 28 for the headline value only. No shadows except the drawer (`0 0 0 1px var(--line), -12px 0 32px rgba(0,0,0,.55)`). Exactly two gradients: the page glow and the WITHHELD hatch. No emoji. No version numbers in UI copy (the project's no-changelog rule).
 
-**Chips** (12px, uppercase mono, 1px border, radius 3px, padding 1px 6px). Form carries the meaning as well as colour:
+**Chips** (11px, uppercase mono, 1px border, radius 4px, padding 1px 7px). Rectangular so an edge reads as an edge and a hatch as a hatch. Form carries the meaning as well as colour:
 
 | Chip | Form | Text |
 |---|---|---|
-| POINTS | fill `rgba(94,158,115,.18)`, border and text `--win` | `POINTS` |
-| CASH | transparent, border `--smoke`, text `--bone` | the CLI label, e.g. `PAY CASH`, `PAY CASH (no path)` |
+| POINTS | fill `rgba(95,211,160,.16)`, border and text `--win` | `POINTS` |
+| CASH | transparent, border `--muted`, text `--text` | the CLI label, e.g. `PAY CASH`, `PAY CASH (no path)` |
 | CASH, qualified | as CASH + 3px left border `--warn`; the parenthesis in `--warn` | e.g. `PAY CASH (pts unpriced)`, `PAY CASH (no live pts data)`, `PAY CASH (trip out of points)` |
-| WITHHELD | border and text `--warn`, background `repeating-linear-gradient(135deg, rgba(200,146,58,.16) 0 3px, transparent 3px 7px)` | `WITHHELD (surch unknown)` / `(taxes unknown)` / `(APD unknown)`; headline `WITHHELD` |
-| UNKNOWN | `1px dashed var(--unknown)`, text `--bone` | always the literal `UNKNOWN`. Never blank, never `—`, never `$0` |
-| UNVERIFIED | small-caps tag, no border, `--warn`, 11px, `letter-spacing:.06em` | `unverified` (small caps) |
+| WITHHELD | border and text `--warn`, background `repeating-linear-gradient(135deg, rgba(240,184,90,.16) 0 3px, transparent 3px 7px)` | `WITHHELD (surch unknown)` / `(taxes unknown)` / `(APD unknown)`; headline `WITHHELD` |
+| UNKNOWN | `1px dashed var(--unknown)`, text `--text` | always the literal `UNKNOWN`. Never blank, never `—`, never `$0` |
+| UNVERIFIED | small-caps tag, no border, `--warn`, 12px, `letter-spacing:.06em` | `unverified` (small caps) |
 | !SENSITIVE / !DATE | tag in `--warn` after the verdict chip | as CLI |
-| Range | `$a – $b` mono (en dash, thin spaces); label under it, 12px `--smoke` uppercase | e.g. `award TAXES` |
-| Mode pill | LIVE: fill `--oxblood`, text `--bone`. REPLAY: border `--bone`. OFFLINE: border `--smoke`, text `--smoke`. No key: `LIVE UNAVAILABLE` border `--warn` | |
+| Range | `$a – $b` mono (en dash, thin spaces); label under it, 12px `--warn` uppercase | e.g. `award TAXES` |
+| Mode pill | 999px, 12px 500 sans, 24px tall. LIVE: fill `--accent`, text `--accent-ink`. REPLAY: border `--text`. OFFLINE: border `--muted`, text `--muted`. No key: `LIVE UNAVAILABLE` border and text `--warn` | |
+| Wallet chips | 999px, mono 12px, border `--line`; `NO WALLET` / `WALLET ERROR` in the warn-fill form (`--warn` on `--warn-bg`, `--warn-line` border) | |
+| Key chip | hidden when a key is found; `key: not found` in the warn-fill form when it is not | |
 | Exit chip | `exit 0 · OK` (neutral), `exit 3 · WITHHELD` (WITHHELD form), `exit 4 · NOT EXECUTABLE` (WITHHELD form), `exit 1 · NOTHING SCORED`, `exit 2 · WALLET ERROR` (border `--warn`) | |
 
-**Segments**: rich styles become classes through one table: `red`/`bold red` → `seg-alert` (`--warn`, 600) · `yellow`/`bold yellow` → `seg-caution` (`--warn`) · `green`/`bold green` → `seg-ok` (`--bone`) · `cyan`/`bold cyan` → `seg-replay` (`--bone`, dotted underline) · `dim` → `seg-dim` (`--smoke`) · `magenta`/`bold magenta`/none → plain. Chip-worthy cells use their `kind`, not their style.
+**Warn fills** (`banner-error`, `no-wallet`, the flags panel, refusals, the funding banner, a broken trip row): `--warn-bg` fill, 1px `--warn-line` border, radius 6px, text `--text`, and a 3px `--warn` left edge - the edge is the form, the colour the second signal.
 
-**Layout**: 36px top bar (wordmark "POINTS OPTIMIZER", mode pill, calls counter, wallet chips, key source, tabs SEARCH / TRIPS). Content max 1280px, 16px gutters. Tables: 32px rows, 6px 10px cell padding, 13px, zebra off, hover `--ash`, selected row 3px left edge `--oxblood`, sticky header on `--coal`. Drawer: right side, 460px, full height, scrolls on its own. Below 720px: tables scroll horizontally inside their own `overflow-x:auto` container, the drawer becomes a full-screen sheet, the top bar wraps to two rows. Focus: 2px `--ember` outline, offset 2px. Rows are focusable (`tabindex=0`); Enter opens, Esc closes.
+**Segments**: rich styles become classes through one table: `red`/`bold red` → `seg-alert` (`--warn`, 600) · `yellow`/`bold yellow` → `seg-caution` (`--warn`) · `green`/`bold green` → `seg-ok` (`--text`) · `cyan`/`bold cyan` → `seg-replay` (`--text`, dotted underline) · `dim` → `seg-dim` (`--muted`) · `magenta`/`bold magenta`/none → plain. Chip-worthy cells use their `kind`, not their style.
+
+**Mode selector**: three cards on the existing buttons (`flex: 1 1 200px`, `--panel` on `--line`, radius 6px, 14px 16px padding; title 13px 600 `.04em`, caption 12px `--muted`). The pressed card: `--accent` border + inset ring, `--accent-tint` fill, title in `--accent`. Disabled: opacity .55. The run strip is a column - mode cards · the key-error fold · the manifest select · a run row - and the run row is a flex row in which the REPLAY-unavailable note is the only flexible item and the buttons are `flex: none`, so a long path can never push RUN out of the strip; at 400px the note takes a line and the buttons wrap under it, right-aligned.
+
+**Trip list**: rows 12px 14px, radius 6px, no left edge; hover `--panel`; the current row `--accent-tint` with a `--line` border and its name in `--accent`. Kinds by class from app.js: `.trow-trip` plain · `.trow-search` (a search request, not a trip) 3px `--line` left rail and a quiet 400-weight `--muted` name · `.trow-broken` (cannot load) the warn-fill form. Captions (`NOT A PER-LEG TRIP`, `CANNOT LOAD`, flags) are unchanged; never dashed (dashed means UNKNOWN).
+
+**Layout**: 48px top bar (`rgba(15,20,27,.88)` + `backdrop-filter: blur(10px)` so the glow shows through and the bar stays legible when scrolled; wordmark "Points Optimizer", tabs Search / Trips, mode pill, calls counter, wallet chips, key chip). Content max 1440px, 16px gutters. Tables: 32px rows, 6px 10px cell padding, 13px, zebra off, header band `--raised` 11px uppercase `.06em`, hover `--raised`, selected row `--raised` + inset 3px `--accent`, LEG and VERDICT pinned with opaque backgrounds (`tr { background: var(--panel) }`, pinned `td { background: inherit }`). Buttons 36px (small 28px), 13px 600 sentence case, `--panel` on `--line`; inputs `--raised`, radius 6px, focus border `--accent`. Drawer: right side, 440px, sticky ≥1180px, fixed full-height sheet below, scrolls on its own. Below 720px: tables scroll horizontally inside their own `overflow-x:auto` container, the drawer becomes a full-screen sheet, the top bar wraps to two rows. Focus: 2px `--accent` outline, offset 2px. Rows are focusable (`tabindex=0`); Enter opens, Esc closes. Nothing widens the page at 400px.
 
 ### 4.8 Screen inventory
 
@@ -397,7 +408,7 @@ Every string in `code` is exact user-facing text.
 | Mode pill [`mode-pill`] | `LIVE` / `REPLAY` / `OFFLINE` = mode of the next run on the Trips tab; always `LIVE` on Search; `LIVE UNAVAILABLE` when there is no key and LIVE is selected | UI state + `/api/state.key` |
 | Calls counter [`calls-counter`] | `CALLS 5 this run · 5 since launch / 1,000` [EX-LIVE]. Offline result: `CALLS 0 this run (offline: no transport)`. Replay: `CALLS 0 this run (replay asks nothing)`. Tooltip/second line: `Seats.aero also counts your other runs today, which this tool cannot see.` | `calls.this_run`, `calls.since_launch` |
 | Wallet chips [`wallet-chip-UR`] | `UR 160,000`; null balance → `UR UNCONSTRAINED`; no wallet → `NO WALLET` (border `--warn`). Click → W panel | `/api/state.wallet` |
-| Key [`key-source`] | `key: environment` / `key: repo .env` / `key: user config` / `key: not found` (source only; never masked) | `key.source` |
+| Key [`key-source`] | `key: environment` / `key: repo .env` / `key: user config` / `key: not found` (source only; never masked). Decision (restyle): rendered only when `key.found` is false, as `key: not found` in warn form; when found the element is hidden and the run-details box carries the source. | `key.source` |
 | Tabs [`tab-search`, `tab-trips`] | `SEARCH` `TRIPS` | |
 
 #### W. Wallet panel [`wallet-panel`]
