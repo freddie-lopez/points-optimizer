@@ -2114,8 +2114,14 @@ def _reason_codes_in_source() -> frozenset:
     codes = set()
     for path in sorted(Path(__file__).resolve().parent.glob("*.py")):
         try:
-            tree = ast.parse(path.read_text())
-        except (OSError, SyntaxError):  # pragma: no cover - unreadable source
+            # MAC-2: UTF-8 by NAME. This runs at IMPORT, over this package's own
+            # source, seven files of which contain non-ASCII bytes - so with the
+            # locale's encoding (LANG=C gives ASCII) importing `src.models`
+            # raised UnicodeDecodeError and the whole package failed to import.
+            # Which bytes this tool's own source is written in is a fact about
+            # the repository, not about the shell that started it.
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError):  # pragma: no cover
             continue
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
