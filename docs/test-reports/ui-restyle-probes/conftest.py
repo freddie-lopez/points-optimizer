@@ -41,7 +41,9 @@ PY = str(ROOT / ".venv" / "bin" / "python")
 if not Path(PY).exists():
     PY = sys.executable
 CHROME = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
-SHOTS = HERE / "shots"
+# Screenshots go to a gitignored scratch dir so a run never dirties the tree;
+# the committed `shots/` is the record cited by the report.
+SHOTS = HERE / "shots-out"
 SHOTS.mkdir(exist_ok=True)
 
 CHROME_ARGS = [

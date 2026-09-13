@@ -27,3 +27,6 @@ tier1-output.txt
 # response is the SNAPSHOT under tests/fixtures/seats_aero/live_trip_b/, which
 # IS committed. See src/response_cache.py.
 data/cache/
+
+# The restyle probes screenshot every run; the committed shots/ is the record.
+docs/test-reports/ui-restyle-probes/shots-out/

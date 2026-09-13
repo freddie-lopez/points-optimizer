@@ -248,11 +248,19 @@ def test_J5_plan_compliance_greps():
 def test_J6_app_js_diff_is_exactly_the_three_enumerated_edits():
     d = git("diff", "386b2fc..HEAD", "--", "src/ui/static/app.js")
     hunks = d.count("\n@@")
-    assert hunks == 5, hunks  # key chip, trip-row kind, runrow (three hunks in renderRunStrip)
+    # 5 hunks at 7fba6e0 (key chip, trip-row kind, three in renderRunStrip);
+    # a 6th at 257960a: fix E1 (999fff3), the run-details key line - refreshed
+    # by the tester after reading that diff (own probe; in the report).
+    assert hunks == 6, hunks
     added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
     strings = set(re.findall(r'"([^"]*)"', "\n".join(added)))
     allowed = {"key-source", "", "keysrc", "key: not found", "keysrc warn", "trow-broken",
-               "trow-search", "trow-trip", "div", "span", "runrow", "runacts", "note", " ", "run-busy"}
+               "trow-search", "trow-trip", "div", "span", "runrow", "runacts", "note", " ", "run-busy",
+               # fix E1: the base's three key lines, re-split, plus the source suffix
+               "Seats.aero key: (masked key not sent to the browser)",
+               "Seats.aero key: not required (--from-snapshot replays committed bytes)",
+               "Seats.aero key: not used (offline: no transport)", "   (source: ", ")",
+               "replay", "(source: X)"}  # `run.mode === "replay"` and the comment
     assert strings <= allowed, strings - allowed
 
 

@@ -349,3 +349,43 @@ Red in the new suite after the J8 refresh, by test id: `test_r_c_colour.py::test
 `test_r_l_retest.py::test_L3b_a_disabled_card_does_not_offer_a_pointer_cursor` (9, pre-existing).
 Green: `test_r_l_retest.py` 11/12 (L1 ×2, L2 ×6, L3, L4 ×3); everything that was red for
 findings 1, 2, 6, 7, 8 is green.
+
+## Re-test: 257960a
+
+Head 257960a: fix E1 (999fff3, `src/ui/static/app.js` run-details key line), fix L3b (1143dff,
+`.seg button:disabled { cursor: not-allowed }`). Probes: `test_r_m_retest2.py` (16 tests, new).
+
+- **Finding 3 (Medium, E1) — fixed.** Attacked in four states, Trip B each time, run-details
+  opened and read from the DOM (`test_M1–M4`): OFFLINE with a key → `Seats.aero key: not used
+  (offline: no transport)   (source: environment)`; REPLAY → `Seats.aero key: not required
+  (--from-snapshot replays committed bytes)   (source: environment)`; LIVE against the stub →
+  `Seats.aero key: (masked key not sent to the browser)   (source: environment)`; OFFLINE with
+  no key → the base's line with **no** `(source:` suffix and the bar chip visible as
+  `key: not found`. Exactly one key line each; the text before the suffix is byte-identical to
+  386b2fc's three lines (`test_M4`); the fake key and its mask are nowhere in `page.content()`
+  or the transcript in any of the four (`test_M3`). `test_E1` green.
+- **Finding 9 (Low, L3b) — fixed.** `test_L3b` green: both disabled cards report
+  `cursor: not-allowed`; `test_L3` still green (opacity .8, muted title, disabled reads as
+  disabled in grayscale).
+- **Open by decision**: Finding 4 (`test_E3`, chip and LIVE card disagree for one render after
+  the key changes mid-session) and Finding 5 (`test_C5`, two coral primaries on Search with the
+  drawer open). Both still red, unchanged.
+- **My own probes, edited (housekeeping asked for by the coordinator)**: (a) screenshots now go
+  to `docs/test-reports/ui-restyle-probes/shots-out/` (gitignored) so a run no longer rewrites
+  the committed `shots/`, which stays as the record cited above — one line in `conftest.py`
+  plus `.gitignore`; (b) `test_J6` counted the app.js hunks since 386b2fc (5) and their added
+  string literals — fix E1 is a 6th hunk with the base's three key-line strings re-split and
+  the `(source: ` suffix; I read the `1f535aa..257960a` app.js diff (that one hunk is its whole
+  content) and refreshed J6's hunk count and allowed-string list with a comment. No other
+  probe or test changed.
+
+**Counts at 257960a**
+
+| Suite | Result |
+|---|---|
+| ui-restyle-probes (`-O`, `-p no:randomly`) | **284 passed, 2 failed, 10 skipped** (234 s) — red: `test_C5[search_ok]` (5), `test_E3` (4), both open by decision |
+| `tests/test_ui_static_rules.py` (`-O`) | **82 passed** |
+
+(Full suite and ui-probes were last run at 1f535aa — 3692/13 both ways, 663/0 — and the two
+commits since touch only `app.js:768-777`, one `app.css` declaration and docs; the static rules
+that cover both files are green.)
