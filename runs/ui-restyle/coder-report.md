@@ -150,3 +150,47 @@ intercept `/api/state` to stub a long `replay_reason_detail` / no key.
   one-token change if wanted.
 - The mockup re-skin copies app.css wholesale; it will drift again on the next CSS change unless
   it is generated from app.css.
+
+## Fix round 1
+
+Tester's report: `docs/test-reports/ui-restyle.md`; probes `docs/test-reports/ui-restyle-probes/`
+(neither edited). Four commits over 7fba6e0; E1, E3 and C5 left alone per the coordinator.
+
+1. **D1 (high)** — bb8ffc9. `.runstrip` gets `grid-template-columns: minmax(0, 1fr)`,
+   `.runstrip > * { min-width: 0 }` and `.runstrip details.fold { max-width: 100% }`, so the
+   key-error fold's `pre.transcript` scrolls inside its own box instead of widening the grid to
+   the engine's 133-char line. Wording untouched. `test_D1[...]` 8/8 green (the two `nokey-*-400`
+   reds included); re-screenshot at 400 with the fold open: `bodySW` 400, RUN inside the strip
+   (`docs/design/restyle-ref/shots/fix-d1-400.png`, cropped from the tester's own
+   `shots/d1-400-slash-nokey.png`).
+2. **K1 (medium)** — 86e1715. In the `@media (max-width: 720px)` block only: `.topbar-in`
+   `min-height: 40px; gap: 2px 14px; padding-block: 0 4px`; `.tab min-height: 38px`;
+   `.bar-right gap: 2px 8px`; `.calls { order: -1; flex: 1 1 100%; font-size: 11px;
+   line-height: 1.25 }` (its own two-line row, first, so the mode pill, wallet chips and key chip
+   share the row under it); pills/wallet/key chip 22px tall. Nothing dropped; DOM and tab order
+   unchanged (`order` is visual only). Bar height at 400: **96.5px** in both the no-key-after-a-run
+   and the with-key states (was 149). `test_K1[offline_b|no_key|no_wallet]` 3/3 green.
+3. **J2 (low)** — da6405d. ui.md §4.7 now says `flex: 1 1 0; min-width: 200px; max-width: 420px`.
+   `test_J2` green.
+4. **K4 (low)** — da6405d. `.seg button:disabled { opacity: .8 }` with the title in `--muted`;
+   the caption is `--muted` on the card at .8 = **4.18:1** (computed by the probe; was 2.69).
+   Not dashed (dashed means UNKNOWN). `test_K4` green.
+5. **D5 (low)** — 94ebb0c. `@media (max-width: 1180px)` → `@media (max-width: 1179.98px)`: the
+   drawer is docked at exactly 1180, as ui.md §4.7/§5 and the brief say. `test_D5[1179|1180|1200|
+   1280|1440]` and `test_D6` green.
+
+Runs after the fixes:
+- `tests/test_ui_static_rules.py`: 82 passed.
+- Full suite `-O`: **3692 passed, 13 skipped** (127 s).
+- Tester's suite (`-O`, `-p no:randomly`): **253 passed, 4 failed, 10 skipped** (196 s; was
+  256/11/10). Green now: the 8 reds for D1 (2), K1 (3), D5 (1), J2 (1), K4 (1). Still red,
+  untouched by instruction:
+  `test_E1`, `test_E3`, `test_C5`. **One test moved red that was green: `test_J8_undisclosed_css_changes_the_coder_did_not_list`.**
+  It pins the exact list of rules removed since 386b2fc (`[".seg button:last-child"]`) by parsing
+  the diff; the D5 fix necessarily rewrites the `@media (max-width: 1180px) {` line, which the
+  probe reads as a removed rule (`['.seg button:last-child', '@media (max-width: 1180px)']`).
+  The probe is informational ("each one is checked by hand"); the coordinator asked for D5 to be
+  fixed in the media query, so the two cannot both hold. Not edited; the tester should refresh
+  that needle (or the manager can choose the docs-only route for D5, which would put J8 back and
+  D5[1180] red again).
+- ui-probes (`-O`, `-p no:randomly`): **663 passed, 0 failed** (487 s).
