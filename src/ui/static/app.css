@@ -114,7 +114,11 @@ a { color: var(--accent); }
 .seg button .s { font-size: var(--s12); color: var(--muted); overflow-wrap: anywhere; }
 .seg button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-tint); }
 .seg button[aria-pressed="true"] .t { color: var(--accent); }
-.seg button:disabled { opacity: .55; }
+/* A disabled card is dimmed by its title, not by an opacity over the caption:
+   the caption is the reason the mode is off and stays readable (muted on the
+   card at .8 = 4.2:1). Not dashed - dashed means UNKNOWN. */
+.seg button:disabled { opacity: .8; }
+.seg button:disabled .t { color: var(--muted); }
 .mode-note { display: block; font-size: var(--s12); color: var(--muted); }
 .mode-note .path { font-family: var(--mono); overflow-wrap: anywhere; }
 .note { font-size: var(--s13); color: var(--muted); max-width: 78ch; margin: 0; overflow-wrap: anywhere; }
