@@ -768,9 +768,13 @@
     add(d, el("summary", "label", "Run details"));
     var box = el("div", "lines");
     var c = run.context;
-    add(box, el("div", "", c.key_source ? "Seats.aero key: (masked key not sent to the browser)   (source: " +
-      c.key_source + ")" : (run.mode === "replay" ? "Seats.aero key: not required (--from-snapshot replays committed bytes)" :
-      "Seats.aero key: not used (offline: no transport)")));
+    // A found key is named by its source in every mode - the top-bar chip only
+    // speaks when there is no key - in the same "(source: X)" form LIVE prints.
+    var keySrc = c.key_source || (S.state && S.state.key.found ? S.state.key.source : null);
+    var keyLine = c.key_source ? "Seats.aero key: (masked key not sent to the browser)" :
+      (run.mode === "replay" ? "Seats.aero key: not required (--from-snapshot replays committed bytes)" :
+      "Seats.aero key: not used (offline: no transport)");
+    add(box, el("div", "", keyLine + (keySrc ? "   (source: " + keySrc + ")" : "")));
     (S.state ? S.state.relocation_lines : []).forEach(function (l) { add(box, el("div", "seg-caution", l)); });
     c.wallet_block.forEach(function (l) { add(box, el("div", "", l)); });
     c.fx_lines.forEach(function (l) { add(box, el("div", "", l)); });
