@@ -206,3 +206,22 @@ def test_the_committed_table_is_spelt_exactly(tmp_path):
             evidence = (row.get("evidence") or "").strip()
             if evidence:
                 assert _spelt_differently_on_disk(ROOT, Path(evidence)) == "", evidence
+
+
+def test_a_miscased_directory_names_the_whole_path_not_just_the_directory(tmp_path):
+    """
+    MAC-B. When the mis-cased component is a directory, the correction has to
+    carry the rest of the path with it. Truncating at the directory would answer
+    'the file you mean is spelt <a directory>', which is a second wrong answer
+    wearing a correction's clothes.
+
+    Unreachable through `load` at this head - `docs/yq-checks/` is flat - but the
+    evidence rule permits a subdirectory, so the helper is checked directly.
+    """
+    (tmp_path / "docs" / "yq-checks" / "sub").mkdir(parents=True)
+    (tmp_path / "docs" / "yq-checks" / "sub" / "b.md").write_text(RECORD, encoding="utf-8")
+    assert _spelt_differently_on_disk(tmp_path, Path("docs/yq-checks/SUB/b.md")) == \
+        "docs/yq-checks/sub/b.md"
+    # And a file that is missing under a correctly spelt directory still has no
+    # spelling to report.
+    assert _spelt_differently_on_disk(tmp_path, Path("docs/yq-checks/sub/nothing.md")) == ""

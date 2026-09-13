@@ -137,7 +137,10 @@ def _spelt_differently_on_disk(root: Path, rel: Path) -> str:
             same_but_for_case = sorted(n for n in names if n.lower() == part.lower())
             if not same_but_for_case:
                 return ""  # simply absent: the caller's "does not exist".
-            return str(Path(*rel.parts[:i], same_but_for_case[0]))
+            # MAC-B: the rest of the path comes too. Truncating here would name
+            # a DIRECTORY as the corrected spelling of a file, which is a second
+            # wrong answer dressed as a correction.
+            return str(Path(*rel.parts[:i], same_but_for_case[0], *rel.parts[i + 1:]))
         here = here / part
     return ""
 
