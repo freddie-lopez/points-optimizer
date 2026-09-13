@@ -290,7 +290,8 @@ pre.echo { margin: 0; padding: 10px; background: var(--bg); border: 1px solid va
 .wallet-rows input.cur { width: 70px; text-transform: uppercase; }
 .wallet-rows input.card { width: 280px; }
 
-@media (max-width: 1180px) {
+/* Docked (sticky third column) at >= 1180px, a fixed sheet below it. */
+@media (max-width: 1179.98px) {
   .has-drawer .trips-grid { grid-template-columns: 208px minmax(0, 1fr); }
   .has-drawer .search-grid { grid-template-columns: minmax(0, 1fr); }
   .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100%); max-height: none; z-index: 40; border-radius: 0; }
