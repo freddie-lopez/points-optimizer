@@ -117,7 +117,7 @@ a { color: var(--accent); }
 /* A disabled card is dimmed by its title, not by an opacity over the caption:
    the caption is the reason the mode is off and stays readable (muted on the
    card at .8 = 4.2:1). Not dashed - dashed means UNKNOWN. */
-.seg button:disabled { opacity: .8; }
+.seg button:disabled { opacity: .8; cursor: not-allowed; }
 .seg button:disabled .t { color: var(--muted); }
 .mode-note { display: block; font-size: var(--s12); color: var(--muted); }
 .mode-note .path { font-family: var(--mono); overflow-wrap: anywhere; }
