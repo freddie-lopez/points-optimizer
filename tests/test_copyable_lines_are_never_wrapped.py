@@ -213,7 +213,7 @@ MACOS_TMP = (
 
 @pytest.mark.parametrize(
     "directory",
-    [MACOS_TMP, "/Users/tsuki/" + "d" * 210 + "/snapshots", "/tmp/c"],
+    [MACOS_TMP, "/Users/someone/" + "d" * 210 + "/snapshots", "/tmp/c"],
     ids=["macos_tmp_path", "longer_than_the_console", "short"],
 )
 @pytest.mark.parametrize("width", WIDTHS)
