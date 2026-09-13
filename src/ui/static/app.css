@@ -103,17 +103,20 @@ a { color: var(--accent); }
 .field .hint { font-size: 11px; color: var(--muted); max-width: 36ch; }
 .field-error { color: var(--warn); font-size: var(--s12); overflow-wrap: anywhere; max-width: 90ch; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
-.seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; flex-wrap: wrap; max-width: 100%; }
-/* The three mode segments are one control and are read across, so they are
-   the same width whatever each one has to say. Anything longer than a
-   caption - a filesystem path, say - goes on its own line under it. */
-.seg button { background: var(--panel); border: 0; border-right: 1px solid var(--line); padding: 6px 14px; text-align: left; cursor: pointer; display: grid; gap: 1px; flex: 1 1 0; min-width: 0; max-width: 280px; }
-.mode-note { display: block; margin-top: 6px; font-size: 11px; color: var(--muted); }
+/* The three modes are cards read across. Each is the same flexible width; at
+   400px they wrap to one per row. The reason REPLAY is unavailable - which
+   carries a filesystem path of no fixed length - lives in the run row below,
+   where it is the only flexible item, so it can never push the buttons out. */
+.seg { display: flex; gap: 12px; border: 0; border-radius: 0; overflow: visible; flex-wrap: wrap; max-width: 100%; }
+.seg button { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; text-align: left; cursor: pointer; display: grid; gap: 4px; flex: 1 1 200px; min-width: 0; max-width: 420px; }
+.seg button:hover:not(:disabled) { border-color: var(--muted); }
+.seg button .t { font: 600 var(--s13)/1.3 var(--sans); letter-spacing: .04em; }
+.seg button .s { font-size: var(--s12); color: var(--muted); overflow-wrap: anywhere; }
+.seg button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-tint); }
+.seg button[aria-pressed="true"] .t { color: var(--accent); }
+.seg button:disabled { opacity: .55; }
+.mode-note { display: block; font-size: var(--s12); color: var(--muted); }
 .mode-note .path { font-family: var(--mono); overflow-wrap: anywhere; }
-.seg button:last-child { border-right: 0; }
-.seg button .t { font: 500 11px/1.3 var(--mono); letter-spacing: .06em; }
-.seg button .s { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
-.seg button[aria-pressed="true"] { background: var(--raised); box-shadow: inset 0 -2px 0 var(--accent); }
 .note { font-size: var(--s13); color: var(--muted); max-width: 78ch; margin: 0; overflow-wrap: anywhere; }
 .warnline { color: var(--warn); }
 
@@ -153,7 +156,11 @@ a { color: var(--accent); }
 .flags { border-color: var(--warn-line); border-left: 3px solid var(--warn); padding: 12px 16px; display: grid; gap: 6px; font-size: var(--s13); }
 .flags .label { color: var(--warn); }
 .flags ul { margin: 0; padding-left: 18px; }
-.runstrip { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; padding: 12px; }
+.runstrip { display: grid; gap: 12px; padding: 16px; }
+.runrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.runrow .mode-note { flex: 1 1 240px; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.runrow .note { flex: 1 1 200px; min-width: 0; }
+.runacts { display: flex; gap: 8px; margin-left: auto; flex: none; }
 .options { display: flex; gap: 12px; flex-wrap: wrap; padding: 12px; align-items: flex-start; }
 .options .field input[type="number"] { width: 80px; }
 .runs { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }

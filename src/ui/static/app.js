@@ -484,10 +484,12 @@
       modeBtn("offline", "mode-offline", "OFFLINE", noPts ? "this trip has no points prices, so nothing will be scored on points" :
         "no transport: scores the fixture's own points prices", false));
     add(field, seg);
-    // The three segments are one control and stay the same width, so the
-    // reason REPLAY is unavailable - which carries a filesystem path of no
-    // fixed length - goes on its own line under it. The path is shortened to
+    // The reason REPLAY is unavailable - which carries a filesystem path of no
+    // fixed length - shares a row with the buttons and is that row's only
+    // flexible item, so it can never push them out. The path is shortened to
     // its last two parts; the whole of it is in the title, never dropped.
+    var row = el("div", "runrow");
+    var acts = el("div", "runacts");
     var detail = !man && st && st.modes.replay_reason_detail;
     if (detail) {
       var note = tid(el("span", "mode-note"), "replay-unavailable");
@@ -496,7 +498,7 @@
       var pathEl = el("span", "path", shortPath(detail.path));
       pathEl.title = detail.path;
       add(note, pathEl, parts.length > 1 ? parts[1] : "");
-      add(field, note);
+      add(row, note);
     }
     add(strip, field);
     if (!liveOk && st && st.key.error_text) {
@@ -523,11 +525,13 @@
     optBtn.setAttribute("aria-expanded", String(S.optsOpen));
     var runBtn = btn("btn btn-primary", S.busy ? "Running…" : "Run", doRun, "run-go");
     runBtn.disabled = S.busy || (S.mode === "live" && !liveOk) || (S.mode === "replay" && !man);
-    add(strip, optBtn, runBtn);
     if (S.busy) {
-      add(strip, tid(el("span", "note", S.busyText + " " +
+      add(row, tid(el("span", "note", S.busyText + " " +
         Math.round((Date.now() - S.busyStart) / 1000) + " s"), "run-busy"));
     }
+    add(acts, optBtn, runBtn);
+    add(row, acts);
+    add(strip, row);
     add(main, strip);
     if (S.optsOpen) { add(main, renderOptions()); }
   }
