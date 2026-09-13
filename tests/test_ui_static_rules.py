@@ -98,8 +98,8 @@ def test_no_changelog_in_anything_the_page_ships(name):
 
 
 def test_the_design_tokens_are_the_plans():
-    for token in ("--ink: #0A0809", "--coal: #121011", "--ash: #1B1718", "--seam: #2B2325",
-                  "--bone: #ECE4E3", "--smoke: #9C8F8F", "--oxblood: #7A1620",
-                  "--ember: #B4323C", "--win: #5E9E73", "--warn: #C8923A",
-                  "--unknown: #7D7475", "--display: 28px"):
+    for token in ("--bg: #0F141B", "--panel: #171D26", "--raised: #1F2733", "--line: #2A3442",
+                  "--text: #E9EDF3", "--muted: #8C98A8", "--accent: #7DA9FF",
+                  "--accent2: #FF8A65", "--warn: #F0B85A", "--win: #5FD3A0",
+                  "--unknown: #8791A0", "--display: 28px"):
         assert token in CSS, token
