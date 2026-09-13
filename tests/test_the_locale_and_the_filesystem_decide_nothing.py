@@ -225,3 +225,33 @@ def test_a_miscased_directory_names_the_whole_path_not_just_the_directory(tmp_pa
     # And a file that is missing under a correctly spelt directory still has no
     # spelling to report.
     assert _spelt_differently_on_disk(tmp_path, Path("docs/yq-checks/sub/nothing.md")) == ""
+
+
+def test_a_correction_is_only_offered_for_a_file_that_is_there(tmp_path):
+    """
+    MAC-C, the Manager's finding. A row that mis-spells a directory AND names a
+    file that does not exist used to be told 'is spelt docs/yq-checks/sub/
+    nothing.md on disk' - a correction to a file nobody has. That is 'I could
+    not find it' rendered as 'the one you mean is X'.
+    """
+    (tmp_path / "docs" / "yq-checks" / "sub").mkdir(parents=True)
+    (tmp_path / "docs" / "yq-checks" / "sub" / "b.md").write_text(RECORD, encoding="utf-8")
+    # A real file behind a mis-cased directory is still corrected, whole.
+    assert _spelt_differently_on_disk(tmp_path, Path("docs/yq-checks/SUB/b.md")) == \
+        "docs/yq-checks/sub/b.md"
+    # An absent file behind a mis-cased directory has no spelling to report.
+    assert _spelt_differently_on_disk(tmp_path, Path("docs/yq-checks/SUB/nothing.md")) == ""
+    # ... and mis-cased at both levels is corrected only because both exist.
+    (tmp_path / "docs" / "yq-checks" / "sub" / "Mixed.md").write_text(RECORD, encoding="utf-8")
+    assert _spelt_differently_on_disk(tmp_path, Path("docs/yq-checks/SUB/MIXED.MD")) == \
+        "docs/yq-checks/sub/Mixed.md"
+
+
+def test_the_row_with_a_miscased_directory_and_no_file_says_does_not_exist(tmp_path):
+    root = evidence_tree(tmp_path)
+    (tmp_path / "docs" / "yq-checks" / "sub").mkdir()
+    table = write_table(tmp_path, evidence="docs/yq-checks/SUB/nothing.md")
+    with pytest.raises(YqInclusionError) as refused:
+        load(table, today=TODAY, root=root)
+    assert "does not exist" in str(refused.value), refused.value
+    assert "is spelt" not in str(refused.value), refused.value

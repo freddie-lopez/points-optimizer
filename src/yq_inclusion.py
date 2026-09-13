@@ -127,22 +127,33 @@ def _spelt_differently_on_disk(root: Path, rel: Path) -> str:
     does not depend on the filesystem underneath.
     """
     here = root
-    for i, part in enumerate(rel.parts):
+    spelt: list = []
+    corrected = False
+    for part in rel.parts:
         try:
             names = {p.name for p in here.iterdir()}
         except OSError:
             # Unreadable or not a directory. `is_file()` reports that.
             return ""
-        if part not in names:
+        if part in names:
+            spelt.append(part)
+        else:
             same_but_for_case = sorted(n for n in names if n.lower() == part.lower())
             if not same_but_for_case:
-                return ""  # simply absent: the caller's "does not exist".
-            # MAC-B: the rest of the path comes too. Truncating here would name
-            # a DIRECTORY as the corrected spelling of a file, which is a second
-            # wrong answer dressed as a correction.
-            return str(Path(*rel.parts[:i], same_but_for_case[0], *rel.parts[i + 1:]))
-        here = here / part
-    return ""
+                # MAC-C: nothing here is this name in any spelling, so there is
+                # no spelling to report - not for this component and not for the
+                # ones after it. The caller says "does not exist", which is what
+                # is true. Offering a corrected path to a file that is not there
+                # would be "I could not find it" rendered as "the one you mean
+                # is X", which is the failure this project exists to prevent.
+                return ""
+            # MAC-B: the walk carries on through the corrected name, so the rest
+            # of the path is checked too and the answer names a FILE, not the
+            # directory the first mis-spelling happened to be in.
+            spelt.append(same_but_for_case[0])
+            corrected = True
+        here = here / spelt[-1]
+    return str(Path(*spelt)) if corrected else ""
 
 
 def _check_evidence(
