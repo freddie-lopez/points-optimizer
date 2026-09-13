@@ -299,8 +299,15 @@ pre.echo { margin: 0; padding: 10px; background: var(--bg); border: 1px solid va
   .headline > div + div { border-left: 0; border-top: 1px solid var(--line); }
   .drawer { width: 100%; }
   .hl-value { font-size: 24px; }
-  .topbar-in { gap: 8px 14px; }
-  .bar-right { margin-left: 0; flex-basis: 100%; }
+  /* The bar is sticky, so every row it wraps to is viewport the page never
+     gets back. Tighter rows; the calls counter takes one line of its own at
+     11px (first, so the pill and the chips share the row under it). Nothing
+     is dropped; DOM and tab order are unchanged. */
+  .topbar-in { min-height: 40px; gap: 2px 14px; padding-block: 0 4px; }
+  .tab { min-height: 38px; }
+  .bar-right { margin-left: 0; flex-basis: 100%; gap: 2px 8px; }
+  .calls { order: -1; flex: 1 1 100%; min-width: 0; font-size: 11px; line-height: 1.25; }
+  .pill, .wallet, .keysrc.warn { height: 22px; }
 }
 @media (prefers-reduced-motion: no-preference) {
   table.grid tbody tr, .trow, .btn { transition: background-color .12s ease, border-color .12s ease; }
