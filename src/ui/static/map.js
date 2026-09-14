@@ -524,6 +524,9 @@
     }
 
     function setPicks(fromHub, toHub, fromTyped, toTyped) {
+      // Called on every keystroke: the markers are rebuilt only when a pick
+      // actually changed (or the pane has not been measured yet).
+      var changed = picks.from !== (fromHub || null) || picks.to !== (toHub || null);
       picks.from = fromHub || null;
       picks.to = toHub || null;
       var text;
@@ -539,7 +542,7 @@
       }
       status.textContent = text;
       renderProvenance();
-      recluster();
+      if (changed || lastZoom === null) { recluster(); }
     }
 
     function renderProvenance() {

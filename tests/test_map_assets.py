@@ -111,13 +111,21 @@ def test_the_iata_csv_has_the_documented_columns_and_only_iata_rows():
         float(r["lon"])
 
 
-@pytest.mark.skipif(not FULL_CSV.is_file(),
-                    reason="the full airportsdata CSV is not committed (3 MB); "
-                           "the filter is checked where it is present")
+# sha256 of data/airportsdata_iata.csv as tools/filter_airportsdata.py wrote it
+# from airportsdata 20260905. The full 3 MB CSV is not committed, so an export
+# cannot rerun the filter; this digest pins the committed bytes to that run
+# instead of skipping (a hand edit changes the digest, and the test says so).
+IATA_CSV_SHA256 = "5762e376acc068cc01bdd7fd2069559f7641bbe3263fa8ea991bec7136e98098"
+
+
 def test_the_iata_csv_equals_the_filter_output():
-    with open(FULL_CSV, newline="", encoding="utf-8") as f:
-        expected = filter_airportsdata.render(filter_airportsdata.filter_rows(f))
-    assert IATA_CSV.read_text(encoding="utf-8") == expected
+    text = IATA_CSV.read_text(encoding="utf-8")
+    assert hashlib.sha256(text.encode("utf-8")).hexdigest() == IATA_CSV_SHA256, \
+        "data/airportsdata_iata.csv is not the bytes tools/filter_airportsdata.py wrote"
+    if FULL_CSV.is_file():
+        with open(FULL_CSV, newline="", encoding="utf-8") as f:
+            expected = filter_airportsdata.render(filter_airportsdata.filter_rows(f))
+        assert text == expected
 
 
 def test_the_filter_is_idempotent_and_keeps_only_iata_rows():
