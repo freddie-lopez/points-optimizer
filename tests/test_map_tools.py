@@ -414,6 +414,29 @@ def test_a_gappy_run_does_not_replace_a_more_complete_capture_without_force(tmp_
     assert code == 5 and written(tmp_path)["_meta"]["sources_ok"] == ["aeroplan"]
 
 
+def test_a_gapless_narrower_run_keeps_the_wider_capture_and_exits_1(tmp_path):
+    assert run(capture_args(tmp_path, "--yes"))[0] == 0
+    good = written(tmp_path)
+    SeatsClient.reset_call_budget()
+    code, out, stub = run(capture_args(tmp_path, "--yes", "--sources", "aeroplan"))
+    assert code == 1 and written(tmp_path) == good
+    assert f"NOT OVERWRITTEN: {tmp_path / 'out' / 'hubs.json'} holds a capture with {N_SOURCES} source(s) ok, this run has 1." in out
+    SeatsClient.reset_call_budget()
+    code, out, stub = run(capture_args(tmp_path, "--yes", "--sources", "aeroplan", "--force"))
+    assert code == 0 and written(tmp_path)["_meta"]["sources_ok"] == ["aeroplan"]
+
+
+def test_a_superset_capture_is_kept_even_against_an_equal_count(tmp_path):
+    assert run(capture_args(tmp_path, "--yes", "--sources", "aeroplan,united"))[0] == 0
+    SeatsClient.reset_call_budget()
+    # one of the two fails now: {aeroplan} is a strict subset of {aeroplan, united}
+    answers = {"united": http(500)}
+    code, out, stub = run(capture_args(tmp_path, "--yes", "--sources", "aeroplan,united", "--min-sources", "1"),
+                          stub=Stub(answers=answers))
+    assert code == 5 and written(tmp_path)["_meta"]["sources_ok"] == ["aeroplan", "united"]
+    assert "NOT OVERWRITTEN" in out
+
+
 def test_a_complete_run_replaces_a_gappy_file_without_force(tmp_path):
     answers = {s: http(500) for s in SEATS_AERO_SOURCES if s != "aeroplan"}
     assert run(capture_args(tmp_path, "--yes", "--min-sources", "1"), stub=Stub(answers=answers))[0] == 5

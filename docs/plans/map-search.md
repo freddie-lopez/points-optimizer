@@ -386,7 +386,9 @@ airport - `searchable: false` and rows that failed validation (bad code, routes,
 duplicate, not an object) alike - so that `K = J + M` always holds. Fix round 1 (L6): #3 is
 shown while From does not hold a plotted airport (empty, partial or an unplotted code), #4
 while From does and To does not, #5 when both do. Fix round 1 (L12): exit 5 also covers
-"the run had gaps and the existing, more complete file was kept".
+"the run had gaps and the existing, more complete file was kept". Fix round 2 (N2): "more
+complete" = the existing capture's `sources_ok` is larger than, or a strict superset of,
+this run's, whatever this run's gaps; a gapless narrower run is NOT OVERWRITTEN with exit 1.
 `{City}`, names and codes are data and go through `textContent` only.
 
 ### 4.10 Testids (all new; nothing renamed)

@@ -24,11 +24,12 @@ data/airports.csv without a call.
 
 Exit codes: 0 written and every source answered; 1 nothing written (usage, no
 key, declined, stdin closed, every source failed, 0 hubs met the thresholds,
-key material in the output); 5 the run had gaps (at least one source failed,
-was unreadable or answered with a cursor): written with them recorded in
-`_meta`, or - when the existing file holds a more complete capture and --force
-was not passed - the existing file kept and nothing written (the console says
-which).
+key material in the output, or an existing capture that covers more sources
+than this gapless run - NOT OVERWRITTEN without --force); 5 the run had gaps
+(at least one source failed, was unreadable or answered with a cursor):
+written with them recorded in `_meta`, or - when the existing file covers more
+sources and --force was not passed - the existing file kept and nothing
+written (the console says which).
 """
 from __future__ import annotations
 
@@ -617,14 +618,16 @@ def run_capture(args, console: Console, read: Callable[[str], str],
     except ValueError as e:
         raise ToolRefusal(f"{e} Nothing was written.") from None
     gaps = len(failed) + len(incomplete)
-    kept = _more_complete_existing(out_path, len(ok)) if gaps and not args.force else None
+    kept = None if args.force else _more_complete_existing(out_path, ok)
     if kept is not None:
+        # Whatever this run's gaps: a file that covers more sources (or a
+        # superset of these) is the more complete capture and stays.
         console.print(
             f"[bold yellow]NOT OVERWRITTEN: {out_path} holds a capture with {kept} source(s) "
             f"ok, this run has {len(ok)}. The existing file is kept and nothing was written. "
             f"Pass --force to replace it with this run.[/bold yellow]"
         )
-        return EXIT_GAPS
+        return EXIT_GAPS if gaps else EXIT_NOTHING_WRITTEN
     _write_atomically(out_path, text)
     print_copyable(console, f"wrote {out_path}", "green")
     if gaps:
@@ -638,16 +641,21 @@ def run_capture(args, console: Console, read: Callable[[str], str],
     return EXIT_OK
 
 
-def _more_complete_existing(path: Path, ok_now: int) -> Optional[int]:
-    """The existing file's sources_ok count when it beats this run's, else None."""
+def _more_complete_existing(path: Path, ok_now: List[str]) -> Optional[int]:
+    """The existing file's sources_ok count when that capture is more complete
+    than this run: more sources answered, or a strict superset of the ones that
+    answered now. Else None (an equal or narrower file, or no readable file)."""
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     if hubs_file_problems(doc) or not doc["hubs"]:
         return None
-    before = len(doc["_meta"]["sources_ok"])
-    return before if before > ok_now else None
+    before = {s for s in doc["_meta"]["sources_ok"] if isinstance(s, str)}
+    now = set(ok_now)
+    if len(before) > len(now) or (before > now):
+        return len(before)
+    return None
 
 
 # ---------------------------------------------------------------------------
