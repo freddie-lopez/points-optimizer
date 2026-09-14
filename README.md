@@ -706,15 +706,23 @@ other thresholds would give before writing, records the thresholds in
 counted, not plotted) and marked `searchable` when it is in
 `data/airports.csv`; the airports that are not are printed as `iata,name,
 country` lines, because adding one is a surcharge-region decision this tool
-does not make. The output is refused, and nothing written, if it would
-contain the key. `--sources a,b`, `--out PATH` and `--raw-dir DIR` (the
-verbatim bodies) exist for a partial or inspectable run.
+does not make. Region labels are stored only as the codes
+`regions.SEATS_AERO_REGIONS` maps them to; free text from the wire is counted,
+never stored. The output is refused, and nothing written, if it would contain
+the key; a disk error is a refusal too, and leaves no partial file. `--sources
+a,b` (duplicates asked once; a `--min-sources` the list can never meet is
+refused before the prompt; with no `--min-sources` the default follows a
+shorter list and says so), `--out PATH`, `--raw-dir DIR` (the verbatim bodies)
+and `--api-key KEY` exist for a partial or inspectable run. A run with gaps
+never replaces an existing capture that had more sources answer: the file is
+kept, the console says `NOT OVERWRITTEN`, and `--force` replaces it anyway.
+`mark-searchable --file PATH` names a file other than `data/hubs.json`.
 
 | Code | Meaning |
 |---|---|
 | 0 | `data/hubs.json` written and every source answered |
 | 1 | nothing written: usage error, no key, declined at the prompt, stdin closed, every source failed, 0 airports met the thresholds, or key material in the output |
-| 5 | written WITH gaps: at least one source failed, was unreadable or answered with a cursor; `_meta.sources_failed` / `sources_incomplete` in the file say which, and the map's footer will not |
+| 5 | the run had gaps: at least one source failed, was unreadable or answered with a cursor. Written with them (`_meta.sources_failed` / `sources_incomplete` say which; the map's footer will not), or - when the existing file had more sources answer and `--force` was not passed - the existing file kept and nothing written |
 
 ---
 

@@ -147,7 +147,7 @@ def test_every_source_answering_writes_the_file_with_its_invariants(tmp_path):
     assert by["SFO"]["routes"] == N_SOURCES * 27 and by["SFO"]["searchable"] is True
     assert by["SFO"]["sources"] == sorted(SEATS_AERO_SOURCES)
     assert by["SFO"]["lat"] is not None and by["SFO"]["city"] == "San Francisco"
-    assert by["SFO"]["regions"] == ["North America"]
+    assert by["SFO"]["regions"] == ["NA"]   # mapped through regions.SEATS_AERO_REGIONS
     assert by["XYZ"]["searchable"] is False
     assert by["LON"]["lat"] is None and by["LON"]["lon"] is None
     assert FLAG_KEY not in json.dumps(doc)
@@ -342,6 +342,103 @@ def test_more_than_400_hubs_warns(tmp_path):
     code, out, stub = run(capture_args(tmp_path, "--yes", "--min-routes", "1"), stub=stub)
     assert code == 0
     assert "420 hubs is above the 400 the map was sized for" in out
+
+
+def test_a_disk_error_is_a_refusal_with_nothing_left_beside_the_target(tmp_path, monkeypatch):
+    import pathlib
+    real = pathlib.Path.write_text
+
+    def half(self, text, *a, **k):
+        if self.name.endswith(".tmp"):
+            with open(self, "w") as f:
+                f.write(text[: len(text) // 2])
+            raise OSError(28, "No space left on device")
+        return real(self, text, *a, **k)
+
+    monkeypatch.setattr(pathlib.Path, "write_text", half)
+    code, out, stub = run(capture_args(tmp_path, "--yes"))
+    assert code == 1
+    assert "could not be written (OSError" in out and "Nothing was written." in out
+    assert nothing_written(tmp_path)
+
+
+def test_out_naming_a_directory_is_a_refusal_and_leaves_no_tmp(tmp_path):
+    (tmp_path / "out" / "hubs.json").mkdir(parents=True)
+    code, out, stub = run(capture_args(tmp_path, "--yes"))
+    assert code == 1 and "Nothing was written." in out
+    assert sorted(p.name for p in (tmp_path / "out").iterdir()) == ["hubs.json"]
+
+
+def test_any_transport_exception_is_recorded_as_a_failed_source(tmp_path):
+    def boom(url, kw):
+        raise RuntimeError("socket exploded")
+    code, out, stub = run(capture_args(tmp_path, "--yes"), stub=Stub(answers={"united": boom}))
+    assert code == 5
+    assert written(tmp_path)["_meta"]["sources_failed"]["united"] == "RuntimeError"
+
+
+def test_an_impossible_threshold_is_refused_before_the_prompt(tmp_path):
+    code, out, stub = run(capture_args(tmp_path, "--sources", "aeroplan,united", "--min-sources", "3"))
+    assert code == 1 and stub.calls == [] and nothing_written(tmp_path)
+    assert ("--min-sources 3 can never be met by the 2 source(s) asked; no airport could be a "
+            "hub. No call was made and nothing was written.") in out
+
+
+def test_the_default_threshold_follows_a_short_sources_list_and_says_so(tmp_path):
+    code, out, stub = run(capture_args(tmp_path, "--yes", "--sources", "aeroplan,united"))
+    assert code == 0 and len(stub.calls) == 2
+    assert ("--min-sources not given: using 2, the number of sources asked (the default 3 "
+            "could never be met). Recorded in _meta.thresholds.") in out
+    assert written(tmp_path)["_meta"]["thresholds"] == {"min_sources": 2, "min_routes": 20}
+
+
+def test_duplicate_sources_are_asked_once(tmp_path):
+    code, out, stub = run(capture_args(tmp_path, "--yes", "--sources", "aeroplan,aeroplan,united,united,virginatlantic"))
+    assert code == 0 and len(stub.calls) == 3 and "at most 3 " in out
+    assert written(tmp_path)["_meta"]["sources_asked"] == ["aeroplan", "united", "virginatlantic"]
+
+
+def test_a_gappy_run_does_not_replace_a_more_complete_capture_without_force(tmp_path):
+    assert run(capture_args(tmp_path, "--yes"))[0] == 0
+    good = written(tmp_path)
+    SeatsClient.reset_call_budget()
+    answers = {s: http(500) for s in SEATS_AERO_SOURCES if s != "aeroplan"}
+    code, out, stub = run(capture_args(tmp_path, "--yes", "--min-sources", "1"), stub=Stub(answers=answers))
+    assert code == 5 and written(tmp_path) == good
+    assert (f"NOT OVERWRITTEN: {tmp_path / 'out' / 'hubs.json'} holds a capture with {N_SOURCES} "
+            f"source(s) ok, this run has 1. The existing file is kept and nothing was written. "
+            f"Pass --force to replace it with this run.") in out
+    SeatsClient.reset_call_budget()
+    code, out, stub = run(capture_args(tmp_path, "--yes", "--min-sources", "1", "--force"),
+                          stub=Stub(answers=answers))
+    assert code == 5 and written(tmp_path)["_meta"]["sources_ok"] == ["aeroplan"]
+
+
+def test_a_complete_run_replaces_a_gappy_file_without_force(tmp_path):
+    answers = {s: http(500) for s in SEATS_AERO_SOURCES if s != "aeroplan"}
+    assert run(capture_args(tmp_path, "--yes", "--min-sources", "1"), stub=Stub(answers=answers))[0] == 5
+    SeatsClient.reset_call_budget()
+    assert run(capture_args(tmp_path, "--yes"))[0] == 0
+    assert len(written(tmp_path)["_meta"]["sources_ok"]) == N_SOURCES
+
+
+def test_regions_are_stored_as_codes_and_unknown_labels_are_counted_not_stored(tmp_path):
+    hostile = "<img src=x onerror=alert(1)>" + "R" * 10000
+
+    def rows(source):
+        return [route("SFO", "LHR", oreg=hostile, dreg="Europe") for _ in range(25)]
+    code, out, stub = run(capture_args(tmp_path, "--yes"), stub=Stub(default=rows))
+    by = {h["iata"]: h for h in written(tmp_path)["hubs"]}
+    assert by["SFO"]["regions"] == [] and by["LHR"]["regions"] == ["EU"]
+    assert f"{25 * N_SOURCES} region label(s) not in the known Seats.aero regions counted, not stored" in out
+
+
+def test_rows_that_are_not_objects_are_named_separately(tmp_path):
+    def rows(source):
+        return [route("SFO", "LHR") for _ in range(25)] + ["x", 42]
+    code, out, stub = run(capture_args(tmp_path, "--yes"), stub=Stub(default=rows))
+    assert "0 route side(s) dropped for a code" in out
+    assert f"{2 * N_SOURCES} row(s) that were not objects ignored" in out
 
 
 # ---------------------------------------------------------- mark-searchable

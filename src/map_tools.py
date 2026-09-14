@@ -24,8 +24,11 @@ data/airports.csv without a call.
 
 Exit codes: 0 written and every source answered; 1 nothing written (usage, no
 key, declined, stdin closed, every source failed, 0 hubs met the thresholds,
-key material in the output); 5 written with gaps (at least one source failed,
-was unreadable or answered with a cursor - the file records which in `_meta`).
+key material in the output); 5 the run had gaps (at least one source failed,
+was unreadable or answered with a cursor): written with them recorded in
+`_meta`, or - when the existing file holds a more complete capture and --force
+was not passed - the existing file kept and nothing written (the console says
+which).
 """
 from __future__ import annotations
 
@@ -96,21 +99,25 @@ def build_parser() -> argparse.ArgumentParser:
             "  0  written and every source answered\n"
             "  1  nothing written (usage, no key, declined, stdin closed, every\n"
             "     source failed, 0 hubs met the thresholds, key material in the output)\n"
-            "  5  written with gaps (a source failed, was unreadable or answered\n"
-            "     with a cursor; _meta in the file says which)\n"
+            "  5  the run had gaps (a source failed, was unreadable or answered with\n"
+            "     a cursor): written with them in _meta, or the existing more complete\n"
+            "     file kept (without --force)\n"
         ),
     )
     sub = parser.add_subparsers(dest="command")
     cap = sub.add_parser("capture-hubs", help="One GET /partnerapi/routes per source.")
     cap.add_argument("--sources", default=None, metavar="a,b,c",
                      help="Source codes to ask (default: every code in SEATS_AERO_SOURCES).")
-    cap.add_argument("--min-sources", type=int, default=DEFAULT_MIN_SOURCES, metavar="N")
+    cap.add_argument("--min-sources", type=int, default=None, metavar="N",
+                     help=f"default {DEFAULT_MIN_SOURCES}, or the number of sources asked when fewer")
     cap.add_argument("--min-routes", type=int, default=DEFAULT_MIN_ROUTES, metavar="N")
     cap.add_argument("--yes", action="store_true", help="Do not ask before spending calls.")
     cap.add_argument("--out", default=str(DEFAULT_OUT), metavar="PATH")
     cap.add_argument("--raw-dir", default=None, metavar="DIR",
                      help="Also write each verbatim response body as routes_<source>.json.")
     cap.add_argument("--api-key", default=None, metavar="KEY")
+    cap.add_argument("--force", action="store_true",
+                     help="Replace an existing capture even when it is more complete than this run.")
     mark = sub.add_parser("mark-searchable",
                           help="Recompute `searchable` against data/airports.csv. 0 calls.")
     mark.add_argument("--file", default=str(DEFAULT_OUT), metavar="PATH")
@@ -242,10 +249,21 @@ def render_document(doc: Dict[str, Any]) -> str:
 
 
 def _write_atomically(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """tmp + rename. Any disk error is a ToolRefusal and the tmp is removed:
+    the target is never partial and nothing is left beside it."""
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as e:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise ToolRefusal(
+            f"{path} could not be written ({type(e).__name__}: {e}). Nothing was written."
+        ) from None
 
 
 # ---------------------------------------------------------------------------
@@ -262,33 +280,49 @@ class Tally:
         self.regions: Set[str] = set()
 
 
-def tally_routes(routes_by_source: Dict[str, List[Any]]) -> Tuple[Dict[str, Tally], int, int]:
-    """(per-airport tally, routes seen, route sides dropped for a bad code).
+class TallyResult:
+    """What tally_routes counted: the per-airport tally and every drop, named."""
 
-    An airport is counted once per route SIDE it appears on; a side whose code
-    is not three upper-case letters or digits is dropped and counted, never
-    normalised into a hub."""
-    tally: Dict[str, Tally] = {}
-    seen = dropped = 0
+    __slots__ = ("tally", "seen", "not_objects", "bad_codes", "unmapped_regions")
+
+    def __init__(self):
+        self.tally: Dict[str, Tally] = {}
+        self.seen = 0            # route rows that were objects
+        self.not_objects = 0     # rows that were not objects (no code to read)
+        self.bad_codes = 0       # route sides whose code is not ^[A-Z0-9]{3}$
+        self.unmapped_regions = 0  # region labels not in regions.SEATS_AERO_REGIONS
+
+
+def tally_routes(routes_by_source: Dict[str, List[Any]]) -> TallyResult:
+    """An airport is counted once per route SIDE it appears on; a side whose
+    code is not three upper-case letters or digits is dropped and counted,
+    never normalised into a hub. A region label is stored only as the REGIONS
+    code `regions.SEATS_AERO_REGIONS` maps it to (free text from the wire is
+    counted, never stored)."""
+    r = TallyResult()
     for source, rows in routes_by_source.items():
         for row in rows:
             if not isinstance(row, dict):
-                dropped += 1
+                r.not_objects += 1
                 continue
-            seen += 1
+            r.seen += 1
             for code_key, region_key in (("OriginAirport", "OriginRegion"),
                                          ("DestinationAirport", "DestinationRegion")):
                 code = row.get(code_key)
                 if not isinstance(code, str) or not IATA_RE.match(code):
-                    dropped += 1
+                    r.bad_codes += 1
                     continue
-                t = tally.setdefault(code, Tally())
+                t = r.tally.setdefault(code, Tally())
                 t.routes += 1
                 t.sources.add(source)
-                region = row.get(region_key)
-                if isinstance(region, str) and region.strip():
-                    t.regions.add(region.strip())
-    return tally, seen, dropped
+                label = row.get(region_key)
+                if isinstance(label, str) and label.strip():
+                    mapped = regions.region_from_seats_aero(label)
+                    if mapped:
+                        t.regions.add(mapped)
+                    else:
+                        r.unmapped_regions += 1
+    return r
 
 
 def count_at(tally: Dict[str, Tally], min_sources: int, min_routes: int) -> int:
@@ -389,7 +423,7 @@ def _ask_source(get: Callable, code: str, key: str) -> SourceAnswer:
         return SourceAnswer("failed", "Timeout")
     except requests.ConnectionError:
         return SourceAnswer("failed", "ConnectionError")
-    except requests.RequestException as e:
+    except Exception as e:  # noqa: BLE001 - a failed source is recorded, never a crash
         return SourceAnswer("failed", type(e).__name__)
     status = getattr(response, "status_code", None)
     body = getattr(response, "text", "")
@@ -409,7 +443,10 @@ def _parse_sources(flag: Optional[str]) -> List[str]:
 
     if not flag:
         return list(SEATS_AERO_SOURCES)
-    wanted = [s.strip().lower() for s in flag.split(",") if s.strip()]
+    wanted = []
+    for s in (x.strip().lower() for x in flag.split(",")):
+        if s and s not in wanted:
+            wanted.append(s)
     bogus = [s for s in wanted if s not in SEATS_AERO_SOURCES]
     if bogus:
         raise ToolRefusal(
@@ -430,10 +467,26 @@ def run_capture(args, console: Console, read: Callable[[str], str],
         import requests
 
         get = requests.get
-    if args.min_sources < 1 or args.min_routes < 1:
+    explicit = args.min_sources is not None
+    if (explicit and args.min_sources < 1) or args.min_routes < 1:
         raise ToolRefusal("--min-sources and --min-routes must be at least 1. No call was "
                           "made and nothing was written.")
     sources = _parse_sources(args.sources)
+    if explicit and args.min_sources > len(sources):
+        # Decidable before the prompt: refuse rather than spend the calls.
+        raise ToolRefusal(
+            f"--min-sources {args.min_sources} can never be met by the {len(sources)} "
+            f"source(s) asked; no airport could be a hub. No call was made and nothing "
+            f"was written."
+        )
+    if not explicit:
+        args.min_sources = min(DEFAULT_MIN_SOURCES, len(sources))
+        if args.min_sources < DEFAULT_MIN_SOURCES:
+            console.print(
+                f"--min-sources not given: using {args.min_sources}, the number of "
+                f"sources asked (the default {DEFAULT_MIN_SOURCES} could never be met). "
+                f"Recorded in _meta.thresholds."
+            )
     out_path = Path(args.out)
     raw_dir = Path(args.raw_dir) if args.raw_dir else None
     try:
@@ -496,10 +549,13 @@ def run_capture(args, console: Console, read: Callable[[str], str],
                           f"nothing was written.")
 
     routes_by_source = {c: a.routes for c, a in answers.items() if a.status in ("ok", "incomplete")}
-    tally, seen, dropped = tally_routes(routes_by_source)
+    tr = tally_routes(routes_by_source)
+    tally, seen = tr.tally, tr.seen
     console.print(f"{seen} routes seen across {len(routes_by_source)} source(s); "
-                  f"{dropped} route side(s) dropped for a code that is not three "
-                  f"upper-case letters or digits.")
+                  f"{tr.bad_codes} route side(s) dropped for a code that is not three "
+                  f"upper-case letters or digits; {tr.not_objects} row(s) that were not "
+                  f"objects ignored; {tr.unmapped_regions} region label(s) not in the "
+                  f"known Seats.aero regions counted, not stored.")
     for line in histogram_lines(tally):
         console.print(escape(line))
     coords = load_coordinates()
@@ -560,9 +616,17 @@ def run_capture(args, console: Console, read: Callable[[str], str],
         response_cache.assert_no_key_material(text, where=str(out_path), key=key)
     except ValueError as e:
         raise ToolRefusal(f"{e} Nothing was written.") from None
+    gaps = len(failed) + len(incomplete)
+    kept = _more_complete_existing(out_path, len(ok)) if gaps and not args.force else None
+    if kept is not None:
+        console.print(
+            f"[bold yellow]NOT OVERWRITTEN: {out_path} holds a capture with {kept} source(s) "
+            f"ok, this run has {len(ok)}. The existing file is kept and nothing was written. "
+            f"Pass --force to replace it with this run.[/bold yellow]"
+        )
+        return EXIT_GAPS
     _write_atomically(out_path, text)
     print_copyable(console, f"wrote {out_path}", "green")
-    gaps = len(failed) + len(incomplete)
     if gaps:
         console.print(
             f"[bold yellow]WRITTEN WITH GAPS: {len(failed)} source(s) failed or were "
@@ -572,6 +636,18 @@ def run_capture(args, console: Console, read: Callable[[str], str],
         return EXIT_GAPS
     console.print("[green]every source answered.[/green]")
     return EXIT_OK
+
+
+def _more_complete_existing(path: Path, ok_now: int) -> Optional[int]:
+    """The existing file's sources_ok count when it beats this run's, else None."""
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if hubs_file_problems(doc) or not doc["hubs"]:
+        return None
+    before = len(doc["_meta"]["sources_ok"])
+    return before if before > ok_now else None
 
 
 # ---------------------------------------------------------------------------
