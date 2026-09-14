@@ -96,6 +96,7 @@ TESTIDS = [
     "map-pane", "map-svg", "map-land", "map-hub-", "map-cluster-", "map-cluster-list",
     "map-pick-", "map-route", "map-status", "map-provenance", "map-zoom-in", "map-zoom-out",
     "map-reset", "search-suggest-", "suggest-", "search-pane-toggle", "search-result",
+    "search-ran",
 ]
 
 

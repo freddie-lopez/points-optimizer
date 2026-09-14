@@ -142,8 +142,13 @@ a { color: var(--accent); }
 @media (min-width: 900px) {
   .search-grid { grid-template-columns: 360px minmax(0, 1fr); }
 }
+/* With the drawer docked the search column narrows to 220px so the results
+   keep at least 448px at 1180 (568 at 1300, 708 at 1440); the drawer never
+   sits beside the map: Show map closes it. */
 @media (min-width: 1180px) {
-  .has-drawer .search-grid { grid-template-columns: 360px minmax(0, 1fr) 440px; }
+  .has-drawer .search-grid { grid-template-columns: 220px minmax(0, 1fr) 440px; }
+  .has-drawer .search-head h1 { font-size: var(--s16); }
+  .has-drawer .strip.column .strip-row { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* trip list */
@@ -346,6 +351,11 @@ table.grid .pin-right::after { left: 0; }
 /* ---------- search column and map ---------- */
 .search-head h1 { margin: 0 0 2px; font-size: var(--s20); font-weight: 600; letter-spacing: -.01em; }
 .search-head .note { max-width: none; }
+.search-head .without-map { display: none; }
+@media (max-width: 899.98px) {
+  .search-head .with-map { display: none; }
+  .search-head .without-map { display: block; }
+}
 .search-col > .btn { justify-self: start; }
 .search-pane { min-width: 0; }
 .search-pane > .result { min-width: 0; }
@@ -387,7 +397,8 @@ table.grid .pin-right::after { left: 0; }
 .mk .dot { fill: var(--bg); stroke: var(--accent); stroke-width: 1.1; }
 .mk.pick .dot { fill: var(--accent); stroke: var(--accent); }
 .mk .halo { fill: var(--accent); opacity: .18; }
-.mk .lbl { font: 500 11px var(--mono); fill: var(--muted); pointer-events: none; }
+.mk .lbl { font: 500 11px var(--mono); fill: var(--muted); cursor: pointer; }
+.mk .lblhit { fill: rgba(0,0,0,0); stroke: none; }
 .mk.pick .lbl { fill: var(--text); }
 .mk .cdot { fill: var(--raised); stroke: var(--accent); stroke-width: 1.2; }
 .mk .cnt { font: 500 9px var(--mono); fill: var(--text); pointer-events: none; }

@@ -1216,8 +1216,10 @@
     var q = S.search;
     q.sugg = null;
     var head = el("div", "search-head");
+    // Two sublines, one shown per width: the map is not displayed below 900px.
     add(head, el("h1", "", "Where are you flying?"),
-      p("Type an airport or city, or pick it on the map.", "note"));
+      p("Type an airport or city, or pick it on the map.", "note with-map"),
+      p("Type an airport or city.", "note without-map"));
     add(main, head);
     var strip = tid(el("div", "panel strip column"), "search-strip");
     function inp(label, key, testid, cls, ph) {
@@ -1271,10 +1273,17 @@
     });
     if (q.run) {
       var toggle = btn("btn", q.pane === "map" ? "Show results" : "Show map", function () {
-        q.pane = q.pane === "map" ? "result" : "map"; renderSearch();
+        q.pane = q.pane === "map" ? "result" : "map";
+        // The drawer details a cell of the results table: it goes with them.
+        if (q.pane === "map") { q.sel = null; S.cameFrom = null; }
+        renderSearch();
       }, "search-pane-toggle");
       toggle.disabled = q.busy;
       add(main, toggle);
+      // The map's own sentence is about the line; this one is about the run.
+      if (q.pane === "map") {
+        add(main, tid(p("The search has run: its results are under Show results.", "note"), "search-ran"));
+      }
     }
     if (q.pane === "map") {
       if (st && !st.key.found) {
@@ -1598,7 +1607,7 @@
     var d = clear($("drawer-search"));
     var q = S.search;
     var run = q.run;
-    if (!run || !q.sel || !run.rows[q.sel.row]) { d.hidden = true; return; }
+    if (!run || !q.sel || !run.rows[q.sel.row] || q.pane !== "result") { d.hidden = true; return; }
     var row = run.rows[q.sel.row];
     var cell = row.cabins[q.sel.cabin];
     if (!cell) { d.hidden = true; return; }
