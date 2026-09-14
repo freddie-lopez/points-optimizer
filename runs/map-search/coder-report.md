@@ -228,3 +228,27 @@ is the test). `docs/plans/map-search.md` §4.6 already says "the label always sh
 | ui-probes (`-O`, `-p no:randomly`) | **662 passed, 1 failed** (P22, unchanged) |
 | ui-restyle-probes | **279 passed, 7 failed, 10 skipped** (C2, C5, E3, E5, H1, H2, J6 - unchanged) |
 | map-search-probes (143) | **142 passed, 1 failed** - F6 only (L8, by design) |
+
+## Fix round 4
+
+Manager review 91081c9 "Should fix soon" items 1–2 and decisions A and C, on top of the tester's
+be0d27b (probes and pin refreshes, untouched). One commit, c5c52fb.
+
+| Item | Change |
+|---|---|
+| `ensureMap` | `POMap.load().then(mount…)` gains a `.catch`: `S.map.loading` is cleared and the pane shows string #2 (`AIRPORT DATA UNREADABLE - /static/hubs.json could not be read (<message>). The map plots nothing.`). `load()` still never rejects; this covers `mount()` throwing, so the pane can neither stay blank nor leave an unhandled rejection |
+| Doc drift | Plan §2.3 and §8: 28 sources, "at most 28 calls" (`SEATS_AERO_SOURCES` has 28). `.gitignore`: the airportsdata test pins a sha256 of the filtered CSV; it does not skip |
+| Decision A | `docs/plans/ui.md` §4.7, one added sentence after "…for the single primary action": the map's route line is the one other allowed use of coral. No other wording changed |
+| Decision C | Plan §2 assumption 20: the zoom-1 letterbox stays as built (matches the last approved mockup) |
+
+Not touched: the plan's §9 label-rule text (not in this round's list), anything under
+`docs/test-reports/`.
+
+### Counts at c5c52fb
+
+| Suite | Result |
+|---|---|
+| `tests/test_ui_static_rules.py` (`-O`) | **114 passed** |
+| `python3 -O -m pytest -q -p no:cacheprovider` | **3821 passed, 13 skipped** |
+| map-search-probes `-k "C or E or H"` (`-O`, `-p no:randomly`) | **157 passed, 2 failed**: F6 (design limit) and **A7**, which is red at be0d27b itself - it asserts `git diff BASE..HEAD` is empty under `ui-probes`/`ui-restyle-probes`, and the tester's own pin refresh in be0d27b changed four files there. Not something a coder commit can fix without editing the tester's suite |
+| ui-restyle-probes | **284 passed, 2 failed, 10 skipped** (C5[search_ok], E3 - the refreshed pins C2, E5, H1, H2, J6 are green now) |
