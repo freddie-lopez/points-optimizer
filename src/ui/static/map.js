@@ -24,10 +24,26 @@
   var CLICK_PX = 4;
   var LABEL_ZOOM = 3;
   var ROUTE_POINTS = 64;
-  // The IATA label's box relative to its dot's centre, in screen px:
-  // [left, right, top, bottom] for three 11px monospace characters at x=7.
-  var LABEL_BOX = [6, 29, -8, 8];
-  var LABEL_BOX_LEFT = [-29, -6, -8, 8];
+  // Where an IATA label may sit, relative to its dot's centre in screen px:
+  // the text's start point (tx, ty = baseline) and anchor, and its box
+  // [left, right, top, bottom] - three 11px monospace characters, padded
+  // (the right-hand box, 6..29 x -8..8, is the one the plan pins; the others
+  // keep its margins about their own start point). A plain single tries the
+  // first two and then goes without a label; a picked hub tries them all and
+  // is never left without one.
+  function labelPos(name, tx, ty, anchor) {
+    var box = anchor === "end" ? [tx - 22, tx + 1, ty - 12, ty + 4] : [tx - 1, tx + 22, ty - 12, ty + 4];
+    return { name: name, tx: tx, ty: ty, anchor: anchor, box: box };
+  }
+  var LABEL_POS_SINGLE = [labelPos("right", 7, 4, "start"), labelPos("left", -7, 4, "end")];
+  var LABEL_POS_PICK = LABEL_POS_SINGLE.concat([
+    labelPos("above", -10, -10, "start"), labelPos("below", -10, 18, "start"),
+    labelPos("above-right", 6, -8, "start"), labelPos("above-left", -6, -8, "end"),
+    labelPos("below-right", 6, 16, "start"), labelPos("below-left", -6, 16, "end"),
+    // A second ring, further out, before the last resort.
+    labelPos("right-2", 22, 4, "start"), labelPos("left-2", -22, 4, "end"),
+    labelPos("above-2", -10, -24, "start"), labelPos("below-2", -10, 32, "start")
+  ]);
 
   var S_NO_DATA = "NO AIRPORT DATA - run \"python -m src.map_tools capture-hubs\" on your Mac. The map plots nothing until then.";
   var S_UNREADABLE_A = "AIRPORT DATA UNREADABLE - /static/hubs.json could not be read (";
@@ -410,81 +426,123 @@
         }
         return null;
       }
+      function radiusOf(c) { return c.members.length === 1 ? 4.5 : 10.5; }
+      function boxHitsDot(box, X, Y, r) {   // all in screen px
+        return box[0] < X + r && box[1] > X - r && box[2] < Y + r && box[3] > Y - r;
+      }
+      function boxHitsBox(a, b) { return a[0] < b[1] && a[1] > b[0] && a[2] < b[3] && a[3] > b[2]; }
+      function boxFor(X, Y, pos) {
+        var b = pos.box;
+        return [X * s + b[0], X * s + b[1], Y * s + b[2], Y * s + b[3]];
+      }
+      // The pick's label is always shown, so its spot is chosen BEFORE the
+      // neighbours are moved: the first position clear of every marker that
+      // stays where it is (picks, clusters not within 18px of a pick) is
+      // reserved, and a moved cluster may not land on it.
+      var moving = clusters.filter(function (c) { return !!tooClose(c.X, c.Y, fixed, null); });
+      var staying = clusters.filter(function (c) { return moving.indexOf(c) < 0; }).map(function (c) {
+        return { X: c.X * s, Y: c.Y * s, r: radiusOf(c) };
+      }).concat(pickedHubs.map(function (h) { return { X: h.X * s, Y: h.Y * s, r: 5.5 }; }));
+      var reserved = [];
+      pickedHubs.forEach(function (h) {
+        for (var p = 0; p < LABEL_POS_PICK.length; p++) {
+          var box = boxFor(h.X, h.Y, LABEL_POS_PICK[p]), free = true;
+          for (var i = 0; i < staying.length && free; i++) {
+            var o = staying[i];
+            if (Math.abs(o.X - h.X * s) < 1e-6 && Math.abs(o.Y - h.Y * s) < 1e-6) { continue; }
+            if (boxHitsDot(box, o.X, o.Y, o.r)) { free = false; }
+          }
+          for (var k = 0; k < reserved.length && free; k++) { if (boxHitsBox(box, reserved[k])) { free = false; } }
+          if (free) { reserved.push(box); return; }
+        }
+      });
       var DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]];
-      clusters.forEach(function (c) {
+      moving.forEach(function (c) {
         var near = tooClose(c.X, c.Y, fixed, null);
-        if (!near) { return; }
-        var others = fixed.concat(clusters);
+        var others = fixed.concat(clusters), r = radiusOf(c);
+        function onReserved(X, Y) {
+          for (var k = 0; k < reserved.length; k++) { if (boxHitsDot(reserved[k], X * s, Y * s, r)) { return true; } }
+          return false;
+        }
         for (var ring = 1; ring <= 3; ring++) {
           for (var d = 0; d < DIRS.length; d++) {
             var X = near.X + DIRS[d][0] * (minU + pad) * ring, Y = near.Y + DIRS[d][1] * (minU + pad) * ring;
-            if (!tooClose(X, Y, others, c)) { c.X = X; c.Y = Y; return; }
+            if (!tooClose(X, Y, others, c) && !onReserved(X, Y)) { c.X = X; c.Y = Y; return; }
           }
         }
       });
       // Labels: right of the dot, else left of it, else hidden (the dot always
       // stays). A label never covers another marker's dot or another label.
+      // A picked hub's label is always shown: after right and left it tries
+      // above, below, the diagonals and a further ring; if even those are
+      // taken it is drawn right of the dot WITHOUT its hit rect and without
+      // catching the pointer, so it never takes a click from another marker.
+      // Every marker is measured at the point it is DRAWN at: c.X/c.Y for a
+      // cluster or single (possibly moved from the pick, above), h.X/h.Y for a
+      // pick.
       var dots = clusters.map(function (c) {
         return { X: c.X * s, Y: c.Y * s, r: c.members.length === 1 ? 4.5 : 10.5 };
       }).concat(pickedHubs.map(function (h) { return { X: h.X * s, Y: h.Y * s, r: 5.5 }; }));
       var labels = [];   // placed label boxes in screen px
-      function boxFor(X, Y, side) {
-        var b = side === "left" ? LABEL_BOX_LEFT : LABEL_BOX;
-        return [X * s + b[0], X * s + b[1], Y * s + b[2], Y * s + b[3]];
-      }
       function clearOf(box, X, Y) {
         for (var i = 0; i < dots.length; i++) {
           var o = dots[i];
           if (Math.abs(o.X - X * s) < 1e-6 && Math.abs(o.Y - Y * s) < 1e-6) { continue; }
-          if (box[0] < o.X + o.r && box[1] > o.X - o.r && box[2] < o.Y + o.r && box[3] > o.Y - o.r) { return false; }
+          if (boxHitsDot(box, o.X, o.Y, o.r)) { return false; }
         }
         for (var k = 0; k < labels.length; k++) {
-          var l = labels[k];
-          if (box[0] < l[1] && box[1] > l[0] && box[2] < l[3] && box[3] > l[2]) { return false; }
+          if (boxHitsBox(box, labels[k])) { return false; }
         }
         return true;
       }
-      function labelSide(X, Y) {
-        var sides = ["right", "left"];
-        for (var i = 0; i < sides.length; i++) {
-          var box = boxFor(X, Y, sides[i]);
-          if (clearOf(box, X, Y)) { labels.push(box); return sides[i]; }
+      function labelAt(X, Y, picked) {
+        var poss = picked ? LABEL_POS_PICK : LABEL_POS_SINGLE;
+        for (var i = 0; i < poss.length; i++) {
+          var box = boxFor(X, Y, poss[i]);
+          if (clearOf(box, X, Y)) { labels.push(box); return { pos: poss[i], hit: true }; }
         }
-        return null;
+        if (!picked) { return null; }
+        labels.push(boxFor(X, Y, LABEL_POS_PICK[0]));
+        return { pos: LABEL_POS_PICK[0], hit: false };
       }
       clear(markerLayer);
       clear(pickLayer);
       // Picked labels are placed first (they are the ones the reader is
       // looking for), then the singles in route order.
-      var pickSides = pickedHubs.map(function (h) { return labelSide(h.X, h.Y); });
+      var pickLabels = pickedHubs.map(function (h) { return labelAt(h.X, h.Y, true); });
       clusters.forEach(function (c) {
         var single = c.members.length === 1;
-        var side = single && view.z >= LABEL_ZOOM ? labelSide(c.X, c.Y) : null;
-        c.el = single ? singleMarker(c.members[0], side) : clusterMarker(c);
+        var label = single && view.z >= LABEL_ZOOM ? labelAt(c.X, c.Y, false) : null;
+        c.el = single ? singleMarker(c.members[0], label, c.X, c.Y) : clusterMarker(c);
         markerLayer.appendChild(c.el);
       });
-      pickedHubs.forEach(function (h, i) { pickLayer.appendChild(singleMarker(h, pickSides[i])); });
+      pickedHubs.forEach(function (h, i) { pickLayer.appendChild(singleMarker(h, pickLabels[i], h.X, h.Y)); });
       drawRoute();
     }
 
     function place(g, X, Y) { g.setAttribute("transform", "translate(" + X + " " + Y + ") scale(" + scaleK + ")"); }
 
-    function singleMarker(h, side) {
+    // X, Y: where the marker is drawn - the hub's own point, or the spot its
+    // one-member cluster was moved to, away from a picked hub.
+    function singleMarker(h, label, X, Y) {
       var picked = isPicked(h);
       var g = tid(svg("g", { "class": "mk" + (picked ? " pick" : ""), "data-iata": h.iata, tabindex: 0 }),
         "map-hub-" + h.iata);
       g.setAttribute("role", "button");
       g.setAttribute("aria-label", h.iata + " " + h.name);
-      place(g, h.X, h.Y);
+      place(g, X, Y);
       if (picked) { g.appendChild(svg("circle", { "class": "halo", r: 8.3 })); }
       g.appendChild(svg("circle", { "class": "dot", r: picked ? 4.2 : 3.2 }));
-      if (side) {
+      if (label) {
+        var pos = label.pos, b = pos.box;
         // A transparent rect under the label so a click between two glyphs
-        // still lands on the marker; the rect never covers another marker.
-        var b = side === "left" ? LABEL_BOX_LEFT : LABEL_BOX;
-        g.appendChild(svg("rect", { "class": "lblhit", x: b[0], y: b[2], width: b[1] - b[0], height: b[3] - b[2] }));
-        var t = svg("text", { "class": "lbl", x: side === "left" ? -7 : 7, y: 4,
-          "text-anchor": side === "left" ? "end" : "start" });
+        // still lands on the marker; the rect never covers another marker,
+        // so a label placed as a last resort (over something) goes without.
+        if (label.hit) {
+          g.appendChild(svg("rect", { "class": "lblhit", x: b[0], y: b[2], width: b[1] - b[0], height: b[3] - b[2] }));
+        }
+        var t = svg("text", { "class": "lbl", x: pos.tx, y: pos.ty, "text-anchor": pos.anchor });
+        if (!label.hit) { t.setAttribute("pointer-events", "none"); }
         t.textContent = h.iata;
         g.appendChild(t);
       }
