@@ -205,3 +205,26 @@ superset kept against an equal count.
 | ui-probes | **662 passed, 1 failed** (P22, unchanged) |
 | ui-restyle-probes | **279 passed, 7 failed, 10 skipped** (C2, C5, E3, E5, H1, H2, J6 - unchanged) |
 | map-search-probes (with the uncommitted I-series) | **114 passed, 1 failed** - F6 only (L8, by design) |
+
+## Fix round 3
+
+Re-test at fdd4a65 (docs/test-reports/map-search.md "Re-test: fdd4a65"; probes
+`test_ms_j_final.py`, committed by the tester at 882149c). One commit, 51a4fe1, both findings
+in `map.js`. An earlier round-3 session was cut off before committing; nothing of it was kept.
+
+| Finding | Fix | Probes |
+|---|---|---|
+| N1a | `singleMarker(h, label, X, Y)` now takes the point the marker is DRAWN at - `c.X/c.Y` for a one-member cluster (possibly moved away from a picked hub), `h.X/h.Y` for a pick - instead of reading `h.X/h.Y` itself. The hit rect and label are children of the same `<g>` and follow. KUL after picking SIN now sits at its moved spot, is clickable at its centre, and the `SIN` label is placed with KUL where it actually is | J1[SIN], J2[*-SIN] ×4 green |
+| N1b | A picked hub's label is always shown. Positions, in order: right, left, above, below, above-right, above-left, below-right, below-left, then a further ring (right, left, above, below at about 2×). Each position's box keeps the pinned right-hand box's margins about its own start point (`labelPos()` replaces `LABEL_BOX`/`LABEL_BOX_LEFT`; the right and left boxes are byte-for-byte the old ones). The spot is chosen and **reserved before** the neighbouring clusters are moved off the pick - the first position clear of every marker that stays put - and a moved cluster may not land on it; without that, the moved cluster took the only free side (LHR at z 2.25: AMS blocks the right, the moved LCY cluster took the left, and all twelve spots were shut). Last resort, if every position is taken: the label is drawn right of the dot WITHOUT its `rect.lblhit` and with `pointer-events="none"` on the text, so it never takes a click from another marker. Plain singles still try right and left only, then go without a label. `text-anchor` stays `start`/`end` (above/below use `start` at x = −10) | J1 ×5, J2 ×10 green; I2, I3, I4, F4, F5 green |
+
+No test added under `tests/` (the behaviour is pixel geometry in a browser; the tester's J-series
+is the test). `docs/plans/map-search.md` §4.6 already says "the label always shown".
+
+### Counts at 51a4fe1
+
+| Suite | Result |
+|---|---|
+| `python3 -O -m pytest -q -p no:cacheprovider` | **3821 passed, 13 skipped** |
+| ui-probes (`-O`, `-p no:randomly`) | **662 passed, 1 failed** (P22, unchanged) |
+| ui-restyle-probes | **279 passed, 7 failed, 10 skipped** (C2, C5, E3, E5, H1, H2, J6 - unchanged) |
+| map-search-probes (143) | **142 passed, 1 failed** - F6 only (L8, by design) |
