@@ -374,7 +374,19 @@ rewrites; 0 calls; prints the count that changed.
 | 14 | tool | `This will make at most {n} Seats.aero API call(s): one GET /partnerapi/routes per source ({n} sources). This process has spent {s} of 1,000; Seats.aero also counts your other runs today, which this tool cannot see.` |
 | 15 | tool refusals | `declined. No call was made and nothing was written.` · `no answer at the prompt (stdin closed or interrupted). No call was made and nothing was written. Pass --yes to run without the question.` · `every source failed ({n} of {n}); nothing was written.` · `0 airports met the thresholds (--min-sources {a}, --min-routes {b}); nothing was written. The histogram above shows what lower thresholds would give.` |
 
+| 16 | map footer, land.json fetch/parse failed (fix round 1, L4) | `AIRPORT DATA UNREADABLE - /static/land.json could not be read ({reason}). The map plots nothing.` (`{reason}` also `not a land file` for a JSON that is not one) |
+| 17 | column, under `Show results`, while the map is shown and a run exists (fix round 1, I1; testid `search-ran`) | `The search has run: its results are under Show results.` |
+| 18 | column subline below 900px, where the map is not displayed (fix round 1, I2) | `Type an airport or city.` |
+| 19 | tool refusals (fix round 1, L1, L12) | `{path} could not be written ({ErrorClass}: {detail}). Nothing was written.` · `--min-sources {a} can never be met by the {n} source(s) asked; no airport could be a hub. No call was made and nothing was written.` · `NOT OVERWRITTEN: {path} holds a capture with {k} source(s) ok, this run has {n}. The existing file is kept and nothing was written. Pass --force to replace it with this run.` |
+| 20 | tool console (fix round 1, L12, L13, L14) | `--min-sources not given: using {n}, the number of sources asked (the default 3 could never be met). Recorded in _meta.thresholds.` · `{seen} routes seen across {s} source(s); {b} route side(s) dropped for a code that is not three upper-case letters or digits; {o} row(s) that were not objects ignored; {u} region label(s) not in the known Seats.aero regions counted, not stored.` |
+
 `{reason}` in #2 is the HTTP status or the JSON error class name - never response text.
+Fix round 1 (L5): in #7, `{J}` counts every row that is not a plotted, engine-accepted
+airport - `searchable: false` and rows that failed validation (bad code, routes, sources,
+duplicate, not an object) alike - so that `K = J + M` always holds. Fix round 1 (L6): #3 is
+shown while From does not hold a plotted airport (empty, partial or an unplotted code), #4
+while From does and To does not, #5 when both do. Fix round 1 (L12): exit 5 also covers
+"the run had gaps and the existing, more complete file was kept".
 `{City}`, names and codes are data and go through `textContent` only.
 
 ### 4.10 Testids (all new; nothing renamed)

@@ -24,9 +24,13 @@
   var CLICK_PX = 4;
   var LABEL_ZOOM = 3;
   var ROUTE_POINTS = 64;
+  // The IATA label's box relative to its dot's centre, in screen px:
+  // [left, right, top, bottom] for three 11px monospace characters at x=7.
+  var LABEL_BOX = [6, 29, -8, 8];
 
   var S_NO_DATA = "NO AIRPORT DATA - run \"python -m src.map_tools capture-hubs\" on your Mac. The map plots nothing until then.";
   var S_UNREADABLE_A = "AIRPORT DATA UNREADABLE - /static/hubs.json could not be read (";
+  var S_UNREADABLE_LAND_A = "AIRPORT DATA UNREADABLE - /static/land.json could not be read (";
   var S_UNREADABLE_B = "). The map plots nothing.";
   var S_IDLE = "Click an airport to set From.";
   var S_FROM = "Click an airport to set To.";
@@ -124,7 +128,8 @@
   function load() {
     if (loading) { return loading; }
     loading = fetchJSON("/static/land.json").then(function (land) {
-      if (!validLand(land)) { throw new Error("land.json: not a land file"); }
+      return validLand(land) ? land : Promise.reject(new Error("not a land file"));
+    }).then(function (land) {
       return fetchJSON("/static/hubs.json").then(function (doc) {
         if (!doc || typeof doc !== "object" || !Array.isArray(doc.hubs)) {
           return { land: land, error: "hubs is not a list", meta: null, set: null };
@@ -136,7 +141,8 @@
         return { land: land, error: e.message, meta: null, set: null };
       });
     }, function (e) {
-      return { land: null, error: "land.json: " + e.message, meta: null, set: null };
+      // No land, no map: the pane is the sentence, naming land.json.
+      return { land: null, landError: e.message, error: null, meta: null, set: null };
     }).then(function (d) {
       data = d;
       d.hubs = d.set ? d.set.plotted : [];
@@ -208,7 +214,7 @@
 
     // Without a land file there is no map to draw; the sentence is the pane.
     if (!land) {
-      var only = tid(el("div", "map-status", S_UNREADABLE_A + data.error + S_UNREADABLE_B), "map-status");
+      var only = tid(el("div", "map-status", S_UNREADABLE_LAND_A + data.landError + S_UNREADABLE_B), "map-status");
       host.appendChild(only);
       return { setPicks: function () {}, closePopover: function () { return false; },
         popoverOpen: function () { return false; }, refresh: function () {}, view: function () { return null; } };
@@ -224,7 +230,10 @@
     var pop = null;          // the open popover's state
     var drag = null;
 
-    var root = tid(svg("svg", { "class": "map-svg", role: "img", "aria-label": S_ARIA_MAP,
+    // A group, not an img: an img role would hide the marker buttons inside it
+    // from assistive technology. tabindex -1 (not in the tab order) makes the
+    // group a node of its own in the accessibility tree, with the buttons in it.
+    var root = tid(svg("svg", { "class": "map-svg", role: "group", "aria-label": S_ARIA_MAP, tabindex: -1,
       preserveAspectRatio: "xMidYMid meet" }), "map-svg");
     var landPath = tid(svg("path", { id: "map-land", "class": "map-land", d: land.d }), "map-land");
     var routeLayer = svg("g", { "class": "map-routes" });
@@ -335,7 +344,10 @@
       drag = null;
       root.classList.remove("dragging");
       try { root.releasePointerCapture(e.pointerId); } catch (err) { /* already released */ }
-      if (wasClick && e.type === "pointerup" && hit && hit.isConnected) { markerActivated(hit); }
+      if (wasClick && e.type === "pointerup") {
+        if (hit && hit.isConnected) { markerActivated(hit); }
+        else if (pop) { closePopover(false); }
+      }
     }
     root.addEventListener("pointerup", endDrag);
     root.addEventListener("pointercancel", endDrag);
@@ -380,18 +392,47 @@
         }
         if (!joined) { clusters.push({ X: h.X, Y: h.Y, members: [h], lead: h }); }
       }
+      // A picked hub is never clustered and always drawn at its own point; a
+      // cluster that forms within 18px of it is pushed out to 18px so the two
+      // never overlap (the members' list still opens from the moved marker).
+      var min = CLUSTER_PX / s;
+      clusters.forEach(function (c) {
+        pickedHubs.forEach(function (h) {
+          var dx = c.X - h.X, dy = c.Y - h.Y;
+          if (Math.abs(dx) >= min || Math.abs(dy) >= min) { return; }
+          var big = Math.max(Math.abs(dx), Math.abs(dy));
+          if (big < 1e-9) { dx = 1; dy = 0; big = 1; }
+          var f = (min + 0.5 / s) / big;
+          c.X = h.X + dx * f; c.Y = h.Y + dy * f;
+        });
+      });
+      // Labels are hidden where they would sit on another marker's dot; the
+      // dot itself always stays. Boxes in screen px around each marker centre.
+      var boxes = clusters.map(function (c) {
+        return { X: c.X, Y: c.Y, r: c.members.length === 1 ? 4.5 : 10.5 };
+      }).concat(pickedHubs.map(function (h) { return { X: h.X, Y: h.Y, r: 5.5 }; }));
+      function labelFits(X, Y) {
+        var l = X * s + LABEL_BOX[0], r = X * s + LABEL_BOX[1], t = Y * s + LABEL_BOX[2], b = Y * s + LABEL_BOX[3];
+        for (var i = 0; i < boxes.length; i++) {
+          var o = boxes[i];
+          if (o.X === X && o.Y === Y) { continue; }
+          var ox = o.X * s, oy = o.Y * s;
+          if (l < ox + o.r && r > ox - o.r && t < oy + o.r && b > oy - o.r) { return false; }
+        }
+        return true;
+      }
       clear(markerLayer);
       clusters.forEach(function (c) {
-        c.el = c.members.length === 1 ? singleMarker(c.members[0]) : clusterMarker(c);
+        c.el = c.members.length === 1 ? singleMarker(c.members[0], labelFits(c.X, c.Y)) : clusterMarker(c);
         markerLayer.appendChild(c.el);
       });
-      pickedHubs.forEach(function (h) { markerLayer.appendChild(singleMarker(h)); });
+      pickedHubs.forEach(function (h) { markerLayer.appendChild(singleMarker(h, labelFits(h.X, h.Y))); });
       drawRoute();
     }
 
     function place(g, X, Y) { g.setAttribute("transform", "translate(" + X + " " + Y + ") scale(" + scaleK + ")"); }
 
-    function singleMarker(h) {
+    function singleMarker(h, labelFits) {
       var picked = isPicked(h);
       var g = tid(svg("g", { "class": "mk" + (picked ? " pick" : ""), "data-iata": h.iata, tabindex: 0 }),
         "map-hub-" + h.iata);
@@ -400,7 +441,11 @@
       place(g, h.X, h.Y);
       if (picked) { g.appendChild(svg("circle", { "class": "halo", r: 8.3 })); }
       g.appendChild(svg("circle", { "class": "dot", r: picked ? 4.2 : 3.2 }));
-      if (picked || view.z >= LABEL_ZOOM) {
+      if (picked || (view.z >= LABEL_ZOOM && labelFits !== false)) {
+        // A transparent rect under the label so a click between two glyphs
+        // still lands on the marker.
+        g.appendChild(svg("rect", { "class": "lblhit", x: LABEL_BOX[0], y: LABEL_BOX[2],
+          width: LABEL_BOX[1] - LABEL_BOX[0], height: LABEL_BOX[3] - LABEL_BOX[2] }));
         var t = svg("text", { "class": "lbl", x: 7, y: 4 });
         t.textContent = h.iata;
         g.appendChild(t);
@@ -523,6 +568,8 @@
       return !h && /^[A-Za-z0-9]{3}$/.test(code) ? S_NOT_ON_MAP_A + code.toUpperCase() + S_NOT_ON_MAP_B : "";
     }
 
+    // The sentence describes the fields: From needs an airport until it holds
+    // a plotted one, then To; both set = the line.
     function setPicks(fromHub, toHub, fromTyped, toTyped) {
       // Called on every keystroke: the markers are rebuilt only when a pick
       // actually changed (or the pane has not been measured yet).
@@ -536,7 +583,7 @@
         text = S_NO_DATA;
       } else {
         if (picks.from && picks.to) { text = S_BOTH; }
-        else if (!str(fromTyped).trim()) { text = S_IDLE; }
+        else if (!picks.from) { text = S_IDLE; }
         else { text = S_FROM; }
         text += notOnMap(fromTyped, picks.from) + notOnMap(toTyped, picks.to);
       }
@@ -549,10 +596,14 @@
       var set = data.set;
       if (!set || set.total === 0) { prov.textContent = ""; prov.hidden = true; return; }
       var when = typeof data.meta.captured_at === "string" ? data.meta.captured_at.slice(0, 10) : "an unknown date";
+      // K = J + M, so the reader can check it. A row that failed validation
+      // (bad code, routes, sources, a duplicate, not an object) is not an
+      // airport the engine accepts either, and is counted under J.
       var k = set.total - set.plotted.length;
+      var j = set.notSearchable + set.dropped;
       var text = set.total + " airports Seats.aero tracked on " + when + " · " + k + " not plotted";
       if (k > 0) {
-        text += " (" + set.notSearchable + " not in data/airports.csv, " + set.noCoords + " without coordinates)";
+        text += " (" + j + " not in data/airports.csv, " + set.noCoords + " without coordinates)";
       }
       prov.textContent = text; prov.hidden = false;
     }
