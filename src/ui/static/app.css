@@ -359,13 +359,13 @@ table.grid .pin-right::after { left: 0; }
 .strip-row { display: contents; }
 .fieldwrap { display: grid; gap: 0; min-width: 0; }
 .suggest-slot { min-width: 0; }
-/* The autofill list sits directly under its field: in flow at column width;
-   on the wrapping strip (below 900px) an overlay across the strip's width,
-   whose top app.js sets to the field's bottom, so it can never widen the page. */
+/* The autofill list: in flow directly under its field at column width; on
+   the wrapping strip (below 900px) an overlay under the strip, across its
+   width, so it can never widen the page whichever field it belongs to. */
 .suggest { margin-top: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; display: grid; z-index: 5; }
 .strip { position: relative; }
 @media (max-width: 899.98px) {
-  .suggest { position: absolute; left: 12px; right: 12px; box-shadow: 0 12px 32px rgba(0,0,0,.45); }
+  .suggest { position: absolute; left: 12px; right: 12px; top: 100%; box-shadow: 0 12px 32px rgba(0,0,0,.45); }
 }
 .srow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 12px; background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; font-size: var(--s13); min-width: 0; }
 .srow:last-child { border-bottom: 0; }

@@ -1398,9 +1398,6 @@
       b.addEventListener("click", function () { pickSuggest(key, i, input, slot); });
       add(list, b);
     });
-    // On the wrapping strip (below 900px) the list is an overlay positioned
-    // under its field; at column width it sits in flow and `top` is unused.
-    list.style.top = (input.offsetTop + input.offsetHeight + 4) + "px";
     clear(slot); add(slot, list);
     input.setAttribute("aria-controls", list.id);
     input.setAttribute("aria-expanded", "true");
