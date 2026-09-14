@@ -65,7 +65,8 @@ def test_the_token_is_only_in_the_page(client):
     page = client.get("/", token=False)
     assert page.status == 200
     assert f'<meta name="po-token" content="{client.token}">' in page.text
-    for path in ("/static/app.js", "/static/app.css"):
+    for path in ("/static/app.js", "/static/app.css", "/static/map.js", "/static/land.json",
+                 "/static/hubs.json"):
         assert client.token not in client.get(path, token=False).text
 
 
@@ -180,6 +181,8 @@ def test_unknown_api_paths_are_404_and_a_trip_id_is_never_a_path(client):
 
 def test_the_security_headers_are_on_every_response(client):
     for r in (client.get("/"), client.get("/static/app.css"), client.get("/api/state"),
+              client.get("/static/map.js"), client.get("/static/land.json"),
+              client.get("/static/hubs.json"),
               client.get("/nope"), client.get("/api/state", token=False)):
         csp = r.headers["content-security-policy"]
         assert "default-src 'none'" in csp and "script-src 'self'" in csp

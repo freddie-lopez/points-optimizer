@@ -38,10 +38,17 @@ from typing import Callable, Dict, Optional, Tuple
 from urllib.parse import urlsplit
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-STATIC_FILES: Dict[str, Tuple[str, str]] = {
-    "/": ("index.html", "text/html; charset=utf-8"),
-    "/static/app.js": ("app.js", "text/javascript; charset=utf-8"),
-    "/static/app.css": ("app.css", "text/css; charset=utf-8"),
+DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+# URL path -> (file, content type). A fixed map: nothing is joined from the
+# URL. The two JSON files are the map's data: land.json is generated into the
+# static dir; hubs.json lives in data/ because src.map_tools writes it there.
+STATIC_FILES: Dict[str, Tuple[Path, str]] = {
+    "/": (STATIC_DIR / "index.html", "text/html; charset=utf-8"),
+    "/static/app.js": (STATIC_DIR / "app.js", "text/javascript; charset=utf-8"),
+    "/static/map.js": (STATIC_DIR / "map.js", "text/javascript; charset=utf-8"),
+    "/static/app.css": (STATIC_DIR / "app.css", "text/css; charset=utf-8"),
+    "/static/land.json": (STATIC_DIR / "land.json", "application/json; charset=utf-8"),
+    "/static/hubs.json": (DATA_DIR / "hubs.json", "application/json; charset=utf-8"),
 }
 TOKEN_PLACEHOLDER = "{{PO_TOKEN}}"
 
@@ -238,9 +245,15 @@ def _handler_for(server: UIServer):
                 if method != "GET" or path not in STATIC_FILES:
                     self._send_json(404, {"error": "not_found", "message": "Not found."})
                     return
-                name, ctype = STATIC_FILES[path]
-                text = (STATIC_DIR / name).read_text(encoding="utf-8")
-                if name == "index.html":
+                file, ctype = STATIC_FILES[path]
+                try:
+                    text = file.read_text(encoding="utf-8")
+                except OSError:
+                    # hubs.json is written by a tool and may be absent; the page
+                    # reports a 404 as "unreadable", never as an empty map.
+                    self._send_json(404, {"error": "not_found", "message": "Not found."})
+                    return
+                if file.name == "index.html":
                     text = text.replace(TOKEN_PLACEHOLDER, server.token)
                 self._send_text(200, text, ctype)
                 return

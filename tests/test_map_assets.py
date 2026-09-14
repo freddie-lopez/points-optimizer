@@ -176,3 +176,63 @@ def test_hubs_json_carries_no_key_material():
 
 def doc_sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+# --------------------------------------------------------------------- served
+
+
+@pytest.fixture
+def client(tmp_path):
+    from tests._ui_harness import running_server, write_wallet
+
+    with running_server(wallet_path=write_wallet(tmp_path / "wallet.json")) as c:
+        yield c
+
+
+@pytest.mark.parametrize("path,ctype", [
+    ("/static/map.js", "text/javascript; charset=utf-8"),
+    ("/static/land.json", "application/json; charset=utf-8"),
+    ("/static/hubs.json", "application/json; charset=utf-8"),
+])
+def test_the_map_files_are_served_with_the_security_headers(client, path, ctype):
+    r = client.get(path, token=False)
+    assert r.status == 200
+    assert r.headers["content-type"] == ctype
+    assert r.headers["cache-control"] == "no-store"
+    assert r.headers["cross-origin-resource-policy"] == "same-origin"
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert "default-src 'none'" in r.headers["content-security-policy"]
+    if path.endswith(".json"):
+        json.loads(r.text)
+
+
+def test_a_missing_hubs_file_is_a_404_never_a_500(client, tmp_path, monkeypatch):
+    from src.ui import server as server_mod
+
+    absent = tmp_path / "absent" / "hubs.json"
+    monkeypatch.setitem(server_mod.STATIC_FILES, "/static/hubs.json",
+                        (absent, "application/json; charset=utf-8"))
+    r = client.get("/static/hubs.json", token=False)
+    assert r.status == 404
+    assert r.json() == {"error": "not_found", "message": "Not found."}
+
+
+def test_a_hubs_file_carrying_the_key_is_refused_by_egress(client, tmp_path, monkeypatch):
+    """Two layers: the tool refuses to write it (test_map_tools), and if one
+    were planted anyway the server refuses to send it."""
+    from src import config
+    from src.ui import server as server_mod
+
+    fake = "sec_fake_key_ABCDEFGHIJ"
+    monkeypatch.setenv(config.KEY_ENV_VAR, fake)
+    doc = map_tools.empty_document()
+    doc["_meta"]["note"] = doc["_meta"]["note"] + " " + fake
+    planted = tmp_path / "hubs.json"
+    planted.write_text(map_tools.render_document(doc), encoding="utf-8")
+    monkeypatch.setitem(server_mod.STATIC_FILES, "/static/hubs.json",
+                        (planted, "application/json; charset=utf-8"))
+    r = client.get("/static/hubs.json", token=False)
+    assert r.status == 500
+    assert fake not in r.text
+    assert r.json()["error"] == "internal"
+    assert any("REFUSED" in line for line in client.logs)
