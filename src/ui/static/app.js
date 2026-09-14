@@ -1354,6 +1354,13 @@
       m.ctl = window.POMap.mount(host, { onPick: onMapPick });
       m.loading = false;
       syncMap();
+    }).catch(function (e) {
+      // load() resolves on every data failure; this is for mount() throwing.
+      // The pane is never left blank: the sentence names what went wrong.
+      m.loading = false;
+      clear(host);
+      add(host, tid(el("div", "map-status", MAP_UNREADABLE + (e && e.message ? e.message : String(e)) +
+        "). The map plots nothing."), "map-status"));
     });
   }
 

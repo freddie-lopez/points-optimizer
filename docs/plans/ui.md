@@ -358,7 +358,8 @@ counted in `coverage_note`.
 ### 4.7 Design system (the spec; implement exactly)
 
 Rewritten for the restyle to direction C ("Graphite"): a blue-black ground, one blue
-accent for identity and one coral accent for the single primary action. The approved
+accent for identity and one coral accent for the single primary action. Decision A (map
+search round): the map's route line is the one other allowed use of coral. The approved
 reference is `docs/design/restyle-ref/DirectionC.dc.html` (+ `.png`); the decisions
 are in `docs/plans/ui-restyle.md`. Single-theme dark.
 

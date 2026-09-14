@@ -57,8 +57,8 @@ hides below 900px.
    1,000/day budget are UNVERIFIED: the tool assumes one call per source, counts every
    request, accepts either a JSON list or `{"data": [...]}`, treats any other shape as
    that source being `unreadable` (recorded, never a hub), and if a dict answer carries
-   `hasMore`/`cursor` it records the source as `incomplete` and does not follow it. 30
-   sources are in `SEATS_AERO_SOURCES`, so the promise is "at most 30 calls".
+   `hasMore`/`cursor` it records the source as `incomplete` and does not follow it. 28
+   sources are in `SEATS_AERO_SOURCES`, so the promise is "at most 28 calls".
 4. **Empty-data state ships.** `data/hubs.json` is committed with `hubs: []` and a `_meta`
    saying no capture has run. The map then renders land, pan/zoom and the sentence in
    §4.9 #1, and autofill is inert (typing works exactly as today). No placeholder list,
@@ -150,6 +150,10 @@ hides below 900px.
     static files; README "Local UI" gains a "Map search" paragraph and a `src.map_tools`
     section mirroring the `trips_tools` one (`test_readme_local_ui_is_accurate` reads
     that section - the coder runs it after editing). UI-BRIEF.md is not edited.
+20. **Zoom-1 letterbox stays (decision C, manager review).** At z=1 the whole world is
+    shown, letterboxed with ocean above and below in a wide pane, rather than the
+    mockup's `0 30 1000 440` crop (which cannot be panned at z=1, coder deviation 1).
+    Tsuki accepted the built page as it matches the last approved mockup.
 
 ## 3. Out of scope
 
@@ -542,7 +546,7 @@ Do not run the full suite until step 11. `tests/test_ui_static_rules.py`,
 
 - The Routes endpoint's behaviour (pagination, budget accounting, response size - a
   source could return tens of thousands of routes) is unobserved. The tool promises "at
-  most 30 calls" and keeps it by never following a cursor; if Seats.aero paginates at,
+  most 28 calls" and keeps it by never following a cursor; if Seats.aero paginates at,
   say, 1,000 routes, the hub set will be biased toward whatever page one holds, and
   `_meta.sources_incomplete` is the only warning. The first real run decides.
 - Thresholds 3/20 are unverified guesses; too tight loses real hubs (e.g. an airport
