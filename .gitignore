@@ -30,3 +30,8 @@ data/cache/
 
 # The restyle probes screenshot every run; the committed shots/ is the record.
 docs/test-reports/ui-restyle-probes/shots-out/
+
+# The full airportsdata CSV (3 MB) is the source of record for data/airportsdata_iata.csv
+# but is not committed; tools/filter_airportsdata.py reads it, and the test that
+# compares the two skips when it is absent.
+docs/design/map-ref/airportsdata-20260905-airports.csv
