@@ -299,16 +299,26 @@ def test_F10_400_hubs_pan_without_long_tasks_and_zoom_keeps_the_node_count(brows
             assert [u.split("/")[-1] for u in reqs if u.endswith("land.json") or u.endswith("hubs.json")] == ["land.json", "hubs.json"]
 
 
-def test_F11_a_marker_label_is_not_clickable(browser):
-    """At zoom >= 3 the IATA text beside a dot has pointer-events: none; a
-    click on the text (the biggest part of the marker) does nothing."""
+def test_F11_a_marker_label_is_clickable(browser):
+    """Re-test round: the round-1 probe zoomed about the pane centre and
+    clicked SYD's label off-screen (my error, noted in the report). Now: zoom
+    by wheel ABOUT SYD so its label stays on screen, then click the text."""
     with hub_server() as srv:
         with browser.page(srv.port) as pg:
             C.open_search(pg)
-            for _ in range(3):
-                pg.click(C.q("map-zoom-in"))
-                pg.wait_for_timeout(120)
-            r = pg.evaluate("() => { const t = document.querySelector('[data-testid=map-hub-SYD] text.lbl'); const b = t.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; }")
-            pg.mouse.click(r[0], r[1])
+            m = [m for m in C.markers(pg) if m["id"] == "map-hub-SYD"][0]
+            for _ in range(6):
+                C.wheel(pg, -300, at=(m["x"], m["y"]))
+                m = [m for m in C.markers(pg) if m["id"] == "map-hub-SYD"][0]
+            assert C.zoom_of(pg)["z"] >= 3 and m["label"] == "SYD"
+            r = pg.evaluate("() => { const b = document.querySelector('[data-testid=map-hub-SYD] text.lbl').getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; }")
+            svg = C.box(pg, C.q("map-svg"))
+            assert svg["x"] < r[0] and r[0] + r[2] < svg["right"] and svg["y"] < r[1] and r[1] + r[3] < svg["bottom"], (r, svg)
+            pg.mouse.click(r[0] + r[2] / 2, r[1] + r[3] / 2)
             pg.wait_for_timeout(200)
             assert C.values(pg)["from"] == "SYD", "clicking the SYD label did not pick SYD"
+            pg.fill(C.q("search-from"), "")
+            pg.wait_for_timeout(150)
+            pg.mouse.click(r[0] + 1, r[1] + 1)          # a corner of the box, between glyphs
+            pg.wait_for_timeout(200)
+            assert C.values(pg)["from"] == "SYD"

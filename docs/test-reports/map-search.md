@@ -335,3 +335,184 @@ F6 → L8 · F11 → L10 · H3[1180], H3[1300] → M2 · H9 → L9.
   found L2 and L7, which a hand check at 12 hubs would not show.
 - "`sf` also offers SYD" - as described and per the rule (G1).
 - Not admitted: M1, M2, L1, L3–L6, L9–L14.
+
+---
+
+# Re-test: f1fe286
+
+Fix commits 32b503a (tool), 4dacd19 (app.js/app.css), 33dd029 (map.js); coder report
+"Fix round 1". Each fix was attacked on its own terms, not only re-run: new probe file
+`test_ms_i_retest.py` (I1–I16), plus two of my own probes corrected (below). Suites
+re-run in full. Nothing committed; nothing outside `docs/test-reports/map-search-probes/`
+and this file touched.
+
+## Per-finding status
+
+| # | Status | What I did to it |
+|---|---|---|
+| M1 | **Fixed** | `Show map` closes the drawer, clears `has-drawer`, the grid goes back to `360px …`; `Show results` does not resurrect the drawer (`q.sel` cleared); Esc order with results shown = suggestions → drawer, with the map shown = popover → suggestions (E7, E8 rewritten, I7 ×3). |
+| M2 | **Fixed** | Column 220px with a docked drawer: results 448/568/708px at 1180/1300/1440 (grid pinned byte-exact); every input, the cabin select and Run are 186px and inside the column; nothing clips (`scrollWidth ≤ clientWidth` on every column element); the autofill list stays inside 219px, codes readable (the airport name is ellipsised after ~10 characters at 220 - acceptable, the code is what the pick writes); a typed search from the narrow column opens the same confirm dialog; `bodySW == width` (I7 ×3, H3 ×3 green). Shot `rt-1180-drawer.png`. |
+| L1 | **Fixed** | ENOSPC half-way, `--out` a directory, `--out` under a file: each is exit 1 with `{path} could not be written ({Class}: …). Nothing was written.`, no `.tmp` left, target untouched; `mark-searchable` on ENOSPC the same; a `RuntimeError` from the transport is `failed(RuntimeError)` in `_meta` (B1–B3, I10 green). Ctrl-C mid-loop is still a traceback (a `BaseException`, nothing written) - fine. |
+| L2 | **Partly fixed → see N1** | The pushed cluster no longer overlaps the picked dot (F4 green) but the push looks only at the picked hub: with 137 hubs, picking SFO pushes the LAS cluster to 13.3px from the MRY cluster (18px rule broken between two clusters, I3 red), and under SFO's always-shown label (I2, I4 red). |
+| L3 | **Fixed** | `{"w": 1}` as land.json → string #16 with `not a land file`, no page error, no stuck loading; the typed form still searches (C5, I9). |
+| L4 | **Fixed** | `/static/land.json could not be read (SyntaxError)` / `(HTTP 404)` / `(not a land file)` byte-exact (#16); hubs failures keep #2 (C6 ×2, I9 ×3). |
+| L5 | **Fixed** | `8 airports … · 6 not plotted (5 not in data/airports.csv, 1 without coordinates)`: K = J + M with dropped rows inside J, as the plan now says (C4). |
+| L6 | **Fixed** | `s`/SYD → #3; `SOF`/SYD → #3 + `SOF is not on this map…`; `""`/SYD → #3; `LHR`/SYD → #5; `LHR`/`xx` → #4 (C8, I-series). |
+| L7 | **Partly fixed → see N1** | Without a pick: no label over any dot and no label over any label at all 8 button steps and 12 wheel steps (I1 green); a hidden-label hub's dot is still clickable (I4 first half). With a pick: the picked label is exempt from the check and sits on the neighbouring cluster at every zoom (I2 red: LHR's label over the AMS/LCY cluster, 9 hits across the zoom range). |
+| L8 | Open by design | F6 stays red as recorded; the popover lists every member (verified in F4/E-series picks). |
+| L9 | **Fixed** | `role=group`, `tabindex=-1`: the tree shows the group with 66 marker buttons (12-hub file: 5, SYD named); Tab from `Run search` lands on a hub marker and reaches a cluster within 5 tabs; the svg itself is never a tab stop (H9, I5). |
+| L10 | **Fixed** | Clicking the label text picks; clicking the label box's corner (between glyphs, the `rect.lblhit`) picks (F11 rewritten, I-series). |
+| L11 | **Fixed** | Ocean click closes the list; a click on the list keeps it; a click on another cluster swaps lists (E9, I6). |
+| L12 | **Mostly fixed → see N2** | Impossible `--min-sources` refused with 0 calls and before the prompt (the prompt is never asked, I11); the default follows a shorter list with the #20 sentence and lands in `_meta.thresholds`; duplicates asked once, in first-seen order, announced as 3; a gappy run keeps a more complete file, exit 5, `NOT OVERWRITTEN …` byte-exact, `.tmp`-free, and `--force` replaces it with `WRITTEN WITH GAPS` (B4–B6, I11–I13). But a **gapless** narrower run walks past the guard (N2). |
+| L13 | **Fixed** | `regions` hold codes (`["EU"]`), the hostile label is counted in the #20 line and never stored (B13, I15). |
+| L14 | **Fixed** | README names `--api-key`, `--file`, `--force`; the console line separates not-object rows (B14, B19, I16). |
+| I1 | **Fixed** | `search-ran` = `The search has run: its results are under Show results.` in the column while the map is shown after a run; gone under Show results; the map's own footer is byte-stable (C9, E6). |
+| I2 | **Fixed** | Two sublines, exactly one displayed: `Type an airport or city.` at 899, the map sentence at 900 (I8 ×2). |
+
+Strings **#16–#20**: every one pinned byte-exact against the DOM or the console (I9 ×3,
+I7 ×3 for #17, I8 for #18, I10/I11/I13 for #19, I11/I15 for #20).
+
+## New findings
+
+### N1 · Medium · The L2 push and the L7/L10 label rules combine into an unclickable cluster under the picked label
+
+- **Repro**: 137-hub fixture, world zoom, type/pick `SFO`. Probes **I2, I3, I4**; shot
+  `rt-I4-pushed.png`: the LAS "5" cluster is pushed 18px to the right of SFO - exactly
+  under SFO's label, which a picked hub always draws (`picked || labelFits`) and which
+  now carries a hit rect (L10). `elementFromPoint` at the cluster's centre returns
+  `map-hub-SFO/lbl`; a click there is the From-airport no-op, the list never opens.
+  The pushed cluster is also 13.3px from the MRY "3" cluster (18px rule between two
+  clusters broken; the push checks only the picked hub, not the other markers).
+- **Expected**: coordinator's rule for this round: no label overlaps a dot or another
+  label; every marker keeps 18px; every marker clickable at its centre.
+- **Location**: `map.js` `recluster()` - the push loop (only `pickedHubs` are avoided)
+  and `singleMarker(h, labelFits)` (`picked ||` exempts the picked label). A picked
+  label placed on the free side (left/above when right is taken), or hidden like any
+  other when it would cover a marker, plus a push that re-checks the other clusters,
+  would close it. Real data on day one (~141 airports) is the dense fixture.
+
+### N2 · Low · A gapless narrower run still replaces a more complete capture without a word
+
+- **Repro**: full 28-source capture, then `capture-hubs --sources aeroplan --yes`
+  (every asked source answers → no gaps). Probe **I14**: the 28-source file becomes a
+  1-source file, exit 0, no `NOT OVERWRITTEN`, `--force` not needed.
+- **Expected**: "overwrite of a more complete capture refused without --force" - the
+  guard keys on `gaps`, not on `sources_ok` shrinking.
+- **Location**: `map_tools.run_capture` - `kept = _more_complete_existing(...) if gaps
+  and not args.force`. Dropping `gaps and` (compare `sources_ok` counts always) is the
+  one-token fix; `--sources` for "a partial or inspectable run" would then need
+  `--force` or a different `--out`, which the README already offers.
+
+### Info
+
+- At 220px the autofill rows show the code and ~10 characters of the name; the `title`
+  keeps the full name. Acceptable at that width.
+- Ctrl-C while a source is in flight is a Python traceback (`KeyboardInterrupt` is not
+  an `Exception`); nothing is written. Same as trips_tools.
+
+## My own probes, corrected (as the coordinator noted)
+
+- **F11** (round 1) zoomed about the pane centre and clicked SYD's label ~950px outside
+  the pane - my error, not a defect; the L10 red was unfounded. Rewritten: wheel-zoom
+  about SYD until its label shows, assert the label box is inside the SVG, click its
+  centre and its top-left corner. Green at f1fe286.
+- **E8** (round 1) expected the drawer to stay open beside the map after `Show map` -
+  the exact behaviour M1 forbids; it and E7 could not both pass. Rewritten to the new
+  rule (results shown: Esc closes suggestions then the drawer; map shown: `Show map`
+  has closed the drawer, Esc closes the popover then the suggestions). Green.
+- I7's first draft demanded ≥ 100px of the `Show map` toggle (99px natural width) and
+  I4 looked for a cluster by lead code; both corrected before the run counted.
+
+## Counts at f1fe286
+
+| Suite | Result | Coder claimed |
+|---|---|---|
+| `python3 -O -m pytest -q -p no:cacheprovider` | **3819 passed, 13 skipped** | 3819 / 13 |
+| same without `-O` | **3819 passed, 13 skipped** | 3819 / 13 |
+| ui-probes (`-O -p no:randomly`) | **662 passed, 1 failed** (P22) | 662 / 1 |
+| ui-restyle-probes | **279 passed, 7 failed, 10 skipped** (C2, C5[search_ok], E3, E5, H1, H2, J6 - unchanged pins/baseline) | 279 / 7 / 10 |
+| map-search-probes (115 = 94 round-1 + 5 corrected/rewritten + 16 new) | **110 passed, 5 failed**: F6 (L8, by design), I2, I3, I4 (N1), I14 (N2) | 91 / 3 at 33dd029 (F6, F11, E8) |
+
+Round-1 reds now green: B1–B6, B13, B14, B19, C4, C5, C6 ×2, C8, E7, E9, F4, F5, H3 ×2,
+H9 (20 of 23); F11 and E8 green after my corrections; F6 red by design. Verdict on the
+8 older probe reds unchanged (all pins or baseline; C2 still the manager's coral call).
+
+---
+
+# Re-test: fdd4a65
+
+Fix commits d644183 (N2) and 5250645 (N1); coder report "Fix round 2". New probe file
+`test_ms_j_final.py` (J1–J9): N1 with the 137-hub fixture at every button zoom step
+in and out, picks at SFO, JFK, LHR, SIN, SYD alone and as all ten From/To pairs, plus
+three pairs of hubs closer than 18px to each other; every audit collects EVERY problem
+(18px between all markers, `elementFromPoint` at every on-screen marker centre must be
+that marker, no label over a dot or a label, picked label present right or mirrored)
+so one failure hides none. N2 with subset / superset / equal / disjoint source sets,
+each with and without gaps and with and without `--force`, plus an empty, a broken and
+a hostile existing file.
+
+## Final status per finding
+
+| # | Status |
+|---|---|
+| M1, M2 | Fixed (f1fe286), re-verified green (E7, H3 ×3, I7 ×3). |
+| L1 | Fixed, re-verified (B1–B3, I10). |
+| L2 | Fixed as far as multi-member clusters go: a cluster displaced from a pick lands on a free 18px spot, lists its members, the pick sits in the top layer (F4, I3, I4, J4 green). The single-member case is N1 below. |
+| L3, L4, L5, L6 | Fixed, re-verified (C4–C6, C8, I9). |
+| L7 | Fixed without a pick (I1: no label over any dot or label at 8 button and 12 wheel zoom steps). With a pick see N1. |
+| L8 | Open by design (F6). |
+| L9, L10, L11 | Fixed, re-verified (I5, I6, F11). |
+| L12 | Fixed; the overwrite guard is now N2's. |
+| L13, L14, I1, I2 | Fixed, re-verified (I15, I16, I7, I8). |
+| N1 | **Partly fixed.** I2, I3, I4 (the round-2 probes) are green: the picked label no longer covers a cluster, clusters keep 18px from each other, the displaced cluster is clickable. The wider audit (J1, J2) finds two things left, below. |
+| N2 | **Fixed.** Subset kept (exit 1 gapless, 5 with gaps, `NOT OVERWRITTEN … holds a capture with 4 source(s) ok, this run has 2/1.` byte-exact, file byte-identical, no `.tmp`), `--force` replaces (exit 0 / 5); superset replaces; equal set replaces (the newer run); disjoint: larger count replaces, smaller is kept, equal count replaces; the guard ignores the committed empty file, a broken file and a `sources_ok` full of non-strings (J5–J9, I13, I14 all green). |
+
+## What is left (N1's remainder)
+
+### N1a · Medium · A single hub within 18px of a pick is not moved: it sits under the pick, unclickable, under the pick's label
+
+- **Repro**: 137-hub fixture, world zoom, pick `SIN` (alone or in any pair). Probes
+  J1[SIN], J2[*-SIN] ×4; shot `final-sin.png`: KUL's hollow dot 6.5px from SIN's, inside
+  the halo, under the mirrored `SIN` label; `elementFromPoint` at KUL's centre is
+  `map-hub-SIN`.
+- **Why**: the relocation moves `c.X/c.Y` and works for clusters (`clusterMarker(c)`
+  draws at `c.X`), but `singleMarker(h)` draws at `h.X/h.Y` - the hub's own point - so
+  a one-member cluster stays where it was, while the label placement (`labelSide(c.X,
+  c.Y)` / the `dots` list) believes it moved and puts the picked label over it.
+- **Location**: `map.js` `recluster()` → `singleMarker(c.members[0], side)` /
+  `place(g, h.X, h.Y)`; drawing singles at `c.X/c.Y` closes it (the marker's testid
+  and pick still identify the hub).
+
+### N1b · Low · The picked hub loses its label when both sides are taken
+
+- **Repro**: pick `SFO`, `JFK` (z = 1) or `LHR` (z = 1–1.5): J1 ×3, J2 ×8 (`picked-label-
+  hidden`); shot `final-sfo.png` - filled dot with halo between the "3" and "5"
+  clusters, no `SFO` text.
+- **Expected**: plan §4.6 "Picked hub: … the label always shown"; the coordinator's
+  bar for this round "picked label present or mirrored". The coder's round-2 rule
+  applies right/left/hidden to picks too. The pick stays distinguishable (filled +
+  halo, the only such dot), the input holds the code, so Low - but it is the plan's
+  own sentence.
+- **Location**: `map.js` `labelSide()`/`pickSides` - a third position (above or
+  below) or a picked-label-wins rule (hide the neighbour's label instead) would keep
+  the promise.
+
+Everything else in the N1 audit holds: at every zoom step in and out, for every pick
+and pair, 137 counted, no two marker centres within 18px (except N1a), every on-screen
+marker returns itself from `elementFromPoint` (except N1a), no label over a dot or
+another label (except N1a), picked labels mirrored left where the right is taken
+(`text-anchor: end`), `SYD` clean at all 16 steps, the three <18px pick pairs
+(SFO/SJC, JFK/EWR, LHR/LGW) leave everything else clean.
+
+## Counts at fdd4a65
+
+| Suite | Result | Coder claimed |
+|---|---|---|
+| `python3 -O -m pytest -q -p no:cacheprovider` | **3821 passed, 13 skipped** | 3821 / 13 |
+| same without `-O` | **3821 passed, 13 skipped** | - |
+| ui-probes (`-O -p no:randomly`) | **662 passed, 1 failed** (P22, plan-invalidated pin) | 662 / 1 |
+| ui-restyle-probes | **279 passed, 7 failed, 10 skipped** (C2, C5[search_ok], E3, E5, H1, H2, J6 - unchanged) | 279 / 7 / 10 |
+| map-search-probes (143 = 115 + 28 new J) | **129 passed, 14 failed**: F6 (L8, by design); J1[SFO/JFK/LHR] and J2 ×8 → N1b; J1[SIN] and J2[*-SIN] ×4 → N1a (two of the J2 cases carry both) | 114 / 1 (before the J-series) |
+
+Round-1 and round-2 reds now green: every B, C, E, H probe; F4, F5, F11; I2, I3, I4,
+I14. Verdict on the 8 older probe reds unchanged.

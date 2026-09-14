@@ -195,6 +195,11 @@ def test_E7_a_drawer_open_from_a_result_never_sits_beside_the_map(browser):
 
 
 def test_E8_escape_closes_popover_then_suggestions_then_drawer(browser):
+    """Rewritten in the re-test round (my probe): the round-1 version opened a
+    drawer and then pressed Show map expecting the drawer to stay - the very
+    thing M1/E7 forbid. The rule now: with the results shown, Esc closes the
+    suggestions before the drawer; with the map shown (no drawer can be open),
+    Esc closes the popover before the suggestions."""
     with hub_server() as srv:
         with browser.page(srv.port) as pg:
             C.open_search(pg)
@@ -206,30 +211,38 @@ def test_E8_escape_closes_popover_then_suggestions_then_drawer(browser):
                     c.click()
                     pg.wait_for_timeout(300)
                     break
-            pg.click(C.q("search-pane-toggle"))
-            pg.wait_for_timeout(300)
+            drawer = lambda: not pg.evaluate("() => document.getElementById('drawer-search').hidden")  # noqa: E731
+            assert drawer()
             pg.fill(C.q("search-to"), "s")
             pg.wait_for_timeout(120)
             assert C.text(pg, C.q("search-suggest-to"))
-            # open the popover by keyboard so the input's list is not blurred away
+            pg.keyboard.press("Escape")
+            pg.wait_for_timeout(120)
+            assert C.text(pg, C.q("search-suggest-to")) is None and drawer(), "suggestions close before the drawer"
+            pg.keyboard.press("Escape")
+            pg.wait_for_timeout(120)
+            assert not drawer()
+            # map shown: popover before suggestions
+            for c in pg.query_selector_all('[data-testid^="cell-"]'):
+                t = (c.inner_text() or "").strip()
+                if t and t.lower() != "no space":
+                    c.click()
+                    pg.wait_for_timeout(300)
+                    break
+            assert drawer()
+            pg.click(C.q("search-pane-toggle"))
+            pg.wait_for_timeout(300)
+            assert not drawer(), "Show map must close the drawer (M1)"
+            pg.fill(C.q("search-to"), "s")
+            pg.wait_for_timeout(120)
             pg.evaluate("() => document.querySelector('[data-testid=map-cluster-JFK]').focus()")
             pg.keyboard.press("Enter")
             pg.wait_for_timeout(150)
-            state = lambda: (bool(C.text(pg, C.q("map-cluster-list"))), bool(C.text(pg, C.q("search-suggest-to"))),  # noqa: E731
-                             not pg.evaluate("() => document.getElementById('drawer-search').hidden"))
-            s0 = state()
+            assert C.text(pg, C.q("map-cluster-list"))
             pg.keyboard.press("Escape")
             pg.wait_for_timeout(120)
-            s1 = state()
-            assert s0[0] and not s1[0], (s0, s1)          # popover first
-            assert s1[2], "the drawer closed before the popover"
-            pg.keyboard.press("Escape")
-            pg.wait_for_timeout(120)
-            s2 = state()
-            pg.keyboard.press("Escape")
-            pg.wait_for_timeout(120)
-            s3 = state()
-            assert not s3[2], "the drawer never closed"
+            assert C.text(pg, C.q("map-cluster-list")) is None
+            assert not drawer()
 
 
 def test_E9_a_click_on_the_ocean_does_not_close_the_popover(browser):
