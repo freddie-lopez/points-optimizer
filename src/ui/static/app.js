@@ -36,7 +36,13 @@
     busyStart: 0,
     busyText: "",
     search: { from: "", to: "", date: "", dateTo: "", cabin: "All", errors: {}, run: null,
-              sel: null, busy: false },
+              sel: null, busy: false,
+              // The right pane shows the map OR the results, never both.
+              pane: "map",
+              // The open autofill list: {key, items, active} or null.
+              sugg: null },
+    // The map controller (window.POMap, src/ui/static/map.js), mounted once.
+    map: { ctl: null, data: null, loading: false },
     nt: null,          // new-trip form state
     walletOpen: false
   };
@@ -1208,7 +1214,12 @@
     var main = clear($("search-main"));
     var st = S.state;
     var q = S.search;
-    var strip = tid(el("div", "panel strip"), "search-strip");
+    q.sugg = null;
+    var head = el("div", "search-head");
+    add(head, el("h1", "", "Where are you flying?"),
+      p("Type an airport or city, or pick it on the map.", "note"));
+    add(main, head);
+    var strip = tid(el("div", "panel strip column"), "search-strip");
     function inp(label, key, testid, cls, ph) {
       var w = el("label", "field");
       var i = tid(el("input", cls || ""), testid);
@@ -1218,9 +1229,32 @@
       add(w, el("span", "label", label), i);
       return w;
     }
-    add(strip, inp("From", "from", "search-from", "", "SFO"), inp("To", "to", "search-to", "", "MAD"),
-      inp("Date", "date", "search-date", "date", "YYYY-MM-DD"),
+    // From and To: the same input, plus the autofill list under it. A pick
+    // writes the code INTO the input; the typed value is what is searched.
+    function airportInp(label, key, testid, ph) {
+      var w = el("label", "field");
+      var i = tid(el("input", ""), testid);
+      i.value = q[key]; if (ph) { i.placeholder = ph; }
+      i.setAttribute("autocomplete", "off");
+      i.setAttribute("aria-autocomplete", "list");
+      var slot = el("div", "suggest-slot");
+      i.addEventListener("input", function () {
+        q[key] = i.value; updateWindow(); showSuggest(key, i.value, i, slot); syncMap();
+      });
+      i.addEventListener("keydown", function (e) { suggestKey(e, key, i, slot); });
+      i.addEventListener("blur", function () {
+        window.setTimeout(function () { if (q.sugg && q.sugg.key === key) { hideSuggest(i, slot); } }, 120);
+      });
+      add(w, el("span", "label", label), i);
+      var wrap = el("div", "fieldwrap");
+      add(wrap, w, slot);
+      return wrap;
+    }
+    add(strip, airportInp("From", "from", "search-from", "SFO"), airportInp("To", "to", "search-to", "MAD"));
+    var dates = el("div", "strip-row");
+    add(dates, inp("Date", "date", "search-date", "date", "YYYY-MM-DD"),
       inp("To date", "dateTo", "search-date-to", "date", "+30 days"));
+    add(strip, dates);
     var cw = el("label", "field");
     var cs = tid(el("select"), "search-cabin");
     ["All", "Y", "W", "J", "F"].forEach(function (c) { var o = el("option", "", c); o.value = c; if (q.cabin === c) { o.selected = true; } add(cs, o); });
@@ -1230,34 +1264,198 @@
     run.disabled = q.busy || !(st && st.key.found);
     add(strip, cw, run);
     add(main, strip);
-    var win = tid(p("", "note"), "search-window");
-    add(main, win);
-    function updateWindow() {
-      var from = q.date || "?";
-      var to = q.dateTo || (q.date ? plus30(q.date) : "?");
-      win.textContent = "Searches " + from + " to " + to + " · 1 traveller (award prices are per seat) · " +
-        "single-route search is always LIVE and does not use the disk cache.";
-    }
+    add(main, tid(p("", "note"), "search-window"));
     updateWindow();
     Object.keys(q.errors).forEach(function (k) {
       add(main, tid(p(q.errors[k], "field-error"), "search-error-" + k));
     });
+    if (q.run) {
+      var toggle = btn("btn", q.pane === "map" ? "Show results" : "Show map", function () {
+        q.pane = q.pane === "map" ? "result" : "map"; renderSearch();
+      }, "search-pane-toggle");
+      toggle.disabled = q.busy;
+      add(main, toggle);
+    }
+    if (q.pane === "map") {
+      if (st && !st.key.found) {
+        add(main, tid(panelRefusal("LIVE unavailable", st.key.error_text), "search-state"));
+      } else if (!q.run) {
+        add(main, tid(p("Search a route. Results show award space, whether your wallet can fund it, and " +
+          "whether the taxes are trusted. A single-route search has no cash price, so it cannot say " +
+          "POINTS or PAY CASH: add an award to a trip to score it.", "note"), "search-state"));
+      }
+    }
+    renderSearchPane();
+    renderSearchDrawer();
+    setDrawerClass();
+  }
 
-    var box = el("div", "result");
+  function updateWindow() {
+    var q = S.search;
+    var win = document.querySelector('[data-testid="search-window"]');
+    if (!win) { return; }
+    var from = q.date || "?";
+    var to = q.dateTo || (q.date ? plus30(q.date) : "?");
+    win.textContent = "Searches " + from + " to " + to + " · 1 traveller (award prices are per seat) · " +
+      "single-route search is always LIVE and does not use the disk cache.";
+  }
+
+  // The right pane: the map while nothing has run, the result once it has.
+  function renderSearchPane() {
+    var q = S.search;
+    var st = S.state;
+    var box = clear($("search-result"));
+    var mapPane = $("map-pane");
+    if (q.pane === "map") {
+      box.hidden = true;
+      mapPane.hidden = false;
+      ensureMap();
+      syncMap();
+      return;
+    }
+    mapPane.hidden = true;
+    box.hidden = false;
     if (st && !st.key.found) {
       add(box, tid(panelRefusal("LIVE unavailable", st.key.error_text), "search-state"));
     } else if (q.busy) {
       add(box, tid(p("Asking Seats.aero… nothing is shown until the whole answer is in.", "note"), "search-state"));
-    } else if (!q.run) {
-      add(box, tid(p("Search a route. Results show award space, whether your wallet can fund it, and " +
-        "whether the taxes are trusted. A single-route search has no cash price, so it cannot say " +
-        "POINTS or PAY CASH: add an award to a trip to score it.", "note"), "search-state"));
-    } else {
+    } else if (q.run) {
       renderSearchResult(box, q.run);
     }
-    add(main, box);
-    renderSearchDrawer();
-    setDrawerClass();
+  }
+
+  /* ------------------------------------------------------------------ map */
+
+  var MAP_UNREADABLE = "AIRPORT DATA UNREADABLE - /static/hubs.json could not be read (";
+
+  function ensureMap() {
+    var m = S.map;
+    var host = $("map-pane");
+    if (m.ctl) { return; }
+    if (m.loading) { return; }
+    if (!window.POMap) {
+      clear(host);
+      add(host, tid(el("div", "map-status", MAP_UNREADABLE + "map.js not loaded). The map plots nothing."),
+        "map-status"));
+      return;
+    }
+    m.loading = true;
+    window.POMap.load().then(function (d) {
+      m.data = d;
+      m.ctl = window.POMap.mount(host, { onPick: onMapPick });
+      m.loading = false;
+      syncMap();
+    });
+  }
+
+  function syncMap() {
+    var q = S.search;
+    if (!S.map.ctl || !window.POMap) { return; }
+    S.map.ctl.setPicks(window.POMap.hub(q.from), window.POMap.hub(q.to), q.from, q.to);
+  }
+
+  // A click fills the first empty of From, To; with both filled it replaces
+  // To. The airport already in From, with To empty, is a no-op.
+  function onMapPick(iata) {
+    var q = S.search;
+    var focusId;
+    if (!q.from.trim()) {
+      q.from = iata; focusId = "search-to";
+    } else if (!q.to.trim()) {
+      if (q.from.trim().toUpperCase() === iata) { return; }
+      q.to = iata; focusId = "search-run";
+    } else {
+      q.to = iata; focusId = "search-run";
+    }
+    q.errors = {};
+    renderSearch();
+    var n = document.querySelector('[data-testid="' + focusId + '"]');
+    if (n) { n.focus(); }
+  }
+
+  /* ------------------------------------------------------------- autofill */
+
+  function showSuggest(key, value, input, slot) {
+    var q = S.search;
+    var items = window.POMap ? window.POMap.suggest(value, 8) : [];
+    // One list at a time: the other field's list goes when this one opens.
+    if (q.sugg && q.sugg.key !== key) { hideSuggest(q.sugg.input, q.sugg.slot); }
+    if (!items.length) { hideSuggest(input, slot); return; }
+    q.sugg = { key: key, items: items, active: -1, input: input, slot: slot };
+    var list = tid(el("div", "suggest"), "search-suggest-" + key);
+    list.setAttribute("role", "listbox");
+    list.setAttribute("aria-label", "Suggestions");
+    list.id = "suggest-list-" + key;
+    items.forEach(function (h, i) {
+      var b = tid(el("button", "srow"), "suggest-" + h.iata);
+      b.type = "button"; b.setAttribute("role", "option"); b.id = "suggest-" + key + "-" + h.iata;
+      b.setAttribute("aria-selected", "false"); b.title = h.name;
+      var m = el("span", "sm");
+      add(m, el("span", "mono", h.iata), " " + h.name);
+      add(b, m, el("span", "dim", h.city + (h.city && h.country ? ", " : "") + h.country));
+      // mousedown is prevented so the input keeps focus; click makes the pick.
+      b.addEventListener("mousedown", function (e) { e.preventDefault(); });
+      b.addEventListener("click", function () { pickSuggest(key, i, input, slot); });
+      add(list, b);
+    });
+    // On the wrapping strip (below 900px) the list is an overlay positioned
+    // under its field; at column width it sits in flow and `top` is unused.
+    list.style.top = (input.offsetTop + input.offsetHeight + 4) + "px";
+    clear(slot); add(slot, list);
+    input.setAttribute("aria-controls", list.id);
+    input.setAttribute("aria-expanded", "true");
+  }
+
+  function hideSuggest(input, slot) {
+    var q = S.search;
+    q.sugg = null;
+    clear(slot);
+    input.removeAttribute("aria-activedescendant");
+    input.setAttribute("aria-expanded", "false");
+  }
+
+  function setSuggestActive(index, input, slot) {
+    var q = S.search;
+    if (!q.sugg) { return; }
+    q.sugg.active = index;
+    var rows = slot.querySelectorAll(".srow");
+    for (var i = 0; i < rows.length; i++) {
+      rows[i].setAttribute("aria-selected", String(i === index));
+      rows[i].classList.toggle("active", i === index);
+    }
+    if (index >= 0 && rows[index]) { input.setAttribute("aria-activedescendant", rows[index].id); }
+    else { input.removeAttribute("aria-activedescendant"); }
+  }
+
+  function pickSuggest(key, index, input, slot) {
+    var q = S.search;
+    if (!q.sugg || !q.sugg.items[index]) { return; }
+    var code = q.sugg.items[index].iata;
+    input.value = code; q[key] = code;
+    hideSuggest(input, slot);
+    updateWindow();
+    syncMap();
+  }
+
+  function suggestKey(e, key, input, slot) {
+    var q = S.search;
+    var open = q.sugg && q.sugg.key === key;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (!open) { return; }
+      e.preventDefault();
+      var n = q.sugg.items.length;
+      var next = e.key === "ArrowDown" ? Math.min(n - 1, q.sugg.active + 1) : Math.max(-1, q.sugg.active - 1);
+      setSuggestActive(next, input, slot);
+      return;
+    }
+    if (e.key === "Escape") {
+      if (open) { e.preventDefault(); e.stopPropagation(); hideSuggest(input, slot); }
+      return;
+    }
+    if (e.key === "Enter") {
+      if (open && q.sugg.active >= 0) { e.preventDefault(); pickSuggest(key, q.sugg.active, input, slot); return; }
+      doSearch();
+    }
   }
 
   function plus30(d) {
@@ -1294,7 +1492,8 @@
         testid: "search-confirm", goid: "search-confirm-go"
       }, function () {
         var body = searchBody(); body.confirm_id = pf.confirm_id;
-        q.busy = true; startBusy("Asking Seats.aero… nothing is shown until the whole answer is in.");
+        q.busy = true; q.pane = "result";
+        startBusy("Asking Seats.aero… nothing is shown until the whole answer is in.");
         renderSearch();
         api("POST", "/api/search/run", body).then(function (r2) {
           q.busy = false; stopBusy();
@@ -1665,6 +1864,8 @@
     if (e.key !== "Escape") { return; }
     if (!$("scrim").hidden) { closeConfirm(); return; }
     if (!$("wallet-scrim").hidden) { closeWallet(); return; }
+    if (S.view === "search" && S.map.ctl && S.map.ctl.closePopover()) { return; }
+    if (S.view === "search" && S.search.sugg) { hideSuggest(S.search.sugg.input, S.search.sugg.slot); return; }
     if (S.view === "search" && S.search.sel) { closeSearchDrawer(); return; }
     if (S.legSel) { closeLegDrawer(); }
   });

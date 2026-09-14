@@ -178,6 +178,19 @@ def doc_sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def test_the_synthetic_fixture_is_what_its_helper_builds_and_says_it_is_synthetic():
+    from tests import _map_fixture
+
+    text = _map_fixture.FIXTURE.read_text(encoding="utf-8")
+    assert text == map_tools.render_document(_map_fixture.synthetic_document())
+    doc = json.loads(text)
+    assert doc["_meta"]["synthetic"] is True
+    assert "SYNTHETIC" in doc["_meta"]["captured_by"]
+    assert map_tools.hubs_file_problems(doc) == []
+    # It is a test input, never the shipped file.
+    assert HUBS.read_text(encoding="utf-8") != text
+
+
 # --------------------------------------------------------------------- served
 
 

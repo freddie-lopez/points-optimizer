@@ -8,6 +8,7 @@
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&amp;family=Red+Hat+Mono:wght@400;500&amp;display=swap">
 <link rel="stylesheet" href="/static/app.css">
+<script src="/static/map.js" defer></script>
 <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -42,7 +43,11 @@
 
   <section class="view" id="view-search" aria-labelledby="tab-search" hidden>
     <div class="search-grid">
-      <div class="result" id="search-main"></div>
+      <div class="result search-col" id="search-main"></div>
+      <div class="search-pane" id="search-pane">
+        <div class="map-pane" id="map-pane" data-testid="map-pane"></div>
+        <div class="result" id="search-result" data-testid="search-result" hidden></div>
+      </div>
       <aside class="drawer" id="drawer-search" data-testid="drawer-search" aria-label="Award detail" hidden></aside>
     </div>
   </section>

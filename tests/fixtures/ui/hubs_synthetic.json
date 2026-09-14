@@ -1,0 +1,223 @@
+{
+  "_meta": {
+    "captured_by": "tests/_map_fixture.py (SYNTHETIC - not a Seats.aero answer)",
+    "captured_at": "2026-09-20T18:02:11Z",
+    "endpoint": "/partnerapi/routes",
+    "sources_asked": [
+      "aeroplan",
+      "united",
+      "virginatlantic"
+    ],
+    "sources_ok": [
+      "aeroplan",
+      "united",
+      "virginatlantic"
+    ],
+    "sources_failed": {},
+    "sources_incomplete": [],
+    "routes_seen": 4182,
+    "thresholds": {
+      "min_sources": 3,
+      "min_routes": 20
+    },
+    "airport_table": "airportsdata 20260905 (MIT) via data/airportsdata_iata.csv",
+    "engine_airports_sha256": "synthetic",
+    "searchable_marked_at": "2026-09-20T18:02:11Z",
+    "key_redacted": true,
+    "synthetic": true
+  },
+  "hubs": [
+    {
+      "iata": "EWR",
+      "name": "Newark Liberty International Airport",
+      "city": "Newark",
+      "country": "US",
+      "lat": 40.692481,
+      "lon": -74.168688,
+      "routes": 410,
+      "sources": [
+        "aeroplan",
+        "united",
+        "virginatlantic"
+      ],
+      "regions": [],
+      "searchable": true
+    },
+    {
+      "iata": "JFK",
+      "name": "John F Kennedy International Airport",
+      "city": "New York",
+      "country": "US",
+      "lat": 40.639928,
+      "lon": -73.778692,
+      "routes": 640,
+      "sources": [
+        "aeroplan",
+        "united",
+        "virginatlantic"
+      ],
+      "regions": [],
+      "searchable": true
+    },
+    {
+      "iata": "LGA",
+      "name": "Laguardia Airport",
+      "city": "New York",
+      "country": "US",
+      "lat": 40.777242,
+      "lon": -73.872606,
+      "routes": 380,
+      "sources": [
+        "aeroplan",
+        "united",
+        "virginatlantic"
+      ],
+      "regions": [],
+      "searchable": true
+    },
+    {
+      "iata": "LGW",
+      "name": "London Gatwick Airport",
+      "city": "London",
+      "country": "GB",
+      "lat": 51.1481,
+      "lon": -0.19028,
+      "routes": 160,
+      "sources": [
+        "aeroplan",
+        "united",
+        "virginatlantic"
+      ],
+      "regions": [],
+      "searchable": true
+    },
+    {
+      "iata": "LHR",
+      "name": "London Heathrow Airport",
+      "city": "London",
+      "country": "GB",
+      "lat": 51.4706,
+      "lon": -0.46194,
+      "routes": 590,
+      "sources": [
+        "aeroplan",
+        "united",
+        "virginatlantic"
+      ],
+      "regions": [],
+      "searchable": true
+    },
+    {
+      "iata": "MAD",
+      "name": "Madrid Barajas International Airport",
+      "city": "Madrid",
+      "country": "ES",
+      "lat": 40.4936,
+      "lon": -3.56676,
+      "routes": 260,
+      "sources": [
+        "aeroplan",
+        "united",
+        "virginatlantic"
+      ],
+      "regions": [],
+      "searchable": true
+    },
+    {
+      "iata": "SAN",
+      "name": "San Diego International Airport",
+      "city": "San Diego",
+      "country": "US",
+      "lat": 32.733563,
+      "lon": -117.189663,
+      "routes": 240,
+      "sources": [
+        "aeroplan",
+        "united",
+        "virginatlantic"
+      ],
+      "regions": [],
+      "searchable": true
+    },
+    {
+      "iata": "SAT",
+      "name": "San Antonio International Airport",
+      "city": "San Antonio",
+      "country": "US",
+      "lat": 29.533958,
+      "lon": -98.469057,
+      "routes": 120,
+      "sources": [
+        "aeroplan",
+        "united",
+        "virginatlantic"
+      ],
+      "regions": [],
+      "searchable": false
+    },
+    {
+      "iata": "SFO",
+      "name": "San Francisco International Airport",
+      "city": "San Francisco",
+      "country": "US",
+      "lat": 37.618806,
+      "lon": -122.375417,
+      "routes": 812,
+      "sources": [
+        "aeroplan",
+        "united",
+        "virginatlantic"
+      ],
+      "regions": [],
+      "searchable": true
+    },
+    {
+      "iata": "SJC",
+      "name": "Mineta San Jose International Airport",
+      "city": "San Jose",
+      "country": "US",
+      "lat": 37.362995,
+      "lon": -121.928621,
+      "routes": 180,
+      "sources": [
+        "aeroplan",
+        "united",
+        "virginatlantic"
+      ],
+      "regions": [],
+      "searchable": true
+    },
+    {
+      "iata": "SJU",
+      "name": "Luis Munoz Marin International Airport",
+      "city": "San Juan",
+      "country": "US",
+      "lat": 18.439399,
+      "lon": -66.002133,
+      "routes": 90,
+      "sources": [
+        "aeroplan",
+        "united",
+        "virginatlantic"
+      ],
+      "regions": [],
+      "searchable": false
+    },
+    {
+      "iata": "SYD",
+      "name": "Sydney Kingsford Smith International Airport",
+      "city": "Sydney",
+      "country": "AU",
+      "lat": -33.9461,
+      "lon": 151.177,
+      "routes": 300,
+      "sources": [
+        "aeroplan",
+        "united",
+        "virginatlantic"
+      ],
+      "regions": [],
+      "searchable": true
+    }
+  ]
+}

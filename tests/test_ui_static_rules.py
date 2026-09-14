@@ -20,8 +20,11 @@ from tests.test_no_changelog_in_user_output import ALLOWED, CHANGELOG
 
 STATIC = Path(__file__).resolve().parent.parent / "src" / "ui" / "static"
 APP = (STATIC / "app.js").read_text()
+MAP = (STATIC / "map.js").read_text()
 HTML = (STATIC / "index.html").read_text()
 CSS = (STATIC / "app.css").read_text()
+# Both scripts the page loads: app.js, and map.js (the Search tab's map).
+SCRIPTS = {"app.js": APP, "map.js": MAP}
 
 BANNED = [
     "innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(",
@@ -29,31 +32,39 @@ BANNED = [
 ]
 
 
+@pytest.mark.parametrize("script", sorted(SCRIPTS))
 @pytest.mark.parametrize("needle", BANNED)
-def test_app_js_never_uses_an_html_or_code_string_api(needle):
-    assert needle not in APP
+def test_app_js_never_uses_an_html_or_code_string_api(script, needle):
+    assert needle not in SCRIPTS[script]
 
 
-def test_set_timeout_is_only_ever_given_a_function():
-    for m in re.finditer(r"setTimeout\(\s*([^,\s]+)", APP):
+@pytest.mark.parametrize("script", sorted(SCRIPTS))
+def test_set_timeout_is_only_ever_given_a_function(script):
+    for m in re.finditer(r"setTimeout\(\s*([^,\s]+)", SCRIPTS[script]):
         assert not m.group(1).startswith(("\"", "'", "`")), m.group(0)
 
 
+@pytest.mark.parametrize("script", sorted(SCRIPTS))
 @pytest.mark.parametrize("pattern", [r"\|\|\s*0(?![.\d])", r"\?\?\s*0(?![.\d])"])
-def test_an_unknown_never_becomes_zero_in_javascript(pattern):
-    assert not re.search(pattern, APP), re.search(pattern, APP).group(0)
+def test_an_unknown_never_becomes_zero_in_javascript(script, pattern):
+    text = SCRIPTS[script]
+    assert not re.search(pattern, text), re.search(pattern, text).group(0)
 
 
 def test_no_inline_script_or_handler_in_the_page():
     for body in re.findall(r"<script\b[^>]*>(.*?)</script>", HTML, re.S):
         assert body.strip() == ""
     assert not re.search(r"<[^>]*\son[a-z]+\s*=", HTML, re.I)
-    assert "javascript:" not in HTML.lower() and "javascript:" not in APP.lower()
+    assert "javascript:" not in HTML.lower()
+    for text in SCRIPTS.values():
+        assert "javascript:" not in text.lower()
 
 
 def test_the_page_loads_only_its_own_script_and_style():
     scripts = re.findall(r"<script\b[^>]*\bsrc=\"([^\"]+)\"", HTML)
-    assert scripts == ["/static/app.js"]
+    # map.js first: app.js mounts the map through window.POMap under `defer`,
+    # which runs the two in document order.
+    assert scripts == ["/static/map.js", "/static/app.js"]
     sheets = re.findall(r"<link rel=\"stylesheet\" href=\"([^\"]+)\"", HTML)
     assert all(s == "/static/app.css" or s.startswith("https://fonts.googleapis.com/")
                for s in sheets)
@@ -81,16 +92,20 @@ TESTIDS = [
     "residue", "run-details", "transcript", "transcript-copy",
     # T7
     "drawer", "cli-lines-",
+    # S0: the map, the autofill and the pane toggle
+    "map-pane", "map-svg", "map-land", "map-hub-", "map-cluster-", "map-cluster-list",
+    "map-pick-", "map-route", "map-status", "map-provenance", "map-zoom-in", "map-zoom-out",
+    "map-reset", "search-suggest-", "suggest-", "search-pane-toggle", "search-result",
 ]
 
 
 @pytest.mark.parametrize("testid", TESTIDS)
 def test_every_inventoried_element_has_its_testid(testid):
     quoted = [f'"{testid}"', f"'{testid}'", f'data-testid="{testid}']
-    assert any(q in APP or q in HTML for q in quoted), testid
+    assert any(q in APP or q in MAP or q in HTML for q in quoted), testid
 
 
-@pytest.mark.parametrize("name", ["app.js", "index.html", "app.css"])
+@pytest.mark.parametrize("name", ["app.js", "map.js", "index.html", "app.css", "land.json"])
 def test_no_changelog_in_anything_the_page_ships(name):
     text = (STATIC / name).read_text()
     hits = [m.group(0) for m in CHANGELOG.finditer(text) if not ALLOWED.search(m.group(0))]

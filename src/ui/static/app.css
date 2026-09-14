@@ -135,8 +135,16 @@ a { color: var(--accent); }
 .page { max-width: 1440px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 48px; }
 .trips-grid { display: grid; grid-template-columns: 208px minmax(0, 1fr); gap: 20px; align-items: start; }
 .has-drawer .trips-grid { grid-template-columns: 208px minmax(0, 1fr) 440px; }
+/* Search: one column below 900px (the wrapping strip, as before; the map is
+   not displayed); a 360px column beside the map/result pane from 900px; the
+   drawer as a third column from 1180px - beside the results, never the map. */
 .search-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
-.has-drawer .search-grid { grid-template-columns: minmax(0, 1fr) 440px; }
+@media (min-width: 900px) {
+  .search-grid { grid-template-columns: 360px minmax(0, 1fr); }
+}
+@media (min-width: 1180px) {
+  .has-drawer .search-grid { grid-template-columns: 360px minmax(0, 1fr) 440px; }
+}
 
 /* trip list */
 .triplist { display: grid; gap: 6px; align-content: start; }
@@ -293,7 +301,6 @@ pre.echo { margin: 0; padding: 10px; background: var(--bg); border: 1px solid va
 /* Docked (sticky third column) at >= 1180px, a fixed sheet below it. */
 @media (max-width: 1179.98px) {
   .has-drawer .trips-grid { grid-template-columns: 208px minmax(0, 1fr); }
-  .has-drawer .search-grid { grid-template-columns: minmax(0, 1fr); }
   .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100%); max-height: none; z-index: 40; border-radius: 0; }
 }
 @media (max-width: 720px) {
@@ -335,3 +342,78 @@ table.grid .pin-left::after, table.grid .pin-right::after {
 }
 table.grid .pin-left::after { right: 0; }
 table.grid .pin-right::after { left: 0; }
+
+/* ---------- search column and map ---------- */
+.search-head h1 { margin: 0 0 2px; font-size: var(--s20); font-weight: 600; letter-spacing: -.01em; }
+.search-head .note { max-width: none; }
+.search-col > .btn { justify-self: start; }
+.search-pane { min-width: 0; }
+.search-pane > .result { min-width: 0; }
+@media (min-width: 900px) {
+  .strip.column { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: stretch; }
+  .strip.column .field input, .strip.column .field select { width: 100%; }
+  .strip.column .field input.date { width: 100%; }
+  .strip.column .strip-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .strip.column .btn-primary { margin-top: 4px; }
+}
+.strip-row { display: contents; }
+.fieldwrap { display: grid; gap: 0; min-width: 0; }
+.suggest-slot { min-width: 0; }
+/* The autofill list sits directly under its field: in flow at column width;
+   on the wrapping strip (below 900px) an overlay across the strip's width,
+   whose top app.js sets to the field's bottom, so it can never widen the page. */
+.suggest { margin-top: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; display: grid; z-index: 5; }
+.strip { position: relative; }
+@media (max-width: 899.98px) {
+  .suggest { position: absolute; left: 12px; right: 12px; box-shadow: 0 12px 32px rgba(0,0,0,.45); }
+}
+.srow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 12px; background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; font-size: var(--s13); min-width: 0; }
+.srow:last-child { border-bottom: 0; }
+.srow .sm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srow .mono { color: var(--accent); font-weight: 500; }
+.srow .dim { font-size: var(--s12); white-space: nowrap; flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
+.srow:hover, .srow.active, .srow[aria-selected="true"] { background: var(--accent-tint); }
+
+/* The map pane: an SVG that fills it, controls top-right, the popover over
+   it, and a footer with the status sentence, the legend and the provenance
+   line. Hidden below 900px; the column is then the whole page. */
+.map-pane { position: relative; height: max(520px, calc(100vh - 160px)); min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+@media (max-width: 899.98px) { .map-pane { display: none; } }
+.map-svg { display: block; width: 100%; height: 100%; min-height: 0; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.map-svg.dragging { cursor: grabbing; }
+.map-land { fill: var(--panel); stroke: var(--line); stroke-width: .5px; vector-effect: non-scaling-stroke; }
+/* Markers are scaled by 1/zoom in map.js, so these radii are pixels at every zoom. */
+.mk { cursor: pointer; outline: none; }
+.mk .dot { fill: var(--bg); stroke: var(--accent); stroke-width: 1.1; }
+.mk.pick .dot { fill: var(--accent); stroke: var(--accent); }
+.mk .halo { fill: var(--accent); opacity: .18; }
+.mk .lbl { font: 500 11px var(--mono); fill: var(--muted); pointer-events: none; }
+.mk.pick .lbl { fill: var(--text); }
+.mk .cdot { fill: var(--raised); stroke: var(--accent); stroke-width: 1.2; }
+.mk .cnt { font: 500 9px var(--mono); fill: var(--text); pointer-events: none; }
+.mk:hover .dot, .mk:hover .cdot { stroke-width: 2; }
+.mk:focus-visible .dot, .mk:focus-visible .cdot { stroke: var(--text); stroke-width: 2; }
+/* The route line: the user's pick, dashed and thin so it cannot read as a
+   button. Coral as the approved mockup draws it. */
+.route { fill: none; stroke: var(--accent2); stroke-width: 1.5px; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+.map-ctl { position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 6px; z-index: 2; }
+.mapbtn { width: 32px; height: 32px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; font: 500 16px/1 var(--mono); display: flex; align-items: center; justify-content: center; padding: 0; }
+.mapbtn:hover { border-color: var(--muted); }
+.map-pop { position: absolute; width: min(340px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 12px 32px rgba(0,0,0,.45); z-index: 3; }
+.map-pop .ph { padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.map-pop .pt { font-weight: 600; overflow-wrap: anywhere; }
+.map-pop .ps { font-size: var(--s12); color: var(--muted); }
+.map-pop .pl { display: grid; }
+.prow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 12px; background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; font-size: var(--s13); min-width: 0; }
+.prow:last-child { border-bottom: 0; }
+.prow:hover, .prow:focus-visible { background: var(--accent-tint); outline: none; }
+.prow .pm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prow .mono { color: var(--accent); font-weight: 500; }
+.prow .dim { font-size: var(--s12); white-space: nowrap; flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; }
+.map-foot { padding: 8px 14px 10px; display: grid; gap: 4px; font-size: var(--s12); color: var(--muted); border-top: 1px solid var(--line); background: var(--bg); min-width: 0; }
+.map-status { color: var(--text); font-size: var(--s13); overflow-wrap: anywhere; }
+.map-legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+.map-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.lg-dot { width: 8px; height: 8px; border-radius: 50%; border: 1px solid var(--accent); display: inline-block; }
+.lg-cl { width: 16px; height: 16px; border-radius: 50%; background: var(--raised); border: 1px solid var(--accent); display: inline-flex; align-items: center; justify-content: center; font: 500 8px var(--mono); color: var(--text); }
+.map-provenance { overflow-wrap: anywhere; }
