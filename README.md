@@ -219,6 +219,26 @@ bound to the trip file's bytes, the mode, the options and the wallet - change
 any of them and you are asked again. A single-route search is always LIVE and,
 exactly like the CLI search, does not use the disk cache.
 
+**Map search.** The Search tab is a 360px column beside a world map. The map
+plots only the airports Seats.aero itself tracks, captured by
+`python -m src.map_tools capture-hubs` (below) into `data/hubs.json`; until
+that capture has run the file is empty and the map says so in words - `NO
+AIRPORT DATA - run "python -m src.map_tools capture-hubs" on your Mac. The map
+plots nothing until then.` - rather than showing an empty ocean that looks
+like an answer. A dot means "Seats.aero has routes touching this airport in
+several programmes at capture time", never availability. Click a dot to fill
+From, then To (the code is written into the input; the typed value is always
+what is searched, and a code the map does not know is still sent); a number
+on a dot is several airports - click it to list them; scroll to zoom, drag to
+pan. A dashed line joins the two picks: it is your route, not availability,
+and award space appears only after the search runs. Typing in From or To
+offers the same airports the map does, ranked by code, then city, then name.
+The page never fetches the coordinate table: the hub file carries each
+airport's coordinates from `data/airportsdata_iata.csv` (airportsdata 20260905,
+MIT). Only airports in `data/airports.csv` are plotted (the engine refuses any
+other); the footer counts the ones it did not plot and why. Below 900px the
+map is not displayed and the search strip is the wrapping strip it always was.
+
 **A search has no verdict.** A single-route search has no cash price, so it
 cannot say POINTS or PAY CASH. It shows award space, whether your wallet can
 fund each award, and whether its taxes are trusted. "Score against a fare"
@@ -658,6 +678,43 @@ price); it cannot be combined with `--availability-id`, which makes no search.
     --date 2027-01-15 --source virginatlantic --cabin J
 ```
 
+### map_tools: the airports the map plots
+
+`python -m src.map_tools` is a separate module, like `src.trips_tools`, so
+`python -m src.main` keeps its exit codes. It is run on your Mac, where the
+key is:
+
+```bash
+# at most one call per Seats.aero source (28 today): GET /partnerapi/routes?source=<code>
+.venv/bin/python -m src.map_tools capture-hubs
+
+# recompute the `searchable` flag after data/airports.csv changes; 0 calls
+.venv/bin/python -m src.map_tools mark-searchable
+```
+
+`capture-hubs` prints the key banner and `This will make at most N Seats.aero
+API call(s): one GET /partnerapi/routes per source (N sources). This process
+has spent S of 1,000; Seats.aero also counts your other runs today, which
+this tool cannot see.`, then asks `Continue? [y/N]` unless `--yes`. It asks
+each source once and never follows a cursor (a source that answers with one
+is recorded as incomplete). An airport is a hub when it appears in the routes
+of at least `--min-sources 3` sources AND at least `--min-routes 20` routes;
+both are guesses made without data, so the tool prints a histogram of what
+other thresholds would give before writing, records the thresholds in
+`_meta`, and warns above 400 hubs. Each hub is joined to its coordinates from
+`data/airportsdata_iata.csv` (a metro code such as LON has none and is
+counted, not plotted) and marked `searchable` when it is in
+`data/airports.csv`; the airports that are not are printed as `iata,name,
+country` lines, because adding one is a surcharge-region decision this tool
+does not make. The output is refused, and nothing written, if it would
+contain the key. `--sources a,b`, `--out PATH` and `--raw-dir DIR` (the
+verbatim bodies) exist for a partial or inspectable run.
+
+| Code | Meaning |
+|---|---|
+| 0 | `data/hubs.json` written and every source answered |
+| 1 | nothing written: usage error, no key, declined at the prompt, stdin closed, every source failed, 0 airports met the thresholds, or key material in the output |
+| 5 | written WITH gaps: at least one source failed, was unreadable or answered with a cursor; `_meta.sources_failed` / `sources_incomplete` in the file say which, and the map's footer will not |
 
 ---
 
