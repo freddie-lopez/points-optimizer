@@ -122,8 +122,8 @@ def build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
-def airports_csv_sha256(path: Path = AIRPORTS_CSV) -> str:
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+def airports_csv_sha256(path: Optional[Path] = None) -> str:
+    return hashlib.sha256(Path(path or AIRPORTS_CSV).read_bytes()).hexdigest()
 
 
 def _utcnow() -> str:
@@ -623,7 +623,7 @@ def main(
     except SystemExit as e:
         return EXIT_NOTHING_WRITTEN if e.code not in (0, None) else EXIT_OK
     if not args.command:
-        parser.print_help()
+        console.print(escape(parser.format_help()))
         return EXIT_NOTHING_WRITTEN
     try:
         if args.command == "capture-hubs":
