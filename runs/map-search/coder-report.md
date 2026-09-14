@@ -183,3 +183,25 @@ complete-run-replaces-gappy, regions mapped, non-object rows).
 | ui-probes | **662 passed, 1 failed** (P22, unchanged) |
 | ui-restyle-probes | **279 passed, 7 failed, 10 skipped** (C2, C5, E3, E5, H1, H2, J6 - unchanged) |
 | map-search-probes | **91 passed, 3 failed** (from 71 / 23): red E8 (moved, see above), F6 (L8, by design), F11 (off-screen click) |
+
+## Fix round 2
+
+Re-test at f1fe286 (docs/test-reports/map-search.md "Re-test: f1fe286"; new probes
+`test_ms_i_retest.py`, left uncommitted as instructed). Two commits: d644183 (N2), 5250645 (N1).
+
+| Finding | Fix | Probes |
+|---|---|---|
+| N1 | No push to make room. The picked hub is excluded from clustering and drawn in a top layer (`g.map-picks`, above the markers). A cluster its neighbours form within 18px of the pick is placed at the nearest of eight spots (right, left, down, up, diagonals; then rings at 2× and 3×) exactly 18px from the pick that is free of **every** other marker, so the 18px rule holds between all markers and each is clickable at its centre. Labels: right of the dot, else left (`text-anchor: end`, mirrored hit rect), else hidden with the dot kept; a label never covers another marker's dot or another label; picked labels are placed first, then singles in route order | I1, I2, I3, I4, F4, F5 green (137-hub fixture) |
+| N2 | `_more_complete_existing` compares source coverage, not gaps: the existing file is kept when its `sources_ok` is larger than, or a strict superset of, this run's - exit 5 with gaps, exit 1 without (nothing written), unless `--force`. README table and plan note updated | I14 green |
+
+Tests added: `tests/test_map_tools.py` gapless-narrower-run kept (exit 1) then `--force`, and a
+superset kept against an equal count.
+
+### Counts at 5250645
+
+| Suite | Result |
+|---|---|
+| `python3 -O -m pytest -q -p no:cacheprovider` | **3821 passed, 13 skipped** |
+| ui-probes | **662 passed, 1 failed** (P22, unchanged) |
+| ui-restyle-probes | **279 passed, 7 failed, 10 skipped** (C2, C5, E3, E5, H1, H2, J6 - unchanged) |
+| map-search-probes (with the uncommitted I-series) | **114 passed, 1 failed** - F6 only (L8, by design) |
