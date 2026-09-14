@@ -77,12 +77,26 @@ def test_G2_the_only_offsite_request_is_the_google_fonts_stylesheet_and_it_is_th
 
 
 def test_H1_server_and_csp_are_byte_identical_to_the_base():
-    assert git("diff", "386b2fc..HEAD", "--", "src/ui/server.py", "src/ui/api.py",
-               "src/ui/engine.py", "src/ui/serialize.py", "src/main.py", "src/formatter.py") == ""
+    """Re-pinned by the tester at 91081c9 (map-search round): server.py is the
+    bytes of 16f53b7 (the map round's static map, plan 2.16) and nothing
+    else moved; the CSP itself is byte-identical to the base. A pin, not a
+    regression."""
+    assert git("diff", "386b2fc..HEAD", "--", "src/ui/api.py", "src/ui/engine.py",
+               "src/ui/serialize.py", "src/main.py", "src/formatter.py") == ""
+    assert git("diff", "16f53b7..HEAD", "--", "src/ui/server.py") == ""
+    server = (ROOT / "src" / "ui" / "server.py").read_text(encoding="utf-8")
+    base = git("show", "386b2fc:src/ui/server.py")
+    csp = re.compile(r"CSP = \((?:\s*\"[^\"]*\")+\s*\)")
+    assert csp.search(server) and csp.search(server).group(0) == csp.search(base).group(0)
 
 
 def test_H2_no_inline_script_style_or_handler_in_the_shell():
-    assert re.search(r"<script(?![^>]*\bsrc=\"/static/app.js\")", HTML) is None
+    """Re-pinned by the tester at 91081c9 (map-search round): the shell loads
+    exactly two same-origin scripts, map.js then app.js (plan D7; defer runs
+    them in document order). A pin, not a regression: still no inline script
+    body, no style attribute, no handler attribute."""
+    assert re.findall(r"<script\b[^>]*\bsrc=\"([^\"]+)\"", HTML) == ["/static/map.js", "/static/app.js"]
+    assert re.search(r"<script(?![^>]*\bsrc=\"/static/(app|map).js\")", HTML) is None
     assert re.search(r"<script[^>]*>(?!</script>)", HTML) is None
     assert "<style" not in HTML and " style=" not in HTML
     assert re.search(r"\son[a-z]+=", HTML) is None
@@ -246,12 +260,14 @@ def test_J5_plan_compliance_greps():
 
 
 def test_J6_app_js_diff_is_exactly_the_three_enumerated_edits():
-    d = git("diff", "386b2fc..HEAD", "--", "src/ui/static/app.js")
-    hunks = d.count("\n@@")
-    # 5 hunks at 7fba6e0 (key chip, trip-row kind, three in renderRunStrip);
-    # a 6th at 257960a: fix E1 (999fff3), the run-details key line - refreshed
-    # by the tester after reading that diff (own probe; in the report).
-    assert hunks == 6, hunks
+    """The restyle's own diff (386b2fc..56742af, 6 hunks) is unchanged; on top
+    of it the map round added its enumerated edits (docs/plans/map-search.md
+    4.7). Re-pinned by the tester at 91081c9: the strings the map round added
+    are the plan's 4.9 sentences (#9, #10, #13, #17, #18, the map.js-not-
+    loaded reason), its testids, class names, DOM/ARIA tokens and the strings
+    the restructured renderSearch re-emits verbatim. A pin, not a regression."""
+    d = git("diff", "386b2fc..56742af", "--", "src/ui/static/app.js")
+    assert d.count("\n@@") == 6, d.count("\n@@")
     added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
     strings = set(re.findall(r'"([^"]*)"', "\n".join(added)))
     allowed = {"key-source", "", "keysrc", "key: not found", "keysrc warn", "trow-broken",
@@ -262,6 +278,38 @@ def test_J6_app_js_diff_is_exactly_the_three_enumerated_edits():
                "Seats.aero key: not used (offline: no transport)", "   (source: ", ")",
                "replay", "(source: X)"}  # `run.mode === "replay"` and the comment
     assert strings <= allowed, strings - allowed
+    d = git("diff", "56742af..HEAD", "--", "src/ui/static/app.js")
+    assert d.count("\n@@") == 7, d.count("\n@@")   # 4.7's edits, as git groups them at 91081c9
+    added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
+    strings = set(re.findall(r'"([^"]*)"', "\n".join(added)))
+    map_allowed = {
+        # plan 4.9 #9, #10, #13, #17, #18 and 8's map.js-not-loaded reason
+        "Where are you flying?", "Type an airport or city, or pick it on the map.", "Type an airport or city.",
+        "Show map", "Show results", "Suggestions", "The search has run: its results are under Show results.",
+        "AIRPORT DATA UNREADABLE - /static/hubs.json could not be read (", "map.js not loaded). The map plots nothing.",
+        # testids (4.10) and the existing ones the restructured renderSearch re-emits
+        "map-pane", "map-status", "search-pane-toggle", "search-ran", "search-result", "search-suggest-", "suggest-",
+        "search-date", "search-from", "search-to", "search-run", "search-state", "search-strip", "search-window",
+        "suggest-list-",
+        # class names
+        "search-head", "panel strip column", "strip-row", "fieldwrap", "suggest-slot", "suggest", "srow", ".srow",
+        "sm", "mono", "dim", "note", "note with-map", "note without-map", "btn", "field", "label", "active", "result",
+        # DOM / ARIA tokens
+        "div", "span", "h1", "input", "button", "option", "listbox", "role", "aria-label", "aria-selected",
+        "aria-expanded", "aria-controls", "aria-activedescendant", "aria-autocomplete", "autocomplete", "list",
+        "off", "true", "false", "click", "blur", "input", "keydown", "mousedown", "ArrowDown", "ArrowUp", "Enter",
+        "Escape", "date",
+        # state keys and separators
+        "from", "to", "map", "search", "", " ", ", ", "-", "?", "' + focusId + '",
+        # existing wording re-emitted verbatim by the split renderSearch (pinned elsewhere)
+        "From", "To", "Date", "SFO", "MAD", "YYYY-MM-DD", "LIVE unavailable", "Searches ", " to ",
+        " · 1 traveller (award prices are per seat) · ", "single-route search is always LIVE and does not use the disk cache.",
+        "Asking Seats.aero… nothing is shown until the whole answer is in.",
+        "Search a route. Results show award space, whether your wallet can fund it, and ",
+        "whether the taxes are trusted. A single-route search has no cash price, so it cannot say ",
+        "POINTS or PAY CASH: add an award to a trip to score it.",
+    }
+    assert strings <= map_allowed, strings - map_allowed
 
 
 def test_J7_the_disclosed_deviations_are_what_the_diff_shows():

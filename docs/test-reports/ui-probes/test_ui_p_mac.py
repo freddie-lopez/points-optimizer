@@ -511,8 +511,36 @@ def test_P22_use_utf8_output_is_called_at_process_entry_points_only():
             f"{where} calls use_utf8_output outside an `if __name__ == '__main__'` "
             f"guard: an in-process caller (the UI, a test) would have its stdout "
             f"reconfigured underneath it")
-    assert set(called_in) == {"src/main.py", "src/trips_tools.py", "src/ui/__main__.py"}, (
+    # Re-pinned by the tester at 91081c9 (map-search round): src/map_tools.py
+    # is the fourth process entry point, guarded exactly like trips_tools
+    # (docs/plans/map-search.md 2, 4.8). A pin, not a regression: the
+    # all(guards) check above covers it, and the behavioural half below
+    # proves an in-process call leaves stdout alone.
+    assert set(called_in) == {"src/main.py", "src/trips_tools.py", "src/ui/__main__.py",
+                              "src/map_tools.py"}, (
         f"the set of entry points that force UTF-8 changed: {sorted(called_in)}")
+
+
+def test_P22b_calling_map_tools_in_process_does_not_touch_this_process_stdout():
+    """The guard holds for the fourth entry point: import src.map_tools and
+    call main() in-process under a C locale; sys.stdout is the same object
+    with the same encoding afterwards. (Tester, map-search round.)"""
+    code = (
+        "import sys, io, json;"
+        "sys.path.insert(0, %r);" % str(ROOT) +
+        "before=(id(sys.stdout), getattr(sys.stdout,'encoding',None));"
+        "import src.map_tools as m;"
+        "buf=io.StringIO();"
+        "from rich.console import Console;"
+        "m.main([], console=Console(file=buf, width=100));"
+        "after=(id(sys.stdout), getattr(sys.stdout,'encoding',None));"
+        "print(json.dumps([before[1], after[1], before[0]==after[0]]))"
+    )
+    p = subprocess.run([PY, "-c", code], cwd=str(ROOT), capture_output=True, text=True,
+                       env=dict(os.environ, LC_ALL="C", LANG="C", PYTHONUTF8="0"))
+    assert p.returncode == 0, (p.stdout + p.stderr)[-500:]
+    before_enc, after_enc, same = json.loads(p.stdout.strip().splitlines()[-1])
+    assert same and before_enc == after_enc, (before_enc, after_enc, same)
 
 
 def test_P23_calling_main_in_process_does_not_touch_this_process_stdout():

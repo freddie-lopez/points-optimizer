@@ -136,8 +136,15 @@ def test_E4_the_chip_is_hidden_before_state_arrives_and_never_says_key_ellipsis(
 
 
 def test_E5_api_state_key_shape_is_byte_identical_to_the_base_commit():
+    """Re-pinned by the tester at 91081c9 (map-search round). engine/api/
+    serialize are still byte-identical to the restyle base 386b2fc; server.py
+    changed once, in 16f53b7 (the map round's static map: `STATIC_FILES` as
+    (Path, ctype), 404 on a missing hubs.json - docs/plans/map-search.md 2.16)
+    and not since. A pin, not a regression: /api/state's key shape is untouched."""
     import subprocess
     d = subprocess.run(["git", "diff", "386b2fc..HEAD", "--", "src/ui/engine.py", "src/ui/api.py",
-                        "src/ui/serialize.py", "src/ui/server.py"], cwd=str(ROOT),
+                        "src/ui/serialize.py"], cwd=str(ROOT), capture_output=True, text=True)
+    assert d.stdout == "", d.stdout[:500]
+    d = subprocess.run(["git", "diff", "16f53b7..HEAD", "--", "src/ui/server.py"], cwd=str(ROOT),
                        capture_output=True, text=True)
     assert d.stdout == "", d.stdout[:500]

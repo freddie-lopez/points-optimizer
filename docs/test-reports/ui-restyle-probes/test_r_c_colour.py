@@ -32,8 +32,14 @@ def test_C1_win_is_used_by_exactly_one_rule_the_POINTS_chip():
 
 
 def test_C2_accent2_is_used_only_by_the_primary_button():
+    """Re-pinned by the tester at 91081c9 (map-search round, decision A): the
+    route line on the map is the ONE other use of coral, as the approved
+    RoutePicked mockup draws it (docs/plans/map-search.md D12; manager review
+    runs/map-search/manager-review.md). Dashed and 1.5px, it cannot read as a
+    button. A pin, not a regression."""
     sels = rules_using("var(--accent2)") + rules_using("var(--accent2-hover)")
-    assert all(".btn-primary" in s for s in sels), sels
+    assert all(".btn-primary" in s or s.split("\n")[-1].strip() == ".route" for s in sels), sels
+    assert sum(1 for s in sels if s.split("\n")[-1].strip() == ".route") == 1
     assert "#FF8A65" not in CSS.split("}", 1)[1].upper()
 
 

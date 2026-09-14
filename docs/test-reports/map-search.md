@@ -516,3 +516,72 @@ another label (except N1a), picked labels mirrored left where the right is taken
 
 Round-1 and round-2 reds now green: every B, C, E, H probe; F4, F5, F11; I2, I3, I4,
 I14. Verdict on the 8 older probe reds unchanged.
+
+---
+
+# Round 3 attack + pin refresh: 91081c9
+
+Fix round 3 = 51a4fe1 (map.js: singles drawn where they were moved; the picked label
+always shown - right, left, above, below, four diagonals, four of an outer ring, its spot
+reserved BEFORE neighbouring clusters are displaced; last resort = label right with no hit
+rect and `pointer-events: none`). The manager's review (runs/map-search/manager-review.md)
+noted round 3 had never been attacked. New probe file `test_ms_k_round3.py` (K1–K5, 16
+probes) builds a fixture for every new path, and the six stale pins were refreshed.
+
+## The round-3 attack (all green)
+
+Fixtures are synthetic hub files placed by screen offset: the pick (SFO's real point), and
+2-hub clusters (r 10.5) at chosen offsets ≥ 19px from the pick (so they stay) and ≥ 19px
+from each other (so they never merge), converted to lat/lon through the projection's
+inverse at the zoom-1 scale measured from the SVG's CTM. Each case runs the audit: 18px
+between every pair of markers, every on-pane marker returns itself from
+`elementFromPoint` at its centre, no label over any dot or any label, the picked label
+present with the expected `x`/`y`/`text-anchor`, a click on the label's centre reaching
+the pick and never a cluster.
+
+| Probe | Path forced | Result |
+|---|---|---|
+| K1 ×12 | each of the twelve positions. Ten (right, left, above, below, four diagonals, above-2, below-2) by the smallest non-merging blocker set found by exhaustive search over a 9×9 offset grid (the set is verified against the plan's boxes before the browser sees it). **right-2 and left-2 cannot be forced by dots alone** - any staying marker that covers the inner box covers the outer one - so they are reached through the OTHER pick's label placed first (more routes): right-2 with the second pick 20px left as the last resort, left-2 with the second pick at (−15, −13) labelled above; an independent Python simulation of the placement rule predicts both, and the DOM agrees byte for byte (x, y, anchor, hit rect, pointer-events). | green |
+| K2 | last resort: eight clusters at 26px on the compass points take every position; the label is drawn right with no `rect.lblhit` and `pointer-events="none"`; `elementFromPoint` at the text's centre is the east cluster and a click there opens THAT cluster's list, the inputs untouched | green |
+| K3 | reserve-before-move: a 2-hub cluster 10px east must move and its first candidate (east, 18.6px) is under the reserved right label; it goes elsewhere (≥ 17.5px, not east), the label stays right with its hit rect, the moved cluster lists its two members | green |
+| K4 | N1a on purpose: a single 6px from the pick and a 2-cluster 12px the other side, at z = 1 and seven zoom steps: both moved to free spots, both clickable, the single picks when clicked | green |
+| K5 | two picks 26px apart, each labelled right with a hit rect, no label over anything | green |
+
+Shots `K1-00-right.png` … `K1-11-below-2.png`, `K2-last-resort.png`, `K3-reserve.png`.
+
+**Findings**: none that fails. Two observations, Info: (a) a last-resort label drawn as
+the second pick's (K1[8]: `M01` runs under SFO's dot) is partly unreadable - inherent in
+"last resort", and the input holds the code; (b) `right-2`/`left-2` are in practice only
+reachable through another pick's label, so the outer ring is mostly decoration - harmless.
+N1a, N1b: **fixed**. J1/J2 (137-hub fixture, five picks, ten pairs, every zoom): green.
+
+## Pin refresh (the manager's must-fix 2)
+
+Each of the six was the team's own pin from an earlier round; the manager confirmed each is
+a pin the plan invalidated, not a regression. Refreshed in place, each with a docstring
+naming the round, the commit and the plan section; each states "a pin, not a regression".
+
+| Probe | Was | Now | Pin, not regression, because |
+|---|---|---|---|
+| ui-probes **P22** | three UTF-8 entry points | four: `src/map_tools.py` added; new **P22b** imports `src.map_tools`, calls `main([])` in-process under `LC_ALL=C` and proves `sys.stdout` is the same object with the same encoding | the guard is inside `if __name__ == "__main__"` (map_tools.py:640), exactly as trips_tools; the `all(guards)` check already covered it |
+| restyle **E5** | engine/api/serialize/server byte-identical to 386b2fc | engine/api/serialize still identical to 386b2fc; server.py identical to 16f53b7 (the map round's static map, plan 2.16) | `/api/state`'s key shape never moved; server.py's only change is `STATIC_FILES` as (Path, ctype) + 404 on a missing hubs.json |
+| restyle **H1** | server.py + CSP byte-identical to 386b2fc | api/engine/serialize/main/formatter identical to 386b2fc; server.py identical to 16f53b7; the `CSP = (…)` literal byte-identical to 386b2fc | the CSP string is unchanged (also pinned by map-search H4) |
+| restyle **H2** | only `app.js` may be a `<script>` | exactly `["/static/map.js", "/static/app.js"]`; no inline body, no `style=`, no `on*=` | plan D7: one more same-origin script, `defer`, document order |
+| restyle **J6** | app.js diff from 386b2fc = 6 hunks with the restyle's strings | the restyle's 6 hunks (386b2fc..56742af) unchanged with the same allowed strings; plus the map round's 7 hunks (56742af..HEAD) whose added strings are enumerated: plan 4.9 #9/#10/#13/#17/#18, the testids of 4.10, class names, DOM/ARIA tokens, and the existing wording the split `renderSearch` re-emits verbatim | plan 4.7 enumerates the edits; no wording change, no testid renamed |
+| restyle **C2** | `--accent2` only in `.btn-primary` | `.btn-primary` rules plus exactly one `.route` rule | decision A (manager): the route line stays coral as the approved RoutePicked mockup draws it (D12); dashed, 1.5px, never a button |
+
+E3, C5[search_ok] (restyle baseline reds) and F6 (map-search, by design) are left as they
+are, as ordered.
+
+## Counts at 91081c9
+
+| Suite | Result |
+|---|---|
+| `python3 -O -m pytest -q -p no:cacheprovider` | **3821 passed, 13 skipped** |
+| same without `-O` | **3821 passed, 13 skipped** |
+| ui-probes (`-O -p no:randomly`, P22 refreshed, P22b added) | **664 passed, 0 failed** |
+| ui-restyle-probes (E5, H1, H2, J6, C2 refreshed) | **284 passed, 2 failed, 10 skipped** - E3, C5[search_ok]: the restyle baseline, left as ordered |
+| map-search-probes (159 = 143 + 16 K) | **158 passed, 1 failed** - F6 (L8, by design) |
+
+Every finding of this feature is closed except L8 (design limit, popover) and the two
+baseline reds that predate it. Ship.
