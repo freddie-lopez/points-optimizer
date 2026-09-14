@@ -134,3 +134,52 @@ goes red until it is run.
 - The restyle probes pin `src/ui/server.py`, the `<script>` list and the exact app.js diff
   to the restyle round; any later UI round will trip them the same way. A tester round
   that re-bases those pins on this commit would stop that.
+
+## Fix round 1
+
+Tester report docs/test-reports/map-search.md (probes at 0c30abd, not edited). Three
+commits on top of it: 32b503a (tool: L1, L12, L13, L14), 4dacd19 (app.js/app.css: M1, M2,
+L10, I1, I2), 33dd029 (map.js: L2, L3, L4, L5, L6, L7, L9, L11; strings appended to the
+plan §4.9 as #16-#20 plus three notes).
+
+| Finding | Fix | Probe |
+|---|---|---|
+| M1 | `Show map` clears the selected cell (the drawer details a cell of the table it hides); `renderSearchDrawer` never shows it while `pane === "map"` | E7 green |
+| M2 | With the drawer docked (≥ 1180) the search column narrows to **220px**: results 448px at 1180, 568 at 1300, 708 at 1440. **Which and why**: the base's 688px at 1180 is arithmetically unreachable with any column beside a 440px drawer (1148 − 40 − 440 = 668 even at 0px); hiding the column would reach it but the E7 probe clicks the column's toggle with the drawer open, and "hide the map + disable the toggle" leaves the width untouched. The narrower column is the smaller change and clears the probe's own bar (≥ 440). The date row stacks in it so nothing clips | H3[1180], H3[1300] green |
+| L1 | `_write_atomically` catches every `OSError` (ENOSPC, `--out` a directory), removes its `.tmp` and refuses with `{path} could not be written (…). Nothing was written.`; `_ask_source` records ANY exception as `failed(<class>)` | B1, B2, B3 green |
+| L2 | A cluster that forms within 18px of a picked hub is pushed out along the pick→cluster vector to exactly 18px (the members' list still opens from the moved marker) | F4 green |
+| L3 | `load()` treats a land.json that parses but is not a land file as a land failure (`not a land file`); no rejection escapes; the pane is the sentence | C5 green |
+| L4 | New string #16 names `/static/land.json`; #2 stays for hubs.json | C6 ×2 green |
+| L5 | `K = J + M`: rows that failed validation (bad code / routes / sources / duplicate / not an object) are counted under J - they are not airports the engine accepts either; noted under #7 in the plan | C4 green |
+| L6 | Status follows the picks: #3 until From holds a plotted airport, #4 until To does, #5 with both (D10's click rule unchanged); noted in the plan | C8 green |
+| L7 | Per zoom, an IATA label is dropped where its box (6..29 × −8..8 px from the dot) would overlap another marker's dot (r 4.5 single / 10.5 cluster / 5.5 picked); the dot always stays. Picked labels always show | F5 green |
+| L8 | No code change (design limit). Verified: the cluster list names every member, so LGW/LGA/OAK etc. are pickable from the popover at any zoom (F4 and E-series pick LHR/SFO that way) | F6 stays red by design |
+| L9 | `role="group"` + `tabindex="-1"` on the SVG: Chromium's tree shows the group with its marker buttons (a plain `group` on `<svg>` is pruned; the tabindex makes it a node) | H9 green |
+| L10 | Labels are clickable: `pointer-events` restored and a transparent `rect.lblhit` under the text so a click between glyphs lands on the marker (verified by hand at a visible label: From = SYD) | F11 **stays red for a reason outside the fix**: the probe zooms three times about the pane centre, which puts SYD 950px outside the pane (x ≈ 2371 in a 1440 viewport), then clicks that off-screen point. No marker can receive that click |
+| L11 | A plain click on the ocean (pointerup with no drag and no marker under the pointer) closes the list | E9 green |
+| L12 | Explicit `--min-sources` above the number of sources asked is refused before the prompt (0 calls); with no `--min-sources` the default follows a shorter list and prints that it did (recorded in `_meta.thresholds`); `--sources` deduplicated in order; a run with gaps keeps an existing file that had more sources answer, prints `NOT OVERWRITTEN …`, exits 5, unless `--force` | B4, B5, B6 green; B7 kept green |
+| L13 | Regions stored only as the codes `regions.SEATS_AERO_REGIONS` maps them to; free text counted (console line) and never stored | B13 green |
+| L14 | README names `--api-key`, `--file`, `--force`; the console line separates non-object rows from bad-code route sides; ui.md unchanged (mark-searchable is in the README, the plan and the tool) | B14, B19 green |
+| I1 | While the map is shown after a run, the column says `The search has run: its results are under Show results.` (testid `search-ran`) - put in the column, not the map's sentence, so the map's own text stays byte-stable after a run (E6, C9) | E6, C9 still green |
+| I2 | Below 900px the subline is `Type an airport or city.` (two elements, CSS shows one per width) | - |
+
+**Probes that moved.** E8 (`Escape closes popover then suggestions then drawer`) was green
+and is now red at its third assertion: it opens a drawer, presses `Show map`, and expects
+the drawer to still be open beside the map, which is exactly what M1/E7 forbid. E7 and E8
+cannot both pass; the coordinator ordered M1. Its first two assertions (popover, then
+suggestions, then the drawer last) still hold - with the map shown there is no drawer to
+close. F11 stays red for the off-screen reason above; F6 by design (L8).
+
+Tests added: 10 in `tests/test_map_tools.py` (disk error, directory `--out`, non-requests
+exception, impossible threshold, default-follows-list, dedupe, not-overwritten / `--force`,
+complete-run-replaces-gappy, regions mapped, non-object rows).
+
+### Counts at 33dd029
+
+| Suite | Result |
+|---|---|
+| `python3 -O -m pytest -q -p no:cacheprovider` | **3819 passed, 13 skipped** |
+| the same without `-O` | **3819 passed, 13 skipped** |
+| ui-probes | **662 passed, 1 failed** (P22, unchanged) |
+| ui-restyle-probes | **279 passed, 7 failed, 10 skipped** (C2, C5, E3, E5, H1, H2, J6 - unchanged) |
+| map-search-probes | **91 passed, 3 failed** (from 71 / 23): red E8 (moved, see above), F6 (L8, by design), F11 (off-screen click) |
