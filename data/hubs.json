@@ -1,0 +1,23 @@
+{
+  "_meta": {
+    "captured_by": null,
+    "captured_at": null,
+    "endpoint": null,
+    "sources_asked": [],
+    "sources_ok": [],
+    "sources_failed": {},
+    "sources_incomplete": [],
+    "routes_seen": 0,
+    "thresholds": {
+      "min_sources": 3,
+      "min_routes": 20
+    },
+    "airport_table": "airportsdata 20260905 (MIT) via data/airportsdata_iata.csv",
+    "engine_airports_sha256": null,
+    "searchable_marked_at": null,
+    "key_redacted": true,
+    "synthetic": false,
+    "note": "No capture has run; the map plots nothing until python -m src.map_tools capture-hubs is run on a machine with a Seats.aero key."
+  },
+  "hubs": []
+}
