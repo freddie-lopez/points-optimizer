@@ -340,11 +340,19 @@
       return;
     }
     if (!S.tripId) {
+      if (S.lastDelete) {
+        // The server's own lines for what was just removed, on the landing
+        // the deleted trip leaves behind.
+        var gone = tid(el("div", "panel funding"), "trip-deleted");
+        S.lastDelete.forEach(function (l) { add(gone, el("div", "", l)); });
+        add(main, gone);
+      }
       add(main, tid(p("Pick a trip on the left, or build a new one with + New trip.", "note"),
         "trip-empty"));
       drawer.hidden = true; clear(drawer); setDrawerClass();
       return;
     }
+    S.lastDelete = null;
     if (S.tripError) {
       add(main, tid(panelRefusal("This trip could not be loaded.", S.tripError), "trip-error"));
       drawer.hidden = true; setDrawerClass();
@@ -400,6 +408,19 @@
     var head = tid(el("div", "trip-head"), "trip-detail");
     add(head, el("div", "label", "Trip"), el("h1", "", trip.name), el("div", "d", trip.description),
       el("div", "d", "Source: " + trip.source));
+    // Delete: enabled only for a file whose own contents say the builder wrote
+    // it and nobody edited it since; the server's reason is shown otherwise,
+    // in the refusal form. Never while a run is in flight.
+    var delRow = el("div", "trip-acts");
+    var delBtn = btn("btn btn-warn", "Delete trip", doDeletePreflight, "trip-delete");
+    delBtn.disabled = !trip.deletable || S.busy;
+    add(delRow, delBtn);
+    if (!trip.deletable && trip.not_deletable_reason) {
+      var why = tid(el("div", "panel refusal"), "trip-delete-reason");
+      add(why, el("pre", "", trip.not_deletable_reason));
+      add(delRow, why);
+    }
+    add(head, delRow);
     add(main, head);
     if (trip.flags && trip.flags.length) {
       var f = tid(el("div", "panel flags"), "trip-flags");
@@ -1210,6 +1231,52 @@
     cancel.focus();
   }
   function closeConfirm() { $("scrim").hidden = true; clear($("scrim")); }
+
+  // A plain dialog: a label, a heading, lines, Cancel and one warn-form action.
+  // Its own builder because openConfirm's heading is the spend sentence.
+  function openDialog(c, onGo) {
+    var sc = clear($("scrim"));
+    var m = tid(el("div", "modal"), c.testid);
+    m.setAttribute("role", "dialog"); m.setAttribute("aria-modal", "true");
+    add(m, el("div", "label", c.label), el("h3", "", c.heading));
+    c.lines.forEach(function (x) { add(m, p(x, "note")); });
+    var acts = el("div", "acts");
+    var cancel = btn("btn", "Cancel", closeConfirm, "confirm-cancel");
+    var goBtn = btn("btn btn-warn", c.go, function () { closeConfirm(); onGo(); }, c.goid);
+    add(acts, cancel, goBtn); add(m, acts); add(sc, m);
+    sc.hidden = false;
+    cancel.focus();
+  }
+
+  /* --------------------------------------------------------------- delete */
+
+  function doDeletePreflight() {
+    if (S.busy || !S.tripId) { return; }
+    var id = S.tripId;
+    api("POST", "/api/trips/" + encodeURIComponent(id) + "/delete-preflight", {}).then(function (res) {
+      if (res.status !== 200) { showBanner((res.body && res.body.message) || ("HTTP " + res.status)); return; }
+      var pf = res.body;
+      var lines = pf.lines.slice();
+      if (pf.description) { lines.push(pf.description); }
+      openDialog({ testid: "delete-confirm", label: "Before anything is removed",
+        heading: "Delete " + pf.path + "?", lines: lines, go: "Delete " + pf.path,
+        goid: "delete-confirm-go" }, function () { doDelete(id, pf.confirm_id); });
+    });
+  }
+
+  function doDelete(id, confirmId) {
+    api("POST", "/api/trips/" + encodeURIComponent(id) + "/delete", { confirm_id: confirmId }).then(function (res) {
+      if (res.status === 200) {
+        delete S.runs[id];
+        S.lastDelete = res.body.lines;
+        if (S.tripId === id) { S.trip = null; S.runId = null; S.legSel = null; S.cameFrom = null; }
+        loadTrips().then(function () { go("#trips"); });
+      } else {
+        showBanner((res.body && res.body.message) || ("HTTP " + res.status));
+        renderTrips();
+      }
+    });
+  }
 
   /* --------------------------------------------------------------- search */
 

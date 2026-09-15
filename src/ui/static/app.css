@@ -97,6 +97,9 @@ a { color: var(--accent); }
 .btn-primary { background: var(--accent2); border-color: var(--accent2); color: var(--accent2-ink); }
 .btn-primary:hover:not(:disabled) { background: var(--accent2-hover); border-color: var(--accent2-hover); }
 .btn-small { min-height: 28px; padding: 0 10px; font-size: var(--s12); }
+/* The warn-fill button: destruction is caution-coloured and its shape (a filled warn button) carries it too. Never the primary coral. */
+.btn-warn { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn); }
+.btn-warn:hover:not(:disabled) { border-color: var(--warn); }
 .field { display: grid; gap: 4px; min-width: 0; }
 .field input, .field select { background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 0 10px; min-height: 36px; font-family: var(--mono); font-size: var(--s13); min-width: 0; }
 .field input:focus, .field select:focus { border-color: var(--accent); outline: none; }
@@ -181,6 +184,9 @@ a { color: var(--accent); }
 .result > * { min-width: 0; }
 .trip-head h1 { margin: 2px 0 2px; font-size: var(--s20); font-weight: 500; text-wrap: balance; overflow-wrap: anywhere; }
 .trip-head .d { font-size: var(--s13); color: var(--muted); max-width: 90ch; overflow-wrap: anywhere; }
+/* Delete trip, and under it the server's reason when it is refused (the refusal form). */
+.trip-acts { margin-top: 10px; display: grid; gap: 8px; justify-items: start; max-width: 90ch; }
+.trip-acts .refusal { justify-self: stretch; }
 .flags { border-color: var(--warn-line); border-left: 3px solid var(--warn); padding: 12px 16px; display: grid; gap: 6px; font-size: var(--s13); }
 .flags .label { color: var(--warn); }
 .flags ul { margin: 0; padding-left: 18px; }
@@ -300,6 +306,8 @@ pre.echo { margin: 0; padding: 10px; background: var(--bg); border: 1px solid va
 .scrim { position: fixed; inset: 0; background: rgba(15,20,27,.78); display: grid; place-items: center; z-index: 50; padding: 16px; }
 .modal { width: min(560px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-top: 2px solid var(--accent); border-radius: var(--radius); padding: 20px; display: grid; gap: 12px; }
 .modal h3 { margin: 0; font-size: var(--s16); font-weight: 500; }
+/* A delete names its file in the heading and on the button: a 120-character name must wrap, not widen the dialog. */
+.modal h3, .modal .acts .btn { overflow-wrap: anywhere; min-width: 0; }
 .modal .big { font: 500 var(--s20) var(--mono); }
 .modal .acts { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .wallet-rows { display: grid; gap: 6px; }
