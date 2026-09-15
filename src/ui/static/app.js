@@ -36,7 +36,10 @@
     busyStart: 0,
     busyText: "",
     search: { from: "", to: "", date: "", dateTo: "", cabin: "All", errors: {}, run: null,
-              sel: null, busy: false,
+              // The drawer's cell (sel) and the selection (picked): one award,
+              // kept when the drawer closes, so the button under the table
+              // still has something to add. Both are {row, cabin} or null.
+              sel: null, picked: null, busy: false,
               // The right pane shows the map OR the results, never both.
               pane: "map",
               // The open autofill list: {key, items, active} or null.
@@ -1274,8 +1277,9 @@
     if (q.run) {
       var toggle = btn("btn", q.pane === "map" ? "Show results" : "Show map", function () {
         q.pane = q.pane === "map" ? "result" : "map";
-        // The drawer details a cell of the results table: it goes with them.
-        if (q.pane === "map") { q.sel = null; S.cameFrom = null; }
+        // The drawer details a cell of the results table: it goes with them,
+        // and so does the selection.
+        if (q.pane === "map") { q.sel = null; q.picked = null; S.cameFrom = null; }
         renderSearch();
       }, "search-pane-toggle");
       toggle.disabled = q.busy;
@@ -1510,7 +1514,7 @@
         renderSearch();
         api("POST", "/api/search/run", body).then(function (r2) {
           q.busy = false; stopBusy();
-          if (r2.status === 200) { q.run = r2.body; q.sel = null; refreshState(); }
+          if (r2.status === 200) { q.run = r2.body; q.sel = null; q.picked = null; refreshState(); }
           else { showBanner((r2.body && r2.body.message) || ("HTTP " + r2.status)); }
           renderSearch();
         });
@@ -1544,7 +1548,7 @@
       add(stateBox, p(run.rows.length + " row(s) · award space, fundability from your wallet, and taxes trust. No POINTS / PAY CASH verdict: there is no cash price here.", "dim"));
     }
     add(box, stateBox);
-    if (run.rows.length) { add(box, renderSearchTable(run)); }
+    if (run.rows.length) { add(box, renderSearchTable(run), renderAddTrip(run)); }
     var foot = tid(el("div", "footer-lines"), "search-footer");
     add(foot, el("div", run.coverage_incomplete ? "seg-alert" : "", "Seats.aero result coverage: " + (run.coverage_note || "(no coverage note recorded)")));
     add(foot, el("div", "seg-caution", run.trips_footer));
@@ -1558,6 +1562,57 @@
     add(foot, cmdRow(run.argv_display, "search-command"));
     add(box, foot);
     add(box, transcriptBlock(run.transcript));
+  }
+
+  /* The selection, when it still names a cell of this run: {row, cabin} or null. */
+  function pickedAward(run) {
+    var pk = S.search.picked;
+    if (!pk || !run || !run.rows[pk.row] || !run.rows[pk.row].cabins[pk.cabin]) { return null; }
+    return pk;
+  }
+
+  // "ORIGIN → DEST · date · program · cabin", the way the drawer header says it.
+  function awardWords(node, run, pk) {
+    var row = run.rows[pk.row];
+    add(node, routeEl(run.route.origin, run.route.destination), " · " + row.date + " · " +
+      (row.program || "(program not named)") + " · " + pk.cabin);
+    return node;
+  }
+
+  // The button under the results: the same thing the drawer's button does,
+  // from the same selection, reachable when the drawer is closed.
+  function renderAddTrip(run) {
+    var q = S.search;
+    var pk = pickedAward(run);
+    var box = tid(el("div", "panel addtrip"), "search-add-trip-box");
+    var note = tid(el("p", "note"), "search-add-trip-note");
+    if (pk) { add(note, "Picked: "); awardWords(note, run, pk); }
+    else { add(note, "Pick an award in the results first."); }
+    var goBtn = btn("btn btn-primary", "Add as trip", function () { prefillFromSearch(q.picked); }, "search-add-trip");
+    goBtn.disabled = !pk;
+    add(box, note, goBtn);
+    return box;
+  }
+
+  function isoDate(s) { return /^\d{4}-\d{2}-\d{2}$/.test(String(s)); }
+
+  // The new-trip form from one award: route, date and cabin only. The award's
+  // price is NOT carried - not into the body, not into a hidden field - only a
+  // LIVE or REPLAY run can price it; the cash fare is the one thing the user
+  // must type. `from_search` and `focus` are for the form and never sent.
+  function prefillFromSearch(pk) {
+    var run = S.search.run;
+    if (!pk || !run || !run.rows[pk.row]) { return; }
+    var row = run.rows[pk.row];
+    var o = run.route.origin, d = run.route.destination;
+    S.nt = newTripState();
+    S.nt.cabin = pk.cabin;
+    S.nt.legs = [{ origin: o, destination: d, date: row.date, cabin: "", cash: "" }];
+    S.nt.name = isoDate(row.date) ? (o + "-" + d + "-" + row.date).toLowerCase() : "";
+    S.nt.from_search = { run_id: run.run_id, origin: o, destination: d, date: row.date,
+                         program: row.program, cabin: pk.cabin };
+    S.nt.focus = "cash";
+    go("#new-trip");
   }
 
   function renderSearchTable(run) {
@@ -1581,7 +1636,7 @@
         td.className += " pick";
         td.tabIndex = 0;
         tid(td, "cell-" + row.date + "-" + (row.source_code || "none") + "-" + c);
-        if (q.sel && q.sel.row === ri && q.sel.cabin === c) { td.className += " sel"; }
+        if (q.picked && q.picked.row === ri && q.picked.cabin === c) { td.className += " sel"; }
         var bx = el("div", "cell");
         var l1 = el("div", "l1", fmtInt(cell.cost)); add(l1, el("span", "seats", cell.seats + " seats"));
         var l2 = el("div", "l2");
@@ -1594,7 +1649,7 @@
         add(bx, l1, l2, l3); add(td, bx);
         var open = function () {
           openedFrom("cell-" + row.date + "-" + (row.source_code || "none") + "-" + c);
-          q.sel = { row: ri, cabin: c }; renderSearch(); focusDrawer();
+          q.sel = { row: ri, cabin: c }; q.picked = q.sel; renderSearch(); focusDrawer();
         };
         td.addEventListener("click", open);
         td.addEventListener("keydown", function (e) {
@@ -1675,10 +1730,7 @@
     var nv = section("No verdict");
     add(nv, p("A single-route search has no cash price to compare against, so it cannot say POINTS or PAY CASH. Add it to a trip with the fare you found."));
     var goBtn = btn("btn btn-primary", "Score against a fare →", function () {
-      S.nt = newTripState();
-      S.nt.cabin = q.sel.cabin;
-      S.nt.legs = [{ origin: run.route.origin, destination: run.route.destination, date: row.date, cabin: q.sel.cabin, cash: "" }];
-      go("#new-trip");
+      prefillFromSearch(q.sel);
     }, "drawer-to-trip");
     var wrap = el("div"); add(wrap, goBtn); add(nv, wrap);
     add(d, nv);
@@ -1688,7 +1740,9 @@
 
   function newTripState() {
     return { name: "", cabin: "Y", legs: [{ origin: "", destination: "", date: "", cabin: "", cash: "" }],
-      errors: [], echo: null, draft_hash: null, wrote: null, busy: false };
+      errors: [], echo: null, draft_hash: null, wrote: null, busy: false,
+      // Set by prefillFromSearch, read by renderNewTrip, never sent (ntBody).
+      from_search: null, focus: null };
   }
 
   function renderNewTrip(main) {

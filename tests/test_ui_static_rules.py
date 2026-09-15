@@ -97,6 +97,8 @@ TESTIDS = [
     "map-pick-", "map-route", "map-status", "map-provenance", "map-zoom-in", "map-zoom-out",
     "map-reset", "search-suggest-", "suggest-", "search-pane-toggle", "search-result",
     "search-ran",
+    # search -> trip, and delete (docs/plans/search-to-trip.md 4.5)
+    "search-add-trip", "search-add-trip-box", "search-add-trip-note",
 ]
 
 
