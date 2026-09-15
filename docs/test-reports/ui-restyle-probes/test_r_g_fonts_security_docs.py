@@ -77,12 +77,15 @@ def test_G2_the_only_offsite_request_is_the_google_fonts_stylesheet_and_it_is_th
 
 
 def test_H1_server_and_csp_are_byte_identical_to_the_base():
-    """Re-pinned by the tester at 91081c9 (map-search round): server.py is the
-    bytes of 16f53b7 (the map round's static map, plan 2.16) and nothing
-    else moved; the CSP itself is byte-identical to the base. A pin, not a
-    regression."""
-    assert git("diff", "386b2fc..HEAD", "--", "src/ui/api.py", "src/ui/engine.py",
-               "src/ui/serialize.py", "src/main.py", "src/formatter.py") == ""
+    """Re-pinned by the tester at d6be134 (search->trip round, plan
+    docs/plans/search-to-trip.md 6 step 7, which names this pin): api.py and
+    engine.py now carry that round's two POST routes and the delete engine
+    (4.2/4.3) and are pinned to the coder's head d6be134 instead of the
+    restyle base; serialize.py, main.py and formatter.py are still the bytes
+    of 386b2fc; server.py is still the bytes of 16f53b7 and the CSP is
+    byte-identical to the base. A pin, not a regression."""
+    assert git("diff", "386b2fc..HEAD", "--", "src/ui/serialize.py", "src/main.py", "src/formatter.py") == ""
+    assert git("diff", "d6be134..HEAD", "--", "src/ui/api.py", "src/ui/engine.py") == ""
     assert git("diff", "16f53b7..HEAD", "--", "src/ui/server.py") == ""
     server = (ROOT / "src" / "ui" / "server.py").read_text(encoding="utf-8")
     base = git("show", "386b2fc:src/ui/server.py")
@@ -260,7 +263,11 @@ def test_J5_plan_compliance_greps():
 
 
 def test_J6_app_js_diff_is_exactly_the_three_enumerated_edits():
-    """The restyle's own diff (386b2fc..56742af, 6 hunks) is unchanged; on top
+    """Re-pinned by the tester at d6be134 (search->trip round): the 56742af..HEAD
+    half now counts 17 hunks and allows that round's enumerated strings (see
+    the second allowlist below; docs/plans/search-to-trip.md 6 step 7). A
+    pin, not a regression. The earlier history:
+    The restyle's own diff (386b2fc..56742af, 6 hunks) is unchanged; on top
     of it the map round added its enumerated edits (docs/plans/map-search.md
     4.7). Re-pinned by the tester at 91081c9: the strings the map round added
     are the plan's 4.9 sentences (#9, #10, #13, #17, #18, the map.js-not-
@@ -283,7 +290,7 @@ def test_J6_app_js_diff_is_exactly_the_three_enumerated_edits():
                "replay", "(source: X)"}  # `run.mode === "replay"` and the comment
     assert strings <= allowed, strings - allowed
     d = git("diff", "56742af..HEAD", "--", "src/ui/static/app.js")
-    assert d.count("\n@@") == 7, d.count("\n@@")   # 4.7's edits + the round-4 .catch, as git groups them at c68e3eb
+    assert d.count("\n@@") == 17, d.count("\n@@")   # 4.7's edits + the round-4 .catch (7) + search->trip's 14 hunks, as git groups them at d6be134
     added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
     strings = set(re.findall(r'"([^"]*)"', "\n".join(added)))
     map_allowed = {
@@ -314,7 +321,39 @@ def test_J6_app_js_diff_is_exactly_the_three_enumerated_edits():
         "whether the taxes are trusted. A single-route search has no cash price, so it cannot say ",
         "POINTS or PAY CASH: add an award to a trip to score it.",
     }
-    assert strings <= map_allowed, strings - map_allowed
+    # Re-pinned by the tester at d6be134 (search->trip round; docs/plans/search-to-trip.md
+    # 6 step 7 names this pin). The strings below are the coder report's list
+    # ("Every new string literal in app.js"), checked against the diff by
+    # search-to-trip-probes E5 before being copied here: P1-P9 (4.4), the nine
+    # testids (4.5), class names, routes, hashes, DOM/ARIA tokens, state keys,
+    # and the strings re-emitted from moved lines. A pin, not a regression.
+    st_allowed = {
+        # P1-P9 and their pieces
+        "Add as trip", "Pick an award in the results first.", "Picked: ", "Prefilled from the search ",
+        ". The award price the search showed is NOT written into this trip: only a LIVE or ",
+        "REPLAY run can price it. Type the cash fare you found - the search cannot know it.",
+        "required: the one thing a search cannot know", "Delete trip", "Before anything is removed", "Delete ",
+        "Cancel", "(program not named)", " · ",
+        # testids (4.5), and the two reused
+        "search-add-trip", "search-add-trip-box", "search-add-trip-note", "nt-prefill", "trip-delete",
+        "trip-delete-reason", "delete-confirm", "delete-confirm-go", "trip-deleted", "confirm-cancel", "nt-leg-1-cash",
+        # class names
+        "panel addtrip", "btn btn-warn", "btn btn-primary", "trip-acts", "panel refusal", "panel funding", "hint",
+        "modal", "acts", "pre",
+        # routes / API
+        "/api/trips/", "/delete-preflight", "/delete", "POST", "HTTP ",
+        # hashes
+        "#new-trip", "#trips",
+        # DOM / ARIA tokens
+        "h3", "p", "dialog", "aria-modal", "scrim",
+        # state keys / misc
+        "cash", " sel",
+        # re-emitted existing strings on moved lines
+        "Cash per person (USD)", "2400",
+        # in a comment only
+        "ORIGIN → DEST · date · program · cabin",
+    }
+    assert strings <= map_allowed | st_allowed, strings - (map_allowed | st_allowed)
 
 
 def test_J7_the_disclosed_deviations_are_what_the_diff_shows():

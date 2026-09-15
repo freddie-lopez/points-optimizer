@@ -38,3 +38,6 @@ docs/design/map-ref/airportsdata-20260905-airports.csv
 
 # The map-search probes screenshot every run too.
 docs/test-reports/map-search-probes/shots-out/
+
+# The search->trip probes screenshot every run too.
+docs/test-reports/search-to-trip-probes/shots-out/

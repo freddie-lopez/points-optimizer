@@ -89,11 +89,18 @@ def test_A5_no_hand_typed_airport_or_coordinate_in_src_or_data():
 
 
 def test_A6_no_engine_cli_or_golden_diff_since_the_base():
+    """Re-pinned by the tester at d6be134 (search->trip round; the plan
+    docs/plans/search-to-trip.md 6 step 7 names this pin): src/ui/api.py and
+    src/ui/engine.py carry that round's delete routes and are pinned to the
+    coder's head d6be134; every other path is still byte-identical to the
+    map round's base. A pin, not a regression."""
     paths = ["src/main.py", "src/formatter.py", "src/seats_client.py", "src/optimizer.py",
-             "src/live_trip.py", "src/trip_builder.py", "src/regions.py", "src/ui/api.py",
-             "src/ui/engine.py", "src/ui/serialize.py", "data/airports.csv",
+             "src/live_trip.py", "src/trip_builder.py", "src/regions.py",
+             "src/ui/serialize.py", "data/airports.csv",
              "tests/fixtures/cli_golden", "tests/test_cli_golden.py"]
     out = git("diff", f"{BASE}..HEAD", "--stat", "--", *paths)
+    assert out.strip() == "", out
+    out = git("diff", "d6be134..HEAD", "--stat", "--", "src/ui/api.py", "src/ui/engine.py")
     assert out.strip() == "", out
 
 
