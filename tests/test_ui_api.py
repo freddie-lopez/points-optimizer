@@ -590,6 +590,67 @@ def test_create_without_the_preview_hash_writes_nothing(nt_client):
     assert not (nt_client.trips_dir / "sfo_lhr_jan.json").exists()
 
 
+# ------------------------------------------------------------ search -> trip
+
+
+def _prefill_body(run, row_index, cabin, cash):
+    """The body the page sends after prefillFromSearch (app.js) plus a typed
+    cash: exactly what ntBody() emits from the prefilled S.nt. Nothing from
+    the award - not its miles, not its taxes - is in it."""
+    row = run["rows"][row_index]
+    o, d = run["route"]["origin"], run["route"]["destination"]
+    name = (o + "-" + d + "-" + row["date"]).lower() if len(row["date"]) == 10 else ""
+    # leg cabin "" -> ntBody sends `l.cabin || nt.cabin`, i.e. the trip cabin.
+    return {"name": name, "cabin": cabin,
+            "legs": [{"origin": o, "destination": d, "date": row["date"], "cabin": cabin,
+                      "cash": cash}]}
+
+
+def test_a_prefilled_body_is_the_typed_body(tmp_path, pinned, monkeypatch):
+    """Search -> Add as trip -> type the cash -> Write is byte-identical to the
+    same trip typed by hand and to `--new-trip` flags on the same day, and the
+    award's price reaches no field of it."""
+    from datetime import date
+
+    monkeypatch.setenv(config.KEY_ENV_VAR, g.FAKE_KEY)
+    trips = copy_trips(tmp_path / "trips", names=["trip_b_europe.json"])
+    with patch("src.seats_client.requests.get", side_effect=g.Stub()):
+        with running_server(wallet_path=write_wallet(tmp_path / "w.json"), trips_dir=trips) as c:
+            _, run = _search(c)
+            assert run["rows"][0]["cabins"]["Y"]["cost"] == 50000
+            body = _prefill_body(run, 0, "Y", "2400")
+            assert body["name"] == "sfo-mad-2027-01-15"
+            assert "50000" not in json.dumps(body) and "32.36" not in json.dumps(body)
+            d = c.post("/api/trips/draft", body).json()
+            assert d["ok"] is True, d
+            made = c.post("/api/trips/create", dict(body, draft_hash=d["draft_hash"])).json()
+            assert made["id"] == "sfo-mad-2027-01-15"
+            written = (trips / "sfo-mad-2027-01-15.json").read_bytes()
+            # ... and the same trip typed by hand, in a second directory.
+            typed = {"name": "sfo-mad-2027-01-15", "cabin": "Y",
+                     "legs": [{"origin": "SFO", "destination": "MAD", "date": "2027-01-15",
+                               "cabin": "Y", "cash": "2400"}]}
+            assert typed == body
+    flags = trip_builder.new_trip_from_flags(
+        "sfo-mad-2027-01-15", ["SFO:MAD:2027-01-15:2400"], [], cabin="Y",
+        directory=tmp_path / "cli", today=g.PINNED_TODAY)
+    assert flags.read_bytes() == written
+    fx = json.loads(written)
+    # No points_candidates KEY on any leg (the word itself is in LIVE_ONLY_FLAG's sentence).
+    assert all("points_candidates" not in leg for leg in fx["legs"])
+    assert fx["trip_level_flags"] == [trip_builder.LIVE_ONLY_FLAG]
+
+
+def test_the_name_suggestion_is_withheld_for_a_non_iso_date():
+    """The page suggests `{o}-{d}-{date}` only when the date is YYYY-MM-DD;
+    a hostile date from Seats.aero leaves the name empty (app.js isoDate)."""
+    import re
+
+    js = (Path(__file__).resolve().parent.parent / "src" / "ui" / "static" / "app.js").read_text()
+    assert re.search(r'function isoDate\(s\) \{ return /\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$/\.test', js)
+    assert "S.nt.name = isoDate(row.date) ?" in js
+
+
 # ------------------------------------------------------------------- wallet
 
 

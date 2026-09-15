@@ -274,6 +274,8 @@ td.cab.sel { background: var(--accent-tint); }
 .form-row .field input { width: 110px; }
 .form-row .field input.date { width: 140px; }
 .form-row .field input.name { width: 240px; max-width: 100%; }
+/* What a search prefilled, and the price it did not: an informational note in the accent form. */
+.nt-prefill { padding: 10px 14px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius); background: var(--accent-tint); font-size: var(--s13); max-width: 90ch; overflow-wrap: anywhere; }
 pre.echo { margin: 0; padding: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); font: 400 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* drawer */

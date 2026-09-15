@@ -1749,6 +1749,17 @@
     var nt = S.nt || (S.nt = newTripState());
     var form = tid(el("div", "panel form"), "new-trip-form");
     add(form, el("div", "label", "New trip"));
+    if (nt.from_search) {
+      // What came from the search, and what did not: the award price stays
+      // out of this trip. Only a LIVE or REPLAY run can put a points price on it.
+      var fs = nt.from_search;
+      var pre = tid(el("div", "nt-prefill"), "nt-prefill");
+      add(pre, "Prefilled from the search ", routeEl(fs.origin, fs.destination),
+        " · " + fs.date + " · " + (fs.program || "(program not named)") + " · " + fs.cabin +
+        ". The award price the search showed is NOT written into this trip: only a LIVE or " +
+        "REPLAY run can price it. Type the cash fare you found - the search cannot know it.");
+      add(form, pre);
+    }
     function errFor(leg, field) {
       return nt.errors.filter(function (e) { return e.leg === leg && e.field === field; })
         .map(function (e) { return tid(p(e.message, "field-error"), "nt-error-" + (leg === null ? "trip" : leg) + "-" + field); });
@@ -1784,8 +1795,12 @@
       add(cw, el("span", "label", "Cabin"), cs);
       var rm = btn("btn btn-small", "Remove", function () { nt.legs.splice(i, 1); invalidate(); renderTrips(); });
       rm.disabled = nt.legs.length === 1;
+      var cashF = li("Cash per person (USD)", "cash", "", "2400");
+      if (nt.from_search && i === 0) {
+        add(cashF, el("span", "hint", "required: the one thing a search cannot know"));
+      }
       add(row, el("span", "legid", "L" + (i + 1)), li("From", "origin", "", "SFO"), li("To", "destination", "", "LHR"),
-        li("Date", "date", "date", "YYYY-MM-DD"), cw, li("Cash per person (USD)", "cash", "", "2400"), rm);
+        li("Date", "date", "date", "YYYY-MM-DD"), cw, cashF, rm);
       add(form, row);
       ["origin", "destination", "date", "cash", "leg"].forEach(function (fld) { add(form, errFor(i + 1, fld)); });
     });
@@ -1803,6 +1818,13 @@
     add(form, tid(el("div"), "nt-echo-box"));
     add(main, form);
     renderNtEcho();
+    if (nt.focus === "cash") {
+      // Once: the prefilled form lands with the cursor in the one field the
+      // search could not fill.
+      nt.focus = null;
+      var cashIn = document.querySelector('[data-testid="nt-leg-1-cash"]');
+      if (cashIn) { cashIn.focus({ preventScroll: true }); }
+    }
   }
 
   function renderNtEcho() {
