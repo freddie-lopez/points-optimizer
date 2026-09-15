@@ -1,0 +1,206 @@
+# Coder report: search → new trip, and a delete button
+
+Branch `feature/search-to-trip`, forked from `feature/map-search` at 4f879d4. Plan:
+`docs/plans/search-to-trip.md` (every D1-D17 built as written; deviations below). Commits
+are per build step, as Coder.
+
+## Steps completed
+
+| Step | Commit | What | Check |
+|---|---|---|---|
+| 1 | 9af213c | `S.search.picked`; highlight from `picked`; `open` sets both; pane toggle and a completed run clear both; `renderAddTrip` box under the table (P1, P2, P3); `prefillFromSearch` (D3, ISO guard); `drawer-to-trip` calls it; `TESTIDS` +3; `.addtrip` CSS | static rules 117 green; browser: every step-1 acceptance item (click → drawer + highlight + P3; Esc → drawer closed, highlight kept, P3 kept, focus on the cell; Add as trip → form with `nt-name` `sfo-mad-2027-01-15`, `nt-cabin` Y, leg filled, leg cabin on `trip cabin (Y)`, cash empty; selection survives a tab switch; Show map clears it and disables the button with P2) |
+| 2 | e5828c2 | `nt-prefill` (P4), cash hint (P5), one-shot focus on `nt-leg-1-cash`; `newTripState` gains `from_search`/`focus` (never sent; `ntBody` untouched); `TESTIDS` +1; `.nt-prefill` CSS; `test_a_prefilled_body_is_the_typed_body`, `test_the_name_suggestion_is_withheld_for_a_non_iso_date` | browser: Preview with cash empty → `Leg 1 cash: '' is not a number. …` inline; `2400` → echo; the draft body has exactly `name, cabin, legs[{origin, destination, date, cabin, cash}]`, the create body that + `draft_hash`, nothing from the award; Write → `Wrote …` and T2; the written file is byte-identical to `new_trip_from_flags("sfo-mad-2027-01-15", ["SFO:MAD:2027-01-15:2400"], cabin="Y", today=2026-09-11)` |
+| 3 | 71e06a9 | `deletable_reason`, `trip_detail` +`deletable`/`not_deletable_reason` (D7, D12), the R1-R3/R8 constants; `link_display`; 11 tests (corpus ×4 → R2; UI-built → True; +`points_candidates: []` → R3; source rewritten → R2; flag removed → R3; cash source `screenshot` → R3; `{not json` and `[1, 2]` → R1; symlink → R8) | `pytest tests/test_ui_api.py -k "deletable or corpus or edited or unreadable"` 11 passed |
+| 4 | 7d199ed | `api.py` +2 routes/handlers; `trip_delete_preflight`, `trip_delete`, `_delete_digest`, `redeem_confirm(required=, stale=)` (D8-D11); security tests parametrised over the two paths; 20 delete tests | preflight 200 + C1/C2 + description; delete → file gone, listing without it, Trip B still listed, nothing else in the dir moved (mtime+bytes walk); second delete → 404 R4; Trip B → 409 R2, bytes+mtime unchanged; no/empty/forged/int/used confirm → R6; a run's confirm on delete and a delete's confirm on run → stale; +1 byte → R7; +301 s → R7; lock held → R5 on preflight, delete and another trip; symlink → R8 and target intact; resolve-elsewhere → R9; `../`, `%2e%2e`, `%00`, `.json`, 121 chars, a directory `x.json` → 404 on both routes; token/Origin → 403; OPTIONS/PUT/DELETE/PATCH/HEAD/GET → 405; repo fixtures tripwire |
+| 5 | 0fffdd9 | `Delete trip` (P6) + `trip-delete-reason` (P7), `openDialog` (D14, P8), `doDeletePreflight`, `doDelete`, `trip-deleted` on the empty view (D16, P9); `.btn-warn`, `.trip-acts`, modal wrap CSS; `TESTIDS` +5 | browser: Trip B disabled with R2 under it; UI-built enabled → dialog with label, `Delete <file>?`, C1, C2, description, focus on Cancel; Esc and Cancel send nothing (request log); `Delete <file>` → list without it, `#trips` + `trip-deleted` `Deleted <file>`, run chips gone; hash to the deleted id → `trip-error` with R4; disabled while `run-busy` is shown |
+| 6 | 4c5a5e8 | ui.md §4.5 (+2 rows, detail keys) and §4.8 (S4, S5, T2, T5); README (add-as-trip sentence, Delete trip paragraph) | `test_readme_local_ui_is_accurate` green; no `docs/plans/`, `vN`, `Step N` in `src/ui/static/*` |
+| shots | 1b25931 | `docs/design/search-to-trip-ref/shots/{a..e}-*.png`, 1440×900, 128-257 KB each | looked at each (fallback fonts: Google Fonts is blocked) |
+
+Verification (step 9):
+
+- `python3 -O -m pytest -q -p no:cacheprovider` → **3890 passed, 13 skipped** (229 s). Baseline 3821/13; +69 = the new tests.
+- `python3 -m pytest -q -p no:cacheprovider` (no -O) → **3890 passed, 13 skipped** (228 s).
+- ui-probes (`-O`, `-p no:randomly`) → **664 passed, 0 failed** (777 s). Baseline 664/0.
+- ui-restyle-probes → **281 passed, 5 failed, 10 skipped** (279 s). Baseline 284/2/10 (E3, C5).
+- map-search-probes → **159 passed, 2 failed** (350 s). Baseline 160/1 (F6).
+
+`src/ui/server.py`, `src/ui/serialize.py`, `src/main.py`, `src/formatter.py`,
+`src/trip_builder.py`, `src/trip_loader.py`, `src/ui/static/map.js`, `index.html` and
+everything under `tests/fixtures/` are byte-identical to 4f879d4 (`git diff --stat` empty).
+`app.js` is 2,044 lines; `.style.` count is still 2; no `innerHTML`, no `|| 0`/`?? 0`; no
+testid renamed or dropped.
+
+## Deviations
+
+1. **Step 3's commit also holds step 4's engine code**, unwired (the delete constants,
+   `_delete_digest`, `trip_delete_preflight`, `trip_delete`, `redeem_confirm`'s kwargs).
+   They are one file; step 4's commit wires them in `api.py` and adds the tests. Said in
+   the step-3 commit message.
+2. **R8/R9 name the link's own path, not its target.** `display_path` calls `resolve()`,
+   so for `link.json → ../../README.md` it would have printed `README.md is a symbolic
+   link`. A small `link_display(path)` (parent resolved, name kept) is used for R8 and R9
+   only; C1, the preflight `path` and R1-R3 use `display_path` as the plan says (identical
+   for a regular file).
+3. **R2's `{source}` for a file with no `source` key** (`trip_001`/`trip_002`) is the empty
+   string: `(source: "")`. The plan defines `{source}` as the first 80 characters of the
+   value; there is none. A non-string source is `str()`ed and cut to 80.
+4. **`deletable_reason` treats a non-list `trip_level_flags`, a non-list `legs`, a non-dict
+   leg or a non-list `cash_options` as edited (R3)**, rather than crashing or passing
+   vacuously. The plan's pseudo-code only covers the well-formed shapes.
+5. **The add-as-trip box is rendered only when the results table is** (`run.rows.length`).
+   With no rows there is no table to sit under, and a disabled button under an
+   `api_error`/`no_awards` state would read as an offer. Stated so the tester can decide.
+6. **`search-add-trip` is `.btn.btn-primary`**, the same class as `drawer-to-trip`, whose
+   twin it is. The plan fixes only Delete's class (D13). This makes restyle-probe C5's
+   `search_ok` count 3 instead of the baseline 2 (see the reds); a manager who wants the
+   one-primary rule kept on that screen changes one class name (`"btn"`).
+7. **The prefill `program` fallback** `(program not named)` is applied in P3 and P4 from
+   `row.program`/`from_search.program`, the same expression the table uses; `from_search`
+   stores the raw value.
+8. **`S.lastDelete` is cleared whenever a trip page renders** (any `S.tripId`), so the
+   `trip-deleted` panel is only ever on the empty view directly after the delete.
+9. **`trip-delete-reason` reuses `panel refusal`** (the existing warn-fill refusal form, a
+   `pre` inside) rather than a new rule: "rendered in the warn-fill refusal form" (plan
+   §4.4) with no extra CSS.
+10. **In `doDelete`, a non-200 re-renders without reloading the detail.** The banner shows
+    the server's sentence; the button's enabled state is from the last `GET`. A stale
+    `deletable` after a hand edit is caught by the preflight's re-check (R1-R3 in the
+    banner) and by the delete's own re-check under the lock.
+
+## How to run it
+
+```
+.venv/bin/python -m src.ui --wallet wallet.json
+```
+
+Search tab: run a search, click an award cell (or Enter/Space on it); close the drawer or
+not; press **Add as trip** under the table (or **Score against a fare →** in the drawer).
+The form opens with From/To/Date/Cabin, a suggested name, focus in the cash field and a
+note saying the award price is not written. Type the fare, Preview, Write.
+
+Trips tab, on a trip the page or `--new-trip` built: **Delete trip** → the dialog names the
+file, says there is no undo, quotes the fixture's description → **Delete <file>**. Trip
+A/B/C, `trip_001`/`trip_002`, a hand-edited UI-built file, a symlink: the button is
+disabled with the reason under it.
+
+API: `POST /api/trips/{id}/delete-preflight` `{}` → `{id, path, description, confirm_id,
+lines}`; `POST /api/trips/{id}/delete` `{confirm_id}` → `{id, path, lines}`.
+
+Tests: `python3 -O -m pytest -q -p no:cacheprovider tests/test_ui_api.py -k "delet or
+prefilled or symlink or stale or lock or listing_key"`; `tests/test_ui_security.py`;
+`tests/test_ui_static_rules.py`.
+
+## Known gaps
+
+- **The cash hint lifts the cash input** (shot b): `.form-row` aligns fields at the
+  bottom, and the hint under the cash field makes that field taller, so its input sits ~20px
+  above its neighbours' on the prefilled form only. Cosmetic; fixing it needs either the hint
+  outside the flow (a new positioned rule) or a hint slot on every field.
+- **Two/three coral buttons on the results screen** (deviation 6).
+- **The cabin filter hiding the picked cabin keeps `picked`** (the box still names it, the
+  cell is not rendered). The plan hands this to the tester to decide.
+- **The delete's non-200 path does not re-fetch the detail** (deviation 10).
+- **Deletable is provenance, not a checksum** (plan §8): a UI-built file whose cash amount
+  was edited by hand stays deletable; the confirm names the file and its description.
+- **`grep -c points_candidates` on a UI-built file is 1, not 0** (plan §7 "No points price,
+  ever"): `LIVE_ONLY_FLAG`'s own sentence contains the word. The test checks the KEY on every
+  leg; the tester's probe should too.
+- The `trip_b_europe` default selection on a fresh load is unchanged; if Trip B were ever
+  deleted (it cannot be from here) the fallback is `S.trips[0]`, as before.
+
+## Every new string literal in app.js (for the J6 re-pin)
+
+Every double-quoted string inside added lines of `git diff 4f879d4..HEAD -- src/ui/static/app.js`
+(14 hunks), including the ones re-emitted from moved lines:
+
+User-facing (P1-P9 and their pieces):
+`"Add as trip"`, `"Pick an award in the results first."`, `"Picked: "`,
+`"Prefilled from the search "`,
+`". The award price the search showed is NOT written into this trip: only a LIVE or "`,
+`"REPLAY run can price it. Type the cash fare you found - the search cannot know it."`,
+`"required: the one thing a search cannot know"`, `"Delete trip"`,
+`"Before anything is removed"`, `"Delete "` (heading `"Delete " + pf.path + "?"` and the go
+button `"Delete " + pf.path`), `"?"`, `"Cancel"`, `"(program not named)"`, `" · "`.
+
+Testids: `"search-add-trip"`, `"search-add-trip-box"`, `"search-add-trip-note"`,
+`"nt-prefill"`, `"trip-delete"`, `"trip-delete-reason"`, `"delete-confirm"`,
+`"delete-confirm-go"`, `"trip-deleted"`, `"confirm-cancel"` (reused), `"nt-leg-1-cash"`
+(the focus selector `'[data-testid="nt-leg-1-cash"]'`).
+
+Class names: `"panel addtrip"`, `"btn btn-warn"`, `"btn btn-primary"`, `"btn"`,
+`"nt-prefill"`, `"trip-acts"`, `"panel refusal"`, `"panel funding"`, `"note"`, `"hint"`,
+`"label"`, `"modal"`, `"acts"`, `"pre"`.
+
+Routes / API: `"/api/trips/"`, `"/delete-preflight"`, `"/delete"`, `"POST"`, `"HTTP "`.
+
+Hashes: `"#new-trip"`, `"#trips"`.
+
+DOM/ARIA tokens: `"div"`, `"span"`, `"h3"`, `"p"`, `"role"`, `"dialog"`, `"aria-modal"`,
+`"true"`, `"scrim"`.
+
+State keys / misc: `"cash"` (`S.nt.focus = "cash"` and the `li(...)` key), `"date"`,
+`"map"`, `"-"`, `" sel"`, `""`.
+
+Re-emitted existing strings on moved lines: `"Cash per person (USD)"`, `"2400"`, `"Date"`,
+`"YYYY-MM-DD"`.
+
+In a comment only (the J6 regex still catches it): `"ORIGIN → DEST · date · program · cabin"`.
+
+New state keys (not string literals): `S.search.picked`, `S.nt.from_search`, `S.nt.focus`,
+`S.lastDelete`. New functions: `pickedAward`, `awardWords`, `renderAddTrip`, `isoDate`,
+`prefillFromSearch`, `openDialog`, `doDeletePreflight`, `doDelete`.
+
+## app.css additions (for J8)
+
+All additions, no rule changed or removed:
+
+- `.btn-warn { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn); }`
+- `.btn-warn:hover:not(:disabled) { border-color: var(--warn); }`
+- `.trip-acts { margin-top: 10px; display: grid; gap: 8px; justify-items: start; max-width: 90ch; }`
+- `.trip-acts .refusal { justify-self: stretch; }`
+- `.addtrip { padding: 12px 16px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }`
+- `.addtrip .note { flex: 1 1 240px; min-width: 0; max-width: none; }`
+- `.nt-prefill { padding: 10px 14px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius); background: var(--accent-tint); font-size: var(--s13); max-width: 90ch; overflow-wrap: anywhere; }`
+- `.modal h3, .modal .acts .btn { overflow-wrap: anywhere; min-width: 0; }`
+- four comment lines.
+
+`td.cab.sel` is unchanged (now driven by `picked`).
+
+## Probe reds and their classification
+
+| Suite | Test | Class | Why |
+|---|---|---|---|
+| ui-restyle | `test_H1_server_and_csp_are_byte_identical_to_the_base` | plan-invalidated pin (step 7) | first assertion: `386b2fc..HEAD` diff of `api.py`/`engine.py` is no longer empty. The `server.py` (16f53b7) and CSP assertions still hold. |
+| ui-restyle | `test_E5_api_state_key_shape_is_byte_identical_to_the_base_commit` | plan-invalidated pin (same pin as H1, not named in step 7) | asserts `386b2fc..HEAD` diff of `engine.py`/`api.py`/`serialize.py` empty; `serialize.py` is still byte-identical, `server.py` too. `/api/state`'s key shape is untouched. |
+| ui-restyle | `test_J6_app_js_diff_is_exactly_the_three_enumerated_edits` | plan-invalidated pin (step 7) | `56742af..HEAD` is now 17 hunks (was 7) with the strings above; the `386b2fc..56742af` half still passes. |
+| ui-restyle | `test_C5_how_many_primary_actions_are_on_screen_at_once[search_ok]` | baseline red (2 → 3) | was `('search-run','Run search'), ('drawer-to-trip','Score against a fare →')`; now also `('search-add-trip','Add as trip')` (deviation 6). |
+| ui-restyle | `test_E3_the_chip_follows_the_key_when_it_goes_away_and_comes_back` | baseline red | unchanged. |
+| map-search | `test_A6_no_engine_cli_or_golden_diff_since_the_base` | plan-invalidated pin | its path list includes `src/ui/api.py`, `src/ui/engine.py`; every other path in it (main, formatter, seats_client, optimizer, live_trip, trip_builder, regions, serialize, airports.csv, goldens, test_cli_golden) is still identical. |
+| map-search | `test_F6_metro_pairs_never_separate_at_max_zoom` | baseline red | unchanged. |
+| ui-probes | — | 664/0 | the `test_B*` route tables did not enumerate the new paths; nothing to re-pin. |
+
+Real regressions found: none. `J8` (undisclosed CSS) stayed green: it lists removed rules
+only; the additions are listed above.
+
+Also the coder's own edit, as the plan allows: `tests/test_ui_static_rules.py::TESTIDS`
+(+9), `tests/test_ui_security.py` (two tests parametrised over the new paths, one new
+405 test, four traversal paths added to the 404 test).
+
+## Out-of-scope observations
+
+- **Plan §7 "grep -c points_candidates … is 0"** will read 1 on every builder-written file
+  because `LIVE_ONLY_FLAG` says the word. The rule the tester wants is "no leg has the key".
+- **The "Add as trip" box below 1180px** is covered by the drawer sheet while the drawer is
+  open (the plan says so); `drawer-to-trip` is reachable there. Not changed.
+- **`openConfirm` and `openDialog` share the scrim, `closeConfirm`, Esc and click-outside.**
+  Only one dialog can be open; the delete preflight cannot be reached while a spend confirm
+  is up (the scrim covers the button).
+- **The trip page's "Delete trip" is rendered before the flags block**, between the source
+  line and `Data problems flagged`. If the design lead wants it at the foot of the page it is
+  one `add()` move.
+- **`_TRIP` allows a 121-character id** (`{0,120}` after the first char) while
+  `MAX_NAME_LENGTH` is 120; a 121-char id is unlisted, so it 404s. Pre-existing, harmless.
+- **The `hostile` probe server** can now drive the prefill with `date` = `<img …>`,
+  `2027-13-45`, U+202E, 5,000 chars: the ISO guard leaves `nt-name` empty, the value goes
+  into `input.value`, the P3/P4 notes are `textContent`. Not probed here beyond the code
+  reading; the tester's §7 item.
