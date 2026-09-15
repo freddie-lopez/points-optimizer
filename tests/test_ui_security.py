@@ -85,8 +85,11 @@ def test_a_token_in_the_query_string_does_not_count(client):
     assert r.status == 403
 
 
-def test_a_post_needs_the_token_too(client):
-    assert client.post("/api/wallet", {"balances": {}}, token=False).status == 403
+@pytest.mark.parametrize("path", ["/api/wallet", "/api/trips/trip_b_europe/delete-preflight",
+                                  "/api/trips/trip_b_europe/delete"])
+def test_a_post_needs_the_token_too(client, path):
+    r = client.post(path, {"balances": {}, "confirm_id": "x"}, token=False)
+    assert r.status == 403 and r.json()["error"] == "stale_page"
 
 
 def test_each_launch_has_its_own_token(tmp_path):
@@ -98,15 +101,27 @@ def test_each_launch_has_its_own_token(tmp_path):
 # --------------------------------------------------------------------- origin
 
 
+@pytest.mark.parametrize("path", ["/api/wallet", "/api/trips/trip_b_europe/delete-preflight",
+                                  "/api/trips/trip_b_europe/delete"])
 @pytest.mark.parametrize("origin", [False, "http://evil.com", "null",
                                     "http://127.0.0.1", "https://127.0.0.1:{port}",
                                     "http://127.0.0.1.evil.com:{port}"])
-def test_a_post_with_a_foreign_or_missing_origin_is_403(client, origin):
+def test_a_post_with_a_foreign_or_missing_origin_is_403(client, origin, path):
     if isinstance(origin, str):
         origin = origin.format(port=client.port)
-    r = client.post("/api/wallet", {"balances": {"UR": "1"}, "cards": []}, origin=origin)
+    r = client.post(path, {"balances": {"UR": "1"}, "cards": [], "confirm_id": "x"}, origin=origin)
     assert r.status == 403
     assert r.json()["error"] == "forbidden_origin"
+
+
+@pytest.mark.parametrize("method", ["OPTIONS", "PUT", "DELETE", "PATCH", "HEAD", "GET"])
+@pytest.mark.parametrize("path", ["/api/trips/trip_b_europe/delete-preflight",
+                                  "/api/trips/trip_b_europe/delete"])
+def test_the_delete_routes_take_post_only(client, method, path):
+    r = client.request(method, path)
+    assert r.status == 405
+    if method != "HEAD":
+        assert r.json()["error"] == "method_not_allowed"
 
 
 def test_localhost_origin_is_accepted(client):
@@ -174,6 +189,10 @@ def test_unknown_api_paths_are_404_and_a_trip_id_is_never_a_path(client):
     for path in ("/api/nope", "/api/trips/..%2f..%2fsrc", "/api/trips/../../etc",
                  "/api/runs/../x"):
         assert client.get(path).status == 404
+    for path in ("/api/trips/..%2f..%2fsrc/delete", "/api/trips/../../etc/delete",
+                 "/api/trips/..%2ftrip_b_europe/delete-preflight",
+                 "/api/trips/trip_b_europe%00/delete"):
+        assert client.post(path, {"confirm_id": "x"}).status == 404, path
 
 
 # -------------------------------------------------------------------- headers

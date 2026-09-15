@@ -847,3 +847,207 @@ def test_an_unreadable_file_and_a_symlink_are_refused_by_the_engine(tmp_path, pi
     assert e.deletable_reason(trips / "link.json") == eng.NOT_A_REGULAR_FILE_SYMLINK.format(
         file=str(trips / "link.json"))
     assert e.deletable_reason(outside) is None
+
+
+def _mtimes(directory):
+    import os
+
+    return {p.name: (os.stat(p, follow_symlinks=False).st_mtime_ns, p.read_bytes() if p.is_file() else None)
+            for p in directory.iterdir()}
+
+
+def test_preflight_then_delete_removes_exactly_that_file(del_client):
+    trips = del_client.trips_dir
+    path = trips / "sfo-mad-2027-01-15.json"
+    before = _mtimes(trips)
+    pf = del_client.post("/api/trips/sfo-mad-2027-01-15/delete-preflight", {})
+    assert pf.status == 200, pf.text
+    pf = pf.json()
+    assert pf["id"] == "sfo-mad-2027-01-15" and pf["path"] == eng.display_path(path)
+    assert pf["confirm_id"]
+    assert pf["description"] == json.loads(path.read_text())["description"]
+    assert pf["description"].startswith("Built by --new-trip on 2026-09-11: 1 flight leg(s)")
+    assert pf["lines"] == [
+        f"This removes {eng.display_path(path)} from disk.",
+        "There is no undo in this app. If the file is committed, git can restore it; if it "
+        "is not, it is gone.",
+    ]
+    assert path.exists() and _mtimes(trips) == before, "a preflight changes nothing"
+    r = del_client.post("/api/trips/sfo-mad-2027-01-15/delete", {"confirm_id": pf["confirm_id"]})
+    assert r.status == 200, r.text
+    assert r.json() == {"id": "sfo-mad-2027-01-15", "path": eng.display_path(path),
+                        "lines": [f"Deleted {eng.display_path(path)}"]}
+    assert not path.exists()
+    ids = [t["id"] for t in del_client.get("/api/trips").json()]
+    assert "sfo-mad-2027-01-15" not in ids and "trip_b_europe" in ids
+    after = _mtimes(trips)
+    del before[path.name]
+    assert after == before, "nothing else in the directory moved"
+    # A second delete of the same id: the listing no longer has it (R4).
+    r = del_client.post("/api/trips/sfo-mad-2027-01-15/delete", {"confirm_id": pf["confirm_id"]})
+    assert r.status == 404
+    assert r.json()["message"] == f"No trip 'sfo-mad-2027-01-15' in {eng.display_path(trips)}."
+    r = del_client.post("/api/trips/sfo-mad-2027-01-15/delete-preflight", {})
+    assert r.status == 404
+
+
+def test_trip_b_cannot_be_deleted_and_its_bytes_do_not_move(del_client):
+    import os
+
+    path = del_client.trips_dir / "trip_b_europe.json"
+    before = (path.read_bytes(), os.stat(path).st_mtime_ns)
+    r = del_client.post("/api/trips/trip_b_europe/delete-preflight", {})
+    assert r.status == 409 and r.json()["error"] == "not_deletable"
+    assert r.json()["message"].startswith(
+        f"NOT DELETABLE - {eng.display_path(path)} was not built by --new-trip or this page "
+        "(source: \"Google Flights + Accor/NH/Hilton, captured 2026-09-07 by Ts")
+    # No confirm exists for it; a delete with any id is refused before the file is looked at.
+    r = del_client.post("/api/trips/trip_b_europe/delete", {"confirm_id": "forged"})
+    assert r.status == 409 and r.json()["error"] == "confirm_required"
+    assert r.json()["message"] == eng.DELETE_CONFIRM_REQUIRED
+    # And a REAL confirm, minted for another trip, is stale against this one.
+    pf = del_client.post("/api/trips/sfo-mad-2027-01-15/delete-preflight", {}).json()
+    r = del_client.post("/api/trips/trip_b_europe/delete", {"confirm_id": pf["confirm_id"]})
+    assert r.status == 409 and r.json()["error"] == "confirm_stale"
+    assert r.json()["message"] == eng.DELETE_CONFIRM_STALE
+    assert (path.read_bytes(), os.stat(path).st_mtime_ns) == before
+
+
+@pytest.mark.parametrize("body", [{}, {"confirm_id": None}, {"confirm_id": ""},
+                                  {"confirm_id": "forged"}, {"confirm_id": 42}])
+def test_a_delete_without_a_confirm_from_its_own_preflight_deletes_nothing(del_client, body):
+    path = del_client.trips_dir / "sfo-mad-2027-01-15.json"
+    r = del_client.post("/api/trips/sfo-mad-2027-01-15/delete", body)
+    assert r.status == 409 and r.json()["error"] == "confirm_required"
+    assert r.json()["message"] == eng.DELETE_CONFIRM_REQUIRED
+    assert path.exists()
+
+
+def test_a_delete_confirm_is_single_use(del_client):
+    trips = del_client.trips_dir
+    _ui_built(trips, name="second")
+    pf = del_client.post("/api/trips/second/delete-preflight", {}).json()
+    assert del_client.post("/api/trips/second/delete", {"confirm_id": pf["confirm_id"]}).status == 200
+    # The same id again, against a file that still exists elsewhere: used up.
+    _ui_built(trips, name="second")
+    r = del_client.post("/api/trips/second/delete", {"confirm_id": pf["confirm_id"]})
+    assert r.status == 409 and r.json()["error"] == "confirm_required"
+    assert (trips / "second.json").exists()
+
+
+def test_a_file_that_changed_after_the_confirm_is_stale(del_client):
+    path = del_client.trips_dir / "sfo-mad-2027-01-15.json"
+    pf = del_client.post("/api/trips/sfo-mad-2027-01-15/delete-preflight", {}).json()
+    path.write_text(path.read_text() + "\n")
+    r = del_client.post("/api/trips/sfo-mad-2027-01-15/delete", {"confirm_id": pf["confirm_id"]})
+    assert r.status == 409 and r.json() == {"error": "confirm_stale",
+                                            "message": eng.DELETE_CONFIRM_STALE}
+    assert path.exists()
+
+
+def test_an_expired_delete_confirm_is_stale(del_client, monkeypatch):
+    import time
+
+    path = del_client.trips_dir / "sfo-mad-2027-01-15.json"
+    pf = del_client.post("/api/trips/sfo-mad-2027-01-15/delete-preflight", {}).json()
+    real = time.monotonic
+    monkeypatch.setattr(eng.time, "monotonic", lambda: real() + eng.CONFIRM_TTL_SECONDS + 1)
+    r = del_client.post("/api/trips/sfo-mad-2027-01-15/delete", {"confirm_id": pf["confirm_id"]})
+    assert r.status == 409 and r.json()["error"] == "confirm_stale"
+    assert path.exists()
+
+
+def test_a_run_confirm_does_not_delete_and_a_delete_confirm_does_not_run(del_client):
+    path = del_client.trips_dir / "sfo-mad-2027-01-15.json"
+    # A delete confirm on /run (a LIVE run would need one; the digest differs).
+    pf = del_client.post("/api/trips/sfo-mad-2027-01-15/delete-preflight", {}).json()
+    r = del_client.post("/api/trips/sfo-mad-2027-01-15/run",
+                        dict(LIVE, confirm_id=pf["confirm_id"]))
+    assert r.status == 409 and r.json()["error"] == "confirm_stale"
+    assert path.exists()
+
+
+def test_nothing_is_deleted_while_a_run_holds_the_lock(del_client):
+    path = del_client.trips_dir / "sfo-mad-2027-01-15.json"
+    pf = del_client.post("/api/trips/sfo-mad-2027-01-15/delete-preflight", {}).json()
+    engine = del_client.srv.engine
+    engine._lock.acquire()
+    try:
+        r1 = del_client.post("/api/trips/sfo-mad-2027-01-15/delete-preflight", {})
+        r2 = del_client.post("/api/trips/sfo-mad-2027-01-15/delete", {"confirm_id": pf["confirm_id"]})
+        r3 = del_client.post("/api/trips/trip_b_europe/delete-preflight", {})
+    finally:
+        engine._lock.release()
+    for r in (r1, r2, r3):
+        assert r.status == 409 and r.json() == {"error": "busy", "message": eng.DELETE_BUSY}, r.text
+    assert path.exists()
+    # The confirm was consumed by the refused attempt (single use): preflight again.
+    pf = del_client.post("/api/trips/sfo-mad-2027-01-15/delete-preflight", {}).json()
+    assert del_client.post("/api/trips/sfo-mad-2027-01-15/delete", {"confirm_id": pf["confirm_id"]}).status == 200
+    assert not path.exists()
+
+
+def test_a_symlink_in_the_trips_dir_is_refused_and_its_target_intact(tmp_path, pinned):
+    trips = copy_trips(tmp_path / "trips", names=["trip_b_europe.json"])
+    target = _ui_built(tmp_path / "elsewhere")
+    (trips / "link.json").symlink_to(target)
+    with running_server(wallet_path=write_wallet(tmp_path / "w.json"), trips_dir=trips) as c:
+        assert "link" in [t["id"] for t in c.get("/api/trips").json()]
+        d = c.get("/api/trips/link").json()
+        assert d["deletable"] is False
+        assert d["not_deletable_reason"] == (
+            f"Nothing was deleted: {trips / 'link.json'} is a symbolic link, and this page "
+            "only deletes the trip files it wrote.")
+        r = c.post("/api/trips/link/delete-preflight", {})
+        assert r.status == 409 and r.json()["error"] == "not_deletable"
+        r = c.post("/api/trips/link/delete", {"confirm_id": "x"})
+        assert r.status == 409
+    assert (trips / "link.json").is_symlink() and target.exists()
+
+
+def test_the_delete_of_a_file_that_stops_being_regular_under_the_lock_is_refused(del_client, monkeypatch):
+    """The last check before unlink: the path must resolve to a regular file
+    whose parent is the trips directory. A listed regular file cannot fail it
+    on its own, so resolve() is made to answer with another directory for
+    this one file - the shape a bind mount or a replaced directory would give."""
+    path = del_client.trips_dir / "sfo-mad-2027-01-15.json"
+    pf = del_client.post("/api/trips/sfo-mad-2027-01-15/delete-preflight", {}).json()
+    real = Path.resolve
+
+    def elsewhere(self, *a, **k):
+        if self.name == path.name and self.parent == path.parent:
+            return Path("/nowhere") / path.name
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "resolve", elsewhere)
+    r = del_client.post("/api/trips/sfo-mad-2027-01-15/delete", {"confirm_id": pf["confirm_id"]})
+    assert r.status == 409 and r.json()["error"] == "not_a_regular_file"
+    assert r.json()["message"] == (
+        f"Nothing was deleted: {path} does not resolve to a regular file inside "
+        f"{eng.display_path(del_client.trips_dir)}.")
+    assert path.exists()
+
+
+@pytest.mark.parametrize("trip_id", ["../trip_b_europe", "..%2f..%2fsrc%2fconfig",
+                                     "trip_b_europe%00", "trip_b_europe.json", "x" * 121,
+                                     "adir.json", "%2e%2e"])
+def test_a_delete_id_is_only_ever_a_listing_key(tmp_path, pinned, trip_id):
+    trips = copy_trips(tmp_path / "trips", names=["trip_b_europe.json"])
+    (trips / "adir.json").mkdir()
+    with running_server(trips_dir=trips) as c:
+        for suffix in ("/delete-preflight", "/delete"):
+            r = c.post(f"/api/trips/{trip_id}{suffix}", {"confirm_id": "x"})
+            assert r.status == 404, (trip_id, suffix, r.status, r.text)
+    assert (trips / "trip_b_europe.json").exists() and (trips / "adir.json").is_dir()
+
+
+def test_the_repo_fixtures_directory_is_never_touched_by_the_delete_tests():
+    """A tripwire for this section: every fixture the repository ships is
+    still there (the tests above delete only in tmp copies)."""
+    from tests._ui_harness import REPO_TRIPS
+
+    names = sorted(p.name for p in REPO_TRIPS.glob("*.json"))
+    for expected in ("trip_a_mry_nyc.json", "trip_b_europe.json", "trip_c_lon_mry_surcharge.json",
+                     "trip_001.json", "trip_002.json"):
+        assert expected in names
+    assert not any(n.startswith("sfo-mad-") or n == "second.json" for n in names)

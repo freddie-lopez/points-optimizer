@@ -26,6 +26,10 @@ ROUTES = [
     ("POST", re.compile(r"^/api/search/preflight$"), "search_preflight"),
     ("POST", re.compile(r"^/api/search/run$"), "search_run"),
     ("GET", re.compile(r"^/api/runs/(?P<run>[0-9a-f]{12})$"), "run"),
+    # Delete (docs/plans/search-to-trip.md 4.2): POST, so the Origin gate and
+    # the "Only GET and POST" rule stay as they are; the same trip group.
+    ("POST", re.compile(rf"^/api/trips/{_TRIP}/delete-preflight$"), "trip_delete_preflight"),
+    ("POST", re.compile(rf"^/api/trips/{_TRIP}/delete$"), "trip_delete"),
 ]
 
 
@@ -84,6 +88,14 @@ def _run(engine, body, run):
     return engine.stored_run(run)
 
 
+def _trip_delete_preflight(engine, body, trip):
+    return engine.trip_delete_preflight(trip, body)
+
+
+def _trip_delete(engine, body, trip):
+    return engine.trip_delete(trip, body)
+
+
 _HANDLERS = {
     "state": _state,
     "wallet": _wallet,
@@ -96,4 +108,6 @@ _HANDLERS = {
     "search_preflight": _search_preflight,
     "search_run": _search_run,
     "run": _run,
+    "trip_delete_preflight": _trip_delete_preflight,
+    "trip_delete": _trip_delete,
 }
