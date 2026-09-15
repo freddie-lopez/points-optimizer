@@ -98,15 +98,19 @@ def test_A6_no_engine_cli_or_golden_diff_since_the_base():
 
 
 def test_A7_the_parity_suite_and_goldens_are_untouched():
-    """Re-based at c68e3eb: the goldens are untouched since the base; the two
-    older probe trees are untouched since be0d27b, the tester's own pin
-    refresh (P22/P22b, E5, H1, H2, J6, C2 - each a plan-invalidated pin, see
-    the report's round-3 section), which is the only edit they have had."""
+    """Re-based at 7a8310c: the goldens are untouched since the base; the two
+    older probe trees have had exactly two edits, both the tester's own:
+    be0d27b (the pin refresh - P22/P22b, E5, H1, H2, J6, C2, each a
+    plan-invalidated pin, see the report's round-3 section) and 7a8310c
+    (J6 re-pinned for the round-4 .catch hunk). Nothing else, by anyone."""
     out = git("diff", f"{BASE}..HEAD", "--stat", "--", "tests/fixtures/cli_golden")
     assert out.strip() == "", out
-    out = git("diff", "be0d27b..HEAD", "--stat", "--", "docs/test-reports/ui-probes",
+    out = git("diff", "7a8310c..HEAD", "--stat", "--", "docs/test-reports/ui-probes",
               "docs/test-reports/ui-restyle-probes")
     assert out.strip() == "", out
+    out = git("diff", "be0d27b..7a8310c", "--name-only", "--", "docs/test-reports/ui-probes",
+              "docs/test-reports/ui-restyle-probes")
+    assert out.split() == ["docs/test-reports/ui-restyle-probes/test_r_g_fonts_security_docs.py"], out
     out = git("diff", f"{BASE}..be0d27b", "--name-only", "--", "docs/test-reports/ui-probes",
               "docs/test-reports/ui-restyle-probes")
     assert sorted(out.split()) == [

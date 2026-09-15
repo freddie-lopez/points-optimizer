@@ -620,3 +620,8 @@ Coder fix round 4 (c5c52fb): `ensureMap` catches a `mount()` that throws and sho
 | map-search-probes (161 = 159 + C10 + C11) | **160 passed, 1 failed** - F6 (L8, by design) |
 
 Ship.
+
+Nit (manager, b4e24de): A7 pinned "untouched since be0d27b" in the same commit that
+re-pinned J6, so it was red at 7a8310c. Re-based: the older probe trees have had exactly
+two edits, be0d27b and 7a8310c (`test_r_g_fonts_security_docs.py` alone), both the
+tester's own; nothing since. `-k A7` green; map-search-probes 160/1 (F6) stands.
