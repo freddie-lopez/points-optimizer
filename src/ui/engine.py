@@ -72,6 +72,51 @@ CONFIRM_REQUIRED = (
 CONFIRM_STALE = "The trip or options changed since you confirmed. Confirm again."
 BUSY = "Another run is in progress. One run at a time: the call counter and caches are shared."
 
+# Delete (docs/plans/search-to-trip.md 4.4). A trip file is deletable from the
+# page only when its own contents say --new-trip (or this page, which uses the
+# same builder) wrote it and nobody edited the three things the builder fixes.
+# Everything else is refused by name; the committed corpus is git's to remove.
+DELETE_CONFIRM_REQUIRED = (
+    "Nothing was deleted: a delete needs a confirmation from its own preflight, and "
+    "this request carried none or one that was already used."
+)
+DELETE_CONFIRM_STALE = (
+    "Nothing was deleted: the trip file changed since you confirmed, or the "
+    "confirmation expired. Confirm again."
+)
+DELETE_BUSY = (
+    "Nothing was deleted: a run is in progress and may be reading this trip. Wait for "
+    "it to finish, then delete."
+)
+NOT_DELETABLE_UNREADABLE = (
+    "NOT DELETABLE - {file} cannot be read as a trip, so where it came from cannot be "
+    "checked. Nothing was deleted; remove it by hand if you know what it is."
+)
+NOT_DELETABLE_NOT_BUILT_HERE = (
+    "NOT DELETABLE - {file} was not built by --new-trip or this page (source: "
+    "\"{source}\"). The trips that came with the repository are test data; remove them "
+    "with git, not from here. Nothing was deleted."
+)
+NOT_DELETABLE_EDITED = (
+    "NOT DELETABLE - {file} was built by --new-trip but has been edited since: it "
+    "carries points prices, a cash source it did not write, or the flag that says it "
+    "holds no points prices is gone. It may hold captures nobody can reproduce. Nothing "
+    "was deleted; remove it by hand if you mean to."
+)
+NOT_A_REGULAR_FILE_SYMLINK = (
+    "Nothing was deleted: {file} is a symbolic link, and this page only deletes the "
+    "trip files it wrote."
+)
+NOT_A_REGULAR_FILE_OUTSIDE = (
+    "Nothing was deleted: {file} does not resolve to a regular file inside {dir}."
+)
+DELETE_LINE_REMOVES = "This removes {file} from disk."
+DELETE_LINE_NO_UNDO = (
+    "There is no undo in this app. If the file is committed, git can restore it; if it "
+    "is not, it is gone."
+)
+BUILDER_SOURCE = "user_entered_via_new_trip"
+
 
 def _replay_manifest_candidates() -> List[Path]:
     """The REPLAY allowlist (D10): the configured snapshot directory's manifest,
@@ -105,6 +150,17 @@ def display_path(p: Path) -> str:
         return str(Path(p).resolve().relative_to(ROOT))
     except ValueError:
         return str(p)
+
+
+def link_display(p: Path) -> str:
+    """`display_path` for a path that may be a symlink: the LINK's own place,
+    not where it points (which is what display_path's resolve() would show)."""
+    p = Path(p)
+    own = p.parent.resolve() / p.name
+    try:
+        return str(own.relative_to(ROOT))
+    except ValueError:
+        return str(own)
 
 
 def _loads_as_a_trip(path: Path) -> bool:
@@ -438,8 +494,11 @@ class Engine:
         """Resolve a trip id ONLY against the current listing. Never joined."""
         files = self._trip_files()
         if trip_id not in files:
-            raise ApiError(404, "not_found", f"No trip {trip_id!r} in {display_path(self.trips_dir)}.")
+            raise self._no_trip(trip_id)
         return files[trip_id]
+
+    def _no_trip(self, trip_id: str) -> ApiError:
+        return ApiError(404, "not_found", f"No trip {trip_id!r} in {display_path(self.trips_dir)}.")
 
     def fixture_arg(self, path: Path) -> str:
         """What goes after --trip-fixture: the bare filename when the CLI would
@@ -489,8 +548,126 @@ class Engine:
             fx = load_trip_fixture(path)
         except Exception as e:  # noqa: BLE001
             raise ApiError(422, "cannot_load", f"{type(e).__name__}: {e}")
-        return serialize.fixture_detail(
+        out = serialize.fixture_detail(
             trip_id, path, fx, _no_legs_note(path) if not fx.legs else None)
+        # The page needs the reason before the click, in the refusal's own words.
+        reason = self.deletable_reason(path)
+        out["deletable"] = reason is None
+        out["not_deletable_reason"] = reason
+        return out
+
+    # --------------------------------------------------------------- delete
+
+    def deletable_reason(self, path: Path) -> Optional[str]:
+        """None when the page may delete this file; otherwise the refusal.
+
+        Read off the RAW json, never the loaded object: the rule is about what
+        is literally in the file (an absent `points_candidates` KEY, which the
+        loader normalises into an empty list). Deletable means every mark the
+        builder leaves is still there and nothing it refuses to write has
+        appeared: `source` starting `user_entered_via_new_trip`, LIVE_ONLY_FLAG
+        among the trip flags, no leg with a points_candidates key, and every
+        cash option sourced by the builder. Provenance, not a checksum: a cash
+        amount edited by hand keeps the file deletable, and the confirm names
+        the file and quotes its description for that reason."""
+        from src.trip_builder import LIVE_ONLY_FLAG
+
+        file = link_display(path)
+        if path.is_symlink():
+            return NOT_A_REGULAR_FILE_SYMLINK.format(file=file)
+        try:
+            d = json.loads(path.read_bytes())
+        except (OSError, ValueError):
+            return NOT_DELETABLE_UNREADABLE.format(file=file)
+        if not isinstance(d, dict):
+            return NOT_DELETABLE_UNREADABLE.format(file=file)
+        source = d.get("source")
+        if not isinstance(source, str) or not source.startswith(BUILDER_SOURCE):
+            shown = "" if source is None else str(source)
+            return NOT_DELETABLE_NOT_BUILT_HERE.format(file=file, source=shown[:80])
+        flags = d.get("trip_level_flags")
+        legs = d.get("legs")
+        edited = (not isinstance(flags, list) or LIVE_ONLY_FLAG not in flags
+                  or not isinstance(legs, list))
+        for leg in legs if isinstance(legs, list) else []:
+            if not isinstance(leg, dict) or "points_candidates" in leg:
+                edited = True
+                break
+            options = leg.get("cash_options")
+            if not isinstance(options, list) or any(
+                    not isinstance(c, dict) or c.get("source") != BUILDER_SOURCE
+                    for c in options):
+                edited = True
+                break
+        if edited:
+            return NOT_DELETABLE_EDITED.format(file=file)
+        return None
+
+    def _fixture_bytes(self, trip_id: str, path: Path) -> bytes:
+        try:
+            return path.read_bytes()
+        except OSError:
+            # Gone between the listing and the read: the same 404 a second
+            # delete of the id returns.
+            raise self._no_trip(trip_id)
+
+    def _delete_digest(self, trip_id: str, path: Path) -> str:
+        """What a delete confirm is bound to: the trip and the file's BYTES.
+        Any change to the file -> confirm_stale."""
+        return canonical_digest({
+            "kind": "delete",
+            "trip_id": trip_id,
+            "fixture_sha256": hashlib.sha256(self._fixture_bytes(trip_id, path)).hexdigest(),
+        })
+
+    def trip_delete_preflight(self, trip_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        path = self.trip_path(trip_id)
+        if self._lock.locked():
+            # Advisory here; the delete itself takes the lock.
+            raise ApiError(409, "busy", DELETE_BUSY)
+        reason = self.deletable_reason(path)
+        if reason:
+            raise ApiError(409, "not_deletable", reason)
+        raw = json.loads(self._fixture_bytes(trip_id, path))
+        description = raw.get("description")
+        file = display_path(path)
+        return {
+            "id": trip_id,
+            "path": file,
+            "description": description if isinstance(description, str) else None,
+            "confirm_id": self.issue_confirm(self._delete_digest(trip_id, path)),
+            "lines": [DELETE_LINE_REMOVES.format(file=file), DELETE_LINE_NO_UNDO],
+        }
+
+    def trip_delete(self, trip_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Unlink one trip file the page may delete. Under the run lock (a run
+        may be reading the file), after a single-use confirm bound to its
+        bytes, and only when it is a regular file that resolves inside the
+        trips directory. Nothing is ever partly deleted: there is one file."""
+        path = self.trip_path(trip_id)
+        self.redeem_confirm((body or {}).get("confirm_id"), self._delete_digest(trip_id, path),
+                            required=DELETE_CONFIRM_REQUIRED, stale=DELETE_CONFIRM_STALE)
+        if not self._lock.acquire(blocking=False):
+            raise ApiError(409, "busy", DELETE_BUSY)
+        try:
+            reason = self.deletable_reason(path)  # again, under the lock
+            if reason:
+                raise ApiError(409, "not_deletable", reason)
+            if path.is_symlink():
+                raise ApiError(409, "not_a_regular_file",
+                               NOT_A_REGULAR_FILE_SYMLINK.format(file=link_display(path)))
+            if path.resolve().parent != self.trips_dir or not path.is_file():
+                raise ApiError(409, "not_a_regular_file",
+                               NOT_A_REGULAR_FILE_OUTSIDE.format(
+                                   file=link_display(path), dir=display_path(self.trips_dir)))
+            file = display_path(path)
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                raise self._no_trip(trip_id)
+        finally:
+            self._lock.release()
+        return {"id": trip_id, "path": file, "lines": [f"Deleted {file}"]}
 
     def _trip_options(self, trip_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
         """Every UI field validated BEFORE an argv exists (argparse would exit)."""
@@ -907,17 +1084,20 @@ class Engine:
             self._confirms[cid] = (digest, now + CONFIRM_TTL_SECONDS)
         return cid
 
-    def redeem_confirm(self, confirm_id, digest: str) -> None:
-        """Single use: the id is gone after this call whatever the outcome."""
+    def redeem_confirm(self, confirm_id, digest: str, required: str = CONFIRM_REQUIRED,
+                       stale: str = CONFIRM_STALE) -> None:
+        """Single use: the id is gone after this call whatever the outcome.
+        `required`/`stale` are the sentences for the two refusals; the defaults
+        talk about spending calls, a delete passes its own."""
         if not isinstance(confirm_id, str) or not confirm_id:
-            raise ApiError(409, "confirm_required", CONFIRM_REQUIRED)
+            raise ApiError(409, "confirm_required", required)
         with self._confirms_lock:
             entry = self._confirms.pop(confirm_id, None)
         if entry is None:
-            raise ApiError(409, "confirm_required", CONFIRM_REQUIRED)
+            raise ApiError(409, "confirm_required", required)
         expected, expires = entry
         if time.monotonic() > expires or expected != digest:
-            raise ApiError(409, "confirm_stale", CONFIRM_STALE)
+            raise ApiError(409, "confirm_stale", stale)
 
 
 def _int_in(value, lo: int, hi: int, field: str, label: str) -> int:

@@ -742,3 +742,108 @@ def test_the_search_key_is_the_one_search_raw_files_under(tmp_path):
     assert search_request_key("SFO", "MAD", dr) == request_key("search", {
         "origin_airport": "SFO", "destination_airport": "MAD",
         "start_date": "2027-01-15", "end_date": "2027-01-15"})
+
+
+# ------------------------------------------------------------------- delete
+#
+# Every test here runs against a tmp copy of the fixtures directory. Nothing
+# under tests/fixtures/ is ever the target of a delete.
+
+from src.ui import engine as eng  # noqa: E402
+
+
+def _ui_built(directory, name="sfo-mad-2027-01-15", cash="2400"):
+    """A fixture exactly as the page (and --new-trip) writes one."""
+    return trip_builder.new_trip_from_flags(
+        name, [f"SFO:MAD:2027-01-15:{cash}"], [], cabin="Y", directory=directory,
+        today=g.PINNED_TODAY)
+
+
+def _rewrite(path, fn):
+    d = json.loads(path.read_text())
+    fn(d)
+    path.write_text(json.dumps(d, indent=2) + "\n")
+
+
+@pytest.fixture
+def del_client(tmp_path, pinned):
+    trips = copy_trips(tmp_path / "trips")
+    _ui_built(trips)
+    with running_server(wallet_path=write_wallet(tmp_path / "w.json"), trips_dir=trips) as c:
+        c.trips_dir = trips
+        yield c
+
+
+def _detail(c, trip_id):
+    r = c.get(f"/api/trips/{trip_id}")
+    assert r.status == 200, r.text
+    d = r.json()
+    return d["deletable"], d["not_deletable_reason"]
+
+
+@pytest.mark.parametrize("trip_id", ["trip_a_mry_nyc", "trip_b_europe",
+                                     "trip_c_lon_mry_surcharge", "trip_001"])
+def test_the_committed_corpus_is_not_deletable_by_name(del_client, trip_id):
+    deletable, reason = _detail(del_client, trip_id)
+    assert deletable is False
+    raw = json.loads((del_client.trips_dir / f"{trip_id}.json").read_text())
+    src = "" if raw.get("source") is None else str(raw["source"])[:80]
+    assert reason == eng.NOT_DELETABLE_NOT_BUILT_HERE.format(
+        file=eng.display_path(del_client.trips_dir / f"{trip_id}.json"), source=src)
+    assert reason.startswith("NOT DELETABLE - ") and "remove them with git, not from here" in reason
+
+
+def test_a_fixture_the_builder_wrote_is_deletable(del_client):
+    assert _detail(del_client, "sfo-mad-2027-01-15") == (True, None)
+    # The listing is unchanged in shape: no deletable key there.
+    row = next(t for t in del_client.get("/api/trips").json() if t["id"] == "sfo-mad-2027-01-15")
+    assert "deletable" not in row
+
+
+def _add_points(d):
+    d["legs"][0]["points_candidates"] = []
+
+
+def _rewrite_source(d):
+    d["source"] = "screenshot, captured 2026-09-14 by hand"
+
+
+def _drop_flag(d):
+    d["trip_level_flags"] = []
+
+
+def _cash_source(d):
+    d["legs"][0]["cash_options"][0]["source"] = "screenshot"
+
+
+@pytest.mark.parametrize("edit,which", [
+    (_add_points, "edited"), (_rewrite_source, "not_built_here"),
+    (_drop_flag, "edited"), (_cash_source, "edited"),
+])
+def test_an_edited_ui_built_fixture_is_refused_by_what_changed(del_client, edit, which):
+    path = del_client.trips_dir / "sfo-mad-2027-01-15.json"
+    _rewrite(path, edit)
+    deletable, reason = _detail(del_client, "sfo-mad-2027-01-15")
+    assert deletable is False
+    if which == "edited":
+        assert reason == eng.NOT_DELETABLE_EDITED.format(file=eng.display_path(path))
+    else:
+        assert reason == eng.NOT_DELETABLE_NOT_BUILT_HERE.format(
+            file=eng.display_path(path), source="screenshot, captured 2026-09-14 by hand")
+
+
+def test_an_unreadable_file_and_a_symlink_are_refused_by_the_engine(tmp_path, pinned):
+    trips = copy_trips(tmp_path / "trips", names=["trip_b_europe.json"])
+    (trips / "broken.json").write_text("{not json")
+    (trips / "list.json").write_text("[1, 2]")
+    outside = _ui_built(tmp_path / "elsewhere")
+    (trips / "link.json").symlink_to(outside)
+    e = eng.Engine(trips_dir=trips)
+    assert e.deletable_reason(trips / "broken.json") == eng.NOT_DELETABLE_UNREADABLE.format(
+        file=eng.display_path(trips / "broken.json"))
+    assert e.deletable_reason(trips / "list.json") == eng.NOT_DELETABLE_UNREADABLE.format(
+        file=eng.display_path(trips / "list.json"))
+    # The link's own path is named, not the file it points at.
+    assert e.deletable_reason(trips / "link.json") == eng.NOT_A_REGULAR_FILE_SYMLINK.format(
+        file=str(trips / "link.json"))
+    assert e.deletable_reason(outside) is None
