@@ -195,8 +195,29 @@ CLI's own sentence; "CLI output" under each result is the full terminal text
 What you can do: pick a trip and run it LIVE, REPLAY or OFFLINE; open any leg
 for everything the CLI knows about it; search one route; build a new trip (it is
 written to `tests/fixtures/trips/NAME.json` by the same builder `--new-trip`
-uses, one traveller, a cabin per leg, a name of at most 120 characters); edit the
-wallet for the session.
+uses, one traveller, a cabin per leg, a name of at most 120 characters); pick an
+award in the search results and press "Add as trip" (or "Score against a fare"
+in its detail panel) to open that form with the route, date and cabin filled in
+and a name suggested - the award's price is never written into the trip, only a
+LIVE or REPLAY run can price it, and the cash fare is yours to type; delete a
+trip the page (or `--new-trip`) built; edit the wallet for the session.
+
+**Delete trip.** The button on a trip's page removes its file from
+`tests/fixtures/trips/` - for real, with `os.unlink`, no trash folder and no
+undo in this app (if the file is committed, git can restore it; if not, it is
+gone). It is enabled only for a file whose own contents say `--new-trip` or
+this page wrote it and nobody edited it since: `source` starting
+`user_entered_via_new_trip`, the no-points-prices flag still present, no
+`points_candidates` key on any leg, every cash option the builder's. Trip A,
+B, C, `trip_001`/`trip_002` and anything hand-written are refused by name
+(`NOT DELETABLE - … remove them with git, not from here`), and so is a file
+that was UI-built and then edited by hand. The delete asks for a confirmation
+that names the file and quotes its description; the server checks it (single-use,
+five minutes, bound to the file's bytes), refuses while any run is in progress,
+and deletes nothing that is a symbolic link or does not resolve to a regular
+file inside the trips directory. `POST /api/trips/{id}/delete-preflight` and
+`POST /api/trips/{id}/delete` are the two routes, behind the same gates as every
+other POST.
 
 The trip list says what each file is. A file that will not load is listed as
 **CANNOT LOAD** with the reason, never hidden and never shown as an empty trip;
