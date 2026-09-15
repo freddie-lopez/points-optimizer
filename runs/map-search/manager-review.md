@@ -190,3 +190,109 @@ Paste back: the whole console output from the key banner to the last line (the k
 finally sees the real response shape - do not commit that folder), and a screenshot of the
 Search tab at your normal window size. Then `git add data/hubs.json && git commit -m "Capture
 hubs from Seats.aero"` and push. The 28 calls come out of the day's 1,000.
+
+## Re-review: 7a8310c
+
+Since 91081c9: be0d27b (tester: K-series attack on round 3, six pins refreshed), c5c52fb +
+c68e3eb (coder fix round 4: `ensureMap` `.catch`, doc drift, decisions A and C recorded),
+7a8310c (tester: A7 re-based, C10/C11, J6 re-pinned, "Final" section).
+
+**Verdict: Ship.** Must-fix 1 and 2 are done and were done properly; must-fix 3 I withdraw
+(below). One tester probe is red at HEAD against its own report, which is a tester nit, not a
+ship blocker. The handoff condition is the Mac capture.
+
+### Must-fixes, checked
+
+1. **Round 3 attacked - yes, truly.** `test_ms_k_round3.py` (K1-K5, 16 probes) builds synthetic
+   hub files from the projection's inverse to force each of the twelve picked-label positions
+   by name (K1, including the two outer-ring positions that only a second pick's label can
+   force), the last resort with a click through the label landing on the cluster beneath (K2),
+   a displaced cluster whose first candidate spot is the reserved label box (K3), N1a's
+   moved-single case through seven zoom steps (K4), and two picks with mutually avoiding labels
+   (K5); every case runs the full audit (18px, `elementFromPoint`, no label over dot/label). All
+   green at HEAD in my run. The one path still unforced is a moved cluster with all 24 spots
+   taken (it stays on the pick); it needs nine markers within 40px of a pick and is not worth
+   a probe.
+2. **Pins refreshed - yes, not loosened.** P22 now names four entry points and P22b proves the
+   fourth leaves stdout alone in-process; E5 pins `server.py` to 16f53b7's bytes and the CSP
+   string to the base; H2 pins exactly `["/static/map.js", "/static/app.js"]`; J6 pins the
+   restyle's 6 hunks unchanged plus an explicit allow-list of every string the map round added
+   (I read the list: the §4.9 sentences, testids, class and ARIA tokens, and the existing
+   wording renderSearch re-emits - nothing else gets through); C2 allows `.route` per decision
+   A. Each is a real pin again.
+3. **Letterbox - withdrawn.** I re-read `RoutePicked.png`/`Main.png`: the approved pictures also
+   show ocean above Greenland and below South America at 1440x900; the built page's bands are
+   the same shape, slightly deeper. Decision C is recorded in plan §2.20 and the built page is
+   what was approved. My must-fix overstated the difference.
+
+### Round 4 (c5c52fb), checked
+
+`git diff 91081c9..HEAD -- src/` is the seven-line `.catch` in `app.js` `ensureMap()` and
+nothing else; `server.py`, `map.js`, `map_tools.py`, the engine files and `tests/goldens`
+have no diff. The `.catch` clears `S.map.loading`, replaces the host with string #2 carrying
+the error's message via `textContent`, and C11 proves it (mount made to throw by an init
+script; the sentence shows, no page error, a second mount is attempted on the next render,
+the typed form still searches). C10 covers `fetch()` itself rejecting for both files. Plan
+§2.3/§8 now say 28; `.gitignore` says sha256; ui.md §4.7 carries decision A in one sentence.
+
+### Counts (this machine, 7a8310c)
+
+| Suite | Result | Tester claimed |
+|---|---|---|
+| `python3 -O -m pytest -q -p no:cacheprovider` | **3821 passed, 13 skipped** (193 s) | 3821 / 13 |
+| ui-probes (`-O -p no:randomly`) | **664 passed, 0 failed** (587 s) | 664 / 0 |
+| ui-restyle-probes | **284 passed, 2 failed, 10 skipped** - `C5[search_ok]`, `E3` (restyle baseline, left by decision) | 284 / 2 / 10 |
+| map-search-probes (161) | **159 passed, 2 failed** - `F6` (design limit) and **`A7`** | 160 / 1 |
+
+**A7 is red at HEAD and the report says it is green.** The tester re-based A7 in 7a8310c to
+"the two older probe trees are untouched since be0d27b" and, in the same commit, edited
+`ui-restyle-probes/test_r_g_fonts_security_docs.py` (the J6 re-pin). `git diff be0d27b..HEAD`
+on that tree is one file, 7+/2-, and the assertion fails. The tester evidently ran A7 with the
+J6 edit still uncommitted (`git diff be0d27b..HEAD` cannot see a working-tree change), reported
+160/1, then committed. Nothing about the product is wrong; the probe pins the tester's own
+last commit and the tester moved it. Fix: pin to 7a8310c (or, better, name the files the tree
+may differ in, as the third assertion already does). Tester's nit; do it with the next commit.
+
+### Agent performance, this pass
+
+- **Tester:** the K-series is exactly what "attack, don't re-run" means - fixtures derived from
+  the code's own geometry to reach every branch, with a click-through proof for the last resort.
+  The pin refreshes are careful. Then the A7 self-pin: the third time this round a probe has
+  pinned a byte the tester's own next edit moves (F11/E8 in round 1, A7 now), and this one was
+  reported green when HEAD says otherwise. Run the suite after the commit, not before.
+- **Coder:** round 4 is the two lines asked for and the four doc edits, with the counts stated
+  honestly including A7's red and why a coder commit cannot fix it. Clean.
+
+### What Tsuki must do on his Mac
+
+```bash
+cd ~/Downloads/points-optimizer-git
+git fetch && git checkout feature/map-search && git pull
+.venv/bin/python -m pytest -q -p no:cacheprovider tests/test_map_assets.py tests/test_map_tools.py
+.venv/bin/python -m src.map_tools capture-hubs --raw-dir ~/Desktop/seats-routes-raw
+```
+
+It prints the key banner (`Seats.aero key: pro_…xxx (source: …)`), then
+
+```
+This will make at most 28 Seats.aero API call(s): one GET /partnerapi/routes per source (28 sources). This process has spent 0 of 1,000; Seats.aero also counts your other runs today, which this tool cannot see.
+Continue? [y/N]
+```
+
+Type `y`. Then one line per source - `aeroplan: ok (N routes)`, or `…: failed(HTTP 4xx)`,
+`…: unreadable(…)`, `…: incomplete(…)` - then `This process has spent 28 of 1,000 today.`, the
+routes-seen line, the histogram (min-sources 1-5 x min-routes 5/10/20/50), `N hubs (K
+searchable, M without coordinates, J not in data/airports.csv)`, one `iata,name,country` line
+per unsearchable airport, `wrote data/hubs.json`, and either `every source answered.` (exit 0)
+or `WRITTEN WITH GAPS …` (exit 5). Exit 1 with `every source failed (28 of 28); nothing was
+written.` means the routes endpoint is not what the plan assumed - stop there and paste the
+per-source lines. Expect at most 137 dots afterwards (decision B) and a footer whose "not
+plotted" number is large; that is the airports.csv gate, not a fault.
+
+Then `.venv/bin/python -m src.ui`, Search tab: click two airports, run one search, `Show map`.
+
+Paste back: the whole console output from the key banner to the last line (the key is
+masked), `echo $?`, the first 5 lines of `~/Desktop/seats-routes-raw/routes_united.json` (the
+real response shape - do not commit that folder), and a screenshot of the Search tab at your
+usual window size. Then `git add data/hubs.json && git commit -m "Capture hubs from
+Seats.aero" && git push`. The 28 calls come out of the day's 1,000.
