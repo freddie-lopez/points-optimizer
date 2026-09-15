@@ -193,3 +193,64 @@ def test_C9_the_pane_after_a_run_does_not_say_award_space_appears_only_after_the
             pg.click(C.q("search-pane-toggle"))
             pg.wait_for_timeout(300)
             assert "Award space appears only after the search runs." in C.status(pg)
+
+
+# ---------------------------------------------------------- fix round 4 (c68e3eb)
+
+
+def test_C10_a_rejected_fetch_is_the_sentence_never_a_blank_pane(browser):
+    """fetch() itself rejecting (network layer, not an HTTP status): for the
+    hub file - string #2 with `fetch failed`; for the land file - #16."""
+    with hub_server() as srv:
+        for which, expect in (("hubs", UNREADABLE.format(reason="fetch failed")),
+                              ("land", "AIRPORT DATA UNREADABLE - /static/land.json could not be read (fetch failed). The map plots nothing.")):
+            with browser.page(srv.port) as pg:
+                pg.route(f"**/static/{which}.json", lambda r: r.abort())
+                C.open_search(pg)
+                assert C.status(pg) == expect, (which, C.status(pg))
+                assert C.markers(pg) == [] and pg.facts["errors"] == []
+                C.run_search_typed(pg)
+                assert "--origin SFO --destination MAD" in C.confirm_text(pg)
+
+
+def test_C11_a_mount_that_throws_is_caught_loading_is_cleared_and_the_sentence_shows(browser):
+    """ensureMap's .catch (c5c52fb): POMap.mount is made to throw before
+    app.js runs (an init script: no inline script in the page). The pane must
+    carry #2 with the error's message, S.map.loading must be cleared - proved
+    by a second mount attempt on the next render (tab round trip) - and the
+    typed form must still search."""
+    with hub_server() as srv:
+        ctx = browser.browser.new_context(viewport={"width": 1440, "height": 1000})
+        try:
+            ctx.add_init_script("""(() => {
+              let real = null; window.__mounts = 0;
+              Object.defineProperty(window, 'POMap', { configurable: true,
+                get() { return real; },
+                set(v) { real = Object.assign({}, v, { mount() { window.__mounts += 1; throw new Error('boom from mount'); } }); } });
+            })();""")
+            errors = []
+            pg = ctx.new_page()
+            pg.on("pageerror", lambda e: errors.append(str(e)))
+            pg.goto(f"http://127.0.0.1:{srv.port}/", wait_until="domcontentloaded")
+            pg.wait_for_selector('[data-testid="wordmark"]', timeout=20000)
+            pg.click(C.q("tab-search"))
+            pg.wait_for_selector(C.q("map-status"), timeout=15000)
+            pg.wait_for_timeout(300)
+            assert C.status(pg) == UNREADABLE.format(reason="boom from mount")
+            assert pg.evaluate("() => window.__mounts") == 1
+            assert errors == [], errors
+            pg.click(C.q("tab-trips"))
+            pg.wait_for_timeout(300)
+            pg.click(C.q("tab-search"))
+            pg.wait_for_timeout(500)
+            assert pg.evaluate("() => window.__mounts") == 2, "loading was not cleared: no second mount attempt"
+            assert C.status(pg) == UNREADABLE.format(reason="boom from mount")
+            assert pg.evaluate("() => document.querySelectorAll('[data-testid=map-status]').length") == 1
+            pg.fill(C.q("search-from"), "SFO")
+            pg.fill(C.q("search-to"), "MAD")
+            pg.fill(C.q("search-date"), "2027-01-15")
+            pg.click(C.q("search-run"))
+            pg.wait_for_selector(C.q("search-confirm-go"), timeout=15000)
+            assert "--origin SFO --destination MAD" in C.confirm_text(pg)
+        finally:
+            ctx.close()

@@ -585,3 +585,38 @@ are, as ordered.
 
 Every finding of this feature is closed except L8 (design limit, popover) and the two
 baseline reds that predate it. Ship.
+
+---
+
+# Final: c68e3eb
+
+Coder fix round 4 (c5c52fb): `ensureMap` catches a `mount()` that throws and shows string
+#2 with the error's message; doc drift (28 sources, decisions A and C recorded).
+
+- **A7** re-based: the goldens untouched since the base; the two older probe trees
+  untouched since be0d27b, the tester's own pin refresh - the only edit they have had
+  (the four files are named in the probe). Green.
+- **C10** (new): `fetch()` itself rejecting for hubs.json → `AIRPORT DATA UNREADABLE -
+  /static/hubs.json could not be read (fetch failed). The map plots nothing.`; for
+  land.json → #16 with `fetch failed`; no markers, no page error, the typed form searches.
+  Green.
+- **C11** (new): `POMap.mount` made to throw before app.js runs (an init script, no inline
+  script in the page): the pane shows #2 with `boom from mount` byte-exact, no page error;
+  `S.map.loading` is proved cleared by a second mount attempt on the next render (tab round
+  trip), still one `map-status` element; the typed form searches. Green.
+- **J6** re-pinned once more: the only app.js change since be0d27b is the round-4 `.catch`
+  hunk (`git diff be0d27b..c68e3eb -- src/ui/static/app.js` = that hunk alone; plan 4.9
+  #2 / §8's `map.js not loaded` case generalised), its three strings added to the allowed
+  set, the docstring says so. A pin, not a regression.
+
+## Counts at c68e3eb (observed)
+
+| Suite | Result |
+|---|---|
+| `python3 -O -m pytest -q -p no:cacheprovider` | **3821 passed, 13 skipped** |
+| same without `-O` | **3821 passed, 13 skipped** |
+| ui-probes (`-O -p no:randomly`) | **664 passed, 0 failed** |
+| ui-restyle-probes | **283 passed, 3 failed, 10 skipped** before the J6 re-pin (C5[search_ok], E3, J6); after it `-k J6` is green → **284 / 2 / 10** with C5[search_ok] and E3 the restyle baseline, left as ordered |
+| map-search-probes (161 = 159 + C10 + C11) | **160 passed, 1 failed** - F6 (L8, by design) |
+
+Ship.

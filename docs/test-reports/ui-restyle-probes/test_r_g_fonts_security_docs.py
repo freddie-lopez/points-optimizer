@@ -265,7 +265,11 @@ def test_J6_app_js_diff_is_exactly_the_three_enumerated_edits():
     4.7). Re-pinned by the tester at 91081c9: the strings the map round added
     are the plan's 4.9 sentences (#9, #10, #13, #17, #18, the map.js-not-
     loaded reason), its testids, class names, DOM/ARIA tokens and the strings
-    the restructured renderSearch re-emits verbatim. A pin, not a regression."""
+    the restructured renderSearch re-emits verbatim. A pin, not a regression.
+    Re-pinned again at c68e3eb: coder fix round 4 (c5c52fb) added one hunk -
+    ensureMap's .catch, which shows string #2 with the error's message when
+    mount() throws (manager should-fix; plan 4.9 #2 / 8) - and its three
+    strings; git now groups the map round's diff into 7 hunks."""
     d = git("diff", "386b2fc..56742af", "--", "src/ui/static/app.js")
     assert d.count("\n@@") == 6, d.count("\n@@")
     added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
@@ -279,7 +283,7 @@ def test_J6_app_js_diff_is_exactly_the_three_enumerated_edits():
                "replay", "(source: X)"}  # `run.mode === "replay"` and the comment
     assert strings <= allowed, strings - allowed
     d = git("diff", "56742af..HEAD", "--", "src/ui/static/app.js")
-    assert d.count("\n@@") == 7, d.count("\n@@")   # 4.7's edits, as git groups them at 91081c9
+    assert d.count("\n@@") == 7, d.count("\n@@")   # 4.7's edits + the round-4 .catch, as git groups them at c68e3eb
     added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
     strings = set(re.findall(r'"([^"]*)"', "\n".join(added)))
     map_allowed = {
@@ -287,6 +291,7 @@ def test_J6_app_js_diff_is_exactly_the_three_enumerated_edits():
         "Where are you flying?", "Type an airport or city, or pick it on the map.", "Type an airport or city.",
         "Show map", "Show results", "Suggestions", "The search has run: its results are under Show results.",
         "AIRPORT DATA UNREADABLE - /static/hubs.json could not be read (", "map.js not loaded). The map plots nothing.",
+        "). The map plots nothing.",   # round 4: the .catch's tail of #2
         # testids (4.10) and the existing ones the restructured renderSearch re-emits
         "map-pane", "map-status", "search-pane-toggle", "search-ran", "search-result", "search-suggest-", "suggest-",
         "search-date", "search-from", "search-to", "search-run", "search-state", "search-strip", "search-window",
