@@ -264,3 +264,69 @@ E1-E8.
 | ui-probes `test_B*` | nothing to re-pin | the route tables do not enumerate `/api/trips/` POST paths; 664/0 confirmed. |
 
 Each refreshed pin's docstring names the plan section and says "a pin, not a regression".
+
+## Re-test: ecab878
+
+Coder fix round 1 (d2a4473 F1, 06a2f73 F2, 0a9b1f3 + 63d9499 F3, 9e6a845 F4, 394f51c the
+cash placeholder, 7eb65c2 C5). Probes: `test_st_f_retest.py` (F1a-c, F2 x4, F3a-c, F4a-b,
+F5). Each fix attacked independently; the diff read in full (`622d914..ecab878`: engine.py,
+app.js 9 hunks, app.css +1 rule, one ui.md sentence, +1 test, `TESTIDS` +1).
+
+| Finding | Status | What I did |
+|---|---|---|
+| **F1** raced second delete said R1 | **fixed** | F1a: the A15 interleaving now answers 404 R4 with the exact `No trip … in …` sentence. F1b: the file vanishing between `trip_path` and the preflight's read -> 404; between `trip_path` and the delete's digest read -> 404. F1c: a symlink whose target vanishes drops out of the listing (404 on both routes, the link itself untouched); a real file preflighted then swapped for a directory of the same name -> 404 and the directory and its contents survive; swapped for a dangling symlink -> 404, link survives; swapped for a symlink to a live deletable file -> 409 (stale/R8), target intact; a genuinely unreadable file still gets R1 verbatim. |
+| **F2** `trip-deleted` widened the page | **fixed** | F2 at 360 and 400 px, 120-char name, in both panels (`nt-wrote` then `trip-deleted`, and the dialog in between): `scrollWidth <= clientWidth`, no element's right edge past the viewport. The 300-char case: the builder refuses a name over 120, so a 300-char unbroken token is put into the server's `Wrote …`/`Deleted …` line by a response patch in the browser - both panels break it. Shots `shots/f2-*.png`. |
+| **F3** focus dropped after the dialog | **fixed** (with a judged gap) | F3a keyboard only: Tab to Delete, Enter (Cancel focused), Esc -> `trip-delete`; Enter on Cancel -> `trip-delete`; scrim click -> `trip-delete`; Tab, Enter on Go -> after the delete focus is on `h2 trip-list-heading` (`tabIndex -1`), Tab from there reaches the first trip row, Shift+Tab from the first row skips the heading (it is out of the Tab order). F3b spend dialog: Esc -> `run-go`, Cancel -> `run-go`. F3c: after a refused Go (stale) the banner shows and focus is on `<body>` - recorded below. |
+| **F4** stale disabled state after a run elsewhere | **fixed for the trips view; a pre-existing sibling surfaced (F5)** | F4a: a run finishing while Trip B's detail is open re-renders it - `Run` reads `Run`, `run-busy` gone, Delete disabled by R2 only; on a deletable other trip Delete becomes enabled the moment the run returns; the run's own trip keeps its chip. F4b: see F5. |
+| obs. (b) cash placeholder | **fixed** | F5 probe: `nt-leg-1-cash` has an empty placeholder on both the prefilled and the typed form; the other placeholders (SFO/LHR/YYYY-MM-DD) untouched; the P5 hint is still there. |
+| **C5** | **demoted as recommended** | `drawer-to-trip` is `btn`; `search-add-trip` keeps the coral. Visible `.btn-primary` on the results screen: `search-run` + `search-add-trip` (the latter disabled-coral before a pick, as C5 counts it) with the drawer open or closed: 2, the baseline count. |
+
+### F5 - Low (new; pre-existing line, surfaced by the F4 re-test) - A run finishing while the new-trip form is open throws the user to the run result and the typed input is gone
+
+- **Repro** (`test_st_f_retest.py::test_F4b`, red): open trip X, Run, click `+ New trip`
+  while it runs, type a name and part of a leg; the run returns.
+- **Expected**: the coordinator's brief and the F4 fix's own comment: the form must not
+  be wiped; the user stays on `#new-trip` with focus where it was.
+- **Actual**: `sendRun`'s `if (S.tripId === id) { go("#trips/" + id + "/run/" + run.run_id); }`
+  fires because the new-trip view keeps `S.tripId` (the run's trip is the selected one,
+  the usual case): the hash becomes `#trips/<id>/run/<rid>`, the form is gone; `+ New trip`
+  then starts a fresh `S.nt`, so the typed name is `''`. The F4 fix's `else if (S.view ===
+  "trips")` guard is on the wrong branch to protect the form. Line present at 622d914:673
+  and before this round.
+- **Location**: `app.js` `sendRun`: guard the `go(...)` with `S.view === "trips"` too (a
+  finished run on a trip whose page is not open lands as a chip, as it already does when
+  another trip is open), or leave `S.nt` and only navigate when the form is untouched.
+
+**Judgements.** (1) Spend-dialog Go not restoring focus: the coder's reasoning holds -
+`run-go` is rebuilt disabled ("Running…") the moment the run starts, so a `focus()` cannot
+take, and after the run the page navigates to the result. F3b records `BODY` during and
+after. Acceptable for this round; the right place for focus after a run is the result's
+headline or the run chip, which is a run-page decision, not a delete-round one. Same for
+F3c (a refused Go leaves focus on `<body>` with the banner showing): the banner is
+`aria-live`-less text at the top; a keyboard user has lost their place once. Low, out of
+this round's scope, noted for the run page. (2) **C5's bar**: the coder rewrote ui.md
+§4.7's token sentence to "one primary per surface" and moved `Add as trip` into the
+`.btn-primary` list. I am **not** raising C5's bar to `<= 2`: the probe pins the design
+system's own words at the restyle ("the ONE primary action"), and a coder's edit to the
+design doc in a fix round is not a plan decision that invalidates a tester pin (the rule I
+work under names the plan). C5[search_ok] stays a documented baseline red at 2, the same
+count it had before this round; if the manager adopts "one primary per surface", C5 should
+be re-pinned to count per surface in that round, with the sentence quoted. (3) The raced
+`GET /api/trips/{id}` (F1b, recorded): when the file vanishes between the listing and the
+loader's read, the detail answers the pre-existing 422 `cannot_load` with the OS sentence
+(`FileNotFoundError: [Errno 2] …`), not 404. Not a delete route; not this round's; noted.
+
+### Pins refreshed (by construction, each docstring says so)
+
+search-to-trip **E2** (2,087 lines), **E3** (`"2400"` was the placeholder, never a
+testid; `trip-list-heading` asserted), **E6** (+ the fix round's one CSS rule, nothing
+removed), new **E5b** (the coder's "app.js diff since 622d914" string list equals the
+diff's added literals - it does, and `"2400"` is the one removed literal). restyle **H1**,
+**E5** (api.py/engine.py to ecab878, api.py also still d6be134's bytes; `state()` /
+`calls_state()` still the base's), **H7** (`{"2400"}` is the whole difference), **J6** (22
+hunks + `fix_allowed`). map-search **A6** (same as H1); **A7** re-based in the follow-up
+commit.
+
+### Counts at ecab878 + this commit
+
+See the table appended below by the run.

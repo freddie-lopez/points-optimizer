@@ -77,7 +77,10 @@ def test_G2_the_only_offsite_request_is_the_google_fonts_stylesheet_and_it_is_th
 
 
 def test_H1_server_and_csp_are_byte_identical_to_the_base():
-    """Re-pinned by the tester at d6be134 (search->trip round, plan
+    """Re-pinned again at ecab878 (search->trip fix round 1, F1: engine.py's
+    `_deletable_or_404`; docs/test-reports/search-to-trip.md "Re-test"):
+    api.py/engine.py pinned to ecab878. A pin, not a regression. Earlier:
+    Re-pinned by the tester at d6be134 (search->trip round, plan
     docs/plans/search-to-trip.md 6 step 7, which names this pin): api.py and
     engine.py now carry that round's two POST routes and the delete engine
     (4.2/4.3) and are pinned to the coder's head d6be134 instead of the
@@ -85,7 +88,8 @@ def test_H1_server_and_csp_are_byte_identical_to_the_base():
     of 386b2fc; server.py is still the bytes of 16f53b7 and the CSP is
     byte-identical to the base. A pin, not a regression."""
     assert git("diff", "386b2fc..HEAD", "--", "src/ui/serialize.py", "src/main.py", "src/formatter.py") == ""
-    assert git("diff", "d6be134..HEAD", "--", "src/ui/api.py", "src/ui/engine.py") == ""
+    assert git("diff", "ecab878..HEAD", "--", "src/ui/api.py", "src/ui/engine.py") == ""
+    assert git("diff", "d6be134..HEAD", "--", "src/ui/api.py") == ""
     assert git("diff", "16f53b7..HEAD", "--", "src/ui/server.py") == ""
     server = (ROOT / "src" / "ui" / "server.py").read_text(encoding="utf-8")
     base = git("show", "386b2fc:src/ui/server.py")
@@ -145,10 +149,16 @@ def test_H6_the_static_rules_and_security_suites_are_green():
 
 
 def test_H7_the_testids_of_the_base_commit_all_survive():
+    """Re-pinned by the tester at ecab878 (search->trip fix round 1): the one
+    base literal this regex no longer finds is `"2400"`, the cash field's
+    placeholder - never a testid - removed on the tester's observation (b)
+    (docs/test-reports/search-to-trip.md "Re-test"). A pin, not a regression:
+    every real testid of the base survives."""
     old = set(re.findall(r'"([a-z0-9-]+)"\)', git("show", "386b2fc:src/ui/static/app.js")))
     old |= set(re.findall(r'data-testid="([^"]+)"', git("show", "386b2fc:src/ui/static/index.html")))
     new = set(re.findall(r'"([a-z0-9-]+)"\)', JS)) | set(re.findall(r'data-testid="([^"]+)"', HTML))
-    assert old - new == set(), old - new
+    assert old - new == {"2400"}, old - new
+    assert 'placeholder = "2400"' not in JS and '"2400"' not in JS
 
 
 # --------------------------------------------------------------- I hostile
@@ -263,7 +273,11 @@ def test_J5_plan_compliance_greps():
 
 
 def test_J6_app_js_diff_is_exactly_the_three_enumerated_edits():
-    """Re-pinned by the tester at d6be134 (search->trip round): the 56742af..HEAD
+    """Re-pinned again at ecab878 (search->trip fix round 1, F3/F4/C5 and the
+    placeholder: 22 hunks and the `fix_allowed` strings, the coder report's
+    "app.js diff since 622d914" list, checked against the diff by
+    search-to-trip-probes E5b). A pin, not a regression. Earlier:
+    Re-pinned by the tester at d6be134 (search->trip round): the 56742af..HEAD
     half now counts 17 hunks and allows that round's enumerated strings (see
     the second allowlist below; docs/plans/search-to-trip.md 6 step 7). A
     pin, not a regression. The earlier history:
@@ -290,7 +304,7 @@ def test_J6_app_js_diff_is_exactly_the_three_enumerated_edits():
                "replay", "(source: X)"}  # `run.mode === "replay"` and the comment
     assert strings <= allowed, strings - allowed
     d = git("diff", "56742af..HEAD", "--", "src/ui/static/app.js")
-    assert d.count("\n@@") == 17, d.count("\n@@")   # 4.7's edits + the round-4 .catch (7) + search->trip's 14 hunks, as git groups them at d6be134
+    assert d.count("\n@@") == 22, d.count("\n@@")   # 7 (map) + 14 (search->trip) + fix round 1, as git groups them at ecab878
     added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
     strings = set(re.findall(r'"([^"]*)"', "\n".join(added)))
     map_allowed = {
@@ -353,7 +367,8 @@ def test_J6_app_js_diff_is_exactly_the_three_enumerated_edits():
         # in a comment only
         "ORIGIN → DEST · date · program · cabin",
     }
-    assert strings <= map_allowed | st_allowed, strings - (map_allowed | st_allowed)
+    fix_allowed = {"trip-list-heading", "[data-testid]", "data-testid", "trips", "Score against a fare →", "Trips", "h2"}
+    assert strings <= map_allowed | st_allowed | fix_allowed, strings - (map_allowed | st_allowed | fix_allowed)
 
 
 def test_J7_the_disclosed_deviations_are_what_the_diff_shows():

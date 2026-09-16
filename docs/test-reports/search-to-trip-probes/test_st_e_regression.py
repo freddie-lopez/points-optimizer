@@ -41,21 +41,29 @@ def test_E1_the_untouched_list_is_untouched_since_the_base():
 
 
 def test_E2_static_rules_of_app_js_still_hold():
+    """Re-pinned at ecab878 (fix round 1: F3, F4 and the C5 demotion add 43
+    lines; docs/test-reports/search-to-trip.md "Re-test: ecab878"). A pin,
+    not a regression: every other rule below is unchanged."""
     for banned in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "cssText",
                    "setAttribute(\"style\"", "|| 0", "?? 0", "javascript:", "docs/plans/", "Step 1", "Step 2",
                    "Step 3", "Step 4", "Step 5", "Step 6", "v1 ", "v2 ", "v3 ", "v4 ", "v5 "):
         assert banned not in JS, banned
     base = git("show", f"{BASE}:src/ui/static/app.js")
     assert JS.count(".style.") == base.count(".style.") == 2
-    assert len(JS.splitlines()) == 2044
+    assert len(JS.splitlines()) == 2087
     assert "url(" not in CSS and "@import" not in CSS and "http" not in CSS
     assert " style=" not in HTML and "<style" not in HTML
 
 
 def test_E3_every_testid_of_the_base_survives_and_the_nine_new_ones_exist_once_each():
+    """Re-pinned at ecab878 (fix round 1): the `"2400"` literal the regex
+    reads as a testid was the cash placeholder, removed on the tester's own
+    observation (b); it was never a testid. A pin, not a regression: every
+    real testid of the base survives, plus `trip-list-heading` (F3)."""
     old = set(re.findall(r'"([a-z0-9-]+)"\)', git("show", f"{BASE}:src/ui/static/app.js")))
     new = set(re.findall(r'"([a-z0-9-]+)"\)', JS))
-    assert old - new == set(), old - new
+    assert old - new == {"2400"}, old - new
+    assert '"trip-list-heading"' in JS
     for t in ("search-add-trip", "search-add-trip-box", "search-add-trip-note", "nt-prefill", "trip-delete",
               "trip-delete-reason", "delete-confirm", "delete-confirm-go", "trip-deleted"):
         assert f'"{t}"' in JS, t   # uniqueness: tests/test_ui_static_rules.py (full suite)
@@ -128,6 +136,20 @@ def test_E5_the_coders_string_list_is_the_diff_and_nothing_more():
     assert extra <= {"nt-leg-1-cash", "cash"}, f"in the report, not in the diff: {sorted(extra)}"
 
 
+def test_E5b_the_fix_rounds_string_list_is_its_diff():
+    """Fix round 1 (622d914..ecab878, 9 hunks): the coder report's list under
+    "app.js diff since 622d914" equals the double-quoted literals on added lines."""
+    d = git("diff", "622d914..ecab878", "--", "src/ui/static/app.js")
+    assert d.count("\n@@") == 9, d.count("\n@@")
+    added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
+    strings = set(re.findall(r'"([^"]*)"', "\n".join(added)))
+    assert strings == {"", "Cash per person (USD)", "Score against a fare →", "Trips", "[data-testid]", "btn",
+                       "btn btn-primary", "btn btn-warn", "cash", "data-testid", "h2", "label", "scrim",
+                       "trip-list-heading", "trips"}, strings
+    removed = set(re.findall(r'"([^"]*)"', "\n".join(l[1:] for l in d.splitlines() if l.startswith("-") and not l.startswith("---"))))
+    assert "2400" in removed and not (removed - strings - {"2400"}), removed - strings
+
+
 def test_E6_the_css_additions_are_the_reports_list_and_no_rule_changed_or_went():
     d = git("diff", f"{BASE}..d6be134", "--", "src/ui/static/app.css")
     removed = [l for l in d.splitlines() if l.startswith("-") and not l.startswith("---")]
@@ -147,6 +169,11 @@ def test_E6_the_css_additions_are_the_reports_list_and_no_rule_changed_or_went()
     # the report says "four comment lines"; the diff has five (a report slip, not a rule)
     assert len([l for l in added if l.startswith("/*")]) == 5
     assert "td.cab.sel { background: var(--accent-tint); }" in CSS
+    # fix round 1 (ecab878): exactly one rule and one comment, for F2
+    d = git("diff", "d6be134..ecab878", "--", "src/ui/static/app.css")
+    assert [l for l in d.splitlines() if l.startswith("-") and not l.startswith("---")] == []
+    assert [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++") and not l[1:].startswith("/*")] == [
+        ".funding > div { overflow-wrap: anywhere; min-width: 0; }"]
 
 
 def test_E7_the_docs_name_the_routes_and_the_readme_test_is_green():

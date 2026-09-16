@@ -136,7 +136,10 @@ def test_E4_the_chip_is_hidden_before_state_arrives_and_never_says_key_ellipsis(
 
 
 def test_E5_api_state_key_shape_is_byte_identical_to_the_base_commit():
-    """Re-pinned by the tester at d6be134 (search->trip round; the plan
+    """Re-pinned again at ecab878 (search->trip fix round 1, F1 in engine.py;
+    api.py still d6be134's bytes). A pin, not a regression: state() and
+    calls_state() are still the base's bytes, asserted below. Earlier:
+    Re-pinned by the tester at d6be134 (search->trip round; the plan
     docs/plans/search-to-trip.md 6 step 7 names H1, and this is the same pin
     under another name). engine.py and api.py now carry that round's delete
     routes and are pinned to the coder's head d6be134; serialize.py is still
@@ -149,7 +152,10 @@ def test_E5_api_state_key_shape_is_byte_identical_to_the_base_commit():
     d = subprocess.run(["git", "diff", "386b2fc..HEAD", "--", "src/ui/serialize.py"], cwd=str(ROOT),
                        capture_output=True, text=True)
     assert d.stdout == "", d.stdout[:500]
-    d = subprocess.run(["git", "diff", "d6be134..HEAD", "--", "src/ui/engine.py", "src/ui/api.py"], cwd=str(ROOT),
+    d = subprocess.run(["git", "diff", "ecab878..HEAD", "--", "src/ui/engine.py", "src/ui/api.py"], cwd=str(ROOT),
+                       capture_output=True, text=True)
+    assert d.stdout == "", d.stdout[:500]
+    d = subprocess.run(["git", "diff", "d6be134..HEAD", "--", "src/ui/api.py"], cwd=str(ROOT),
                        capture_output=True, text=True)
     assert d.stdout == "", d.stdout[:500]
     d = subprocess.run(["git", "diff", "16f53b7..HEAD", "--", "src/ui/server.py"], cwd=str(ROOT),
