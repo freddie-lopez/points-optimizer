@@ -1028,6 +1028,32 @@ def test_the_delete_of_a_file_that_stops_being_regular_under_the_lock_is_refused
     assert path.exists()
 
 
+def test_a_delete_whose_file_vanished_under_the_lock_is_the_404_not_R1(del_client, monkeypatch):
+    """Two confirms for the same file, delete #1 completes between delete #2's
+    redeem and its lock: the re-check under the lock finds no file. That is
+    the 404 a second delete of the id gets (R4), not R1 - which would tell
+    the user to remove by hand a file this page just deleted."""
+    path = del_client.trips_dir / "sfo-mad-2027-01-15.json"
+    c1 = del_client.post("/api/trips/sfo-mad-2027-01-15/delete-preflight", {}).json()["confirm_id"]
+    c2 = del_client.post("/api/trips/sfo-mad-2027-01-15/delete-preflight", {}).json()["confirm_id"]
+    real = eng.Engine.redeem_confirm
+    done = {"first": False}
+
+    def redeem(self, confirm_id, digest, **kw):
+        real(self, confirm_id, digest, **kw)
+        if confirm_id == c2 and not done["first"]:
+            done["first"] = True
+            assert self.trip_delete("sfo-mad-2027-01-15", {"confirm_id": c1})["lines"] == [
+                f"Deleted {eng.display_path(path)}"]
+
+    monkeypatch.setattr(eng.Engine, "redeem_confirm", redeem)
+    r = del_client.post("/api/trips/sfo-mad-2027-01-15/delete", {"confirm_id": c2})
+    assert not path.exists()
+    assert r.status == 404 and r.json()["error"] == "not_found", r.text
+    assert r.json()["message"] == f"No trip 'sfo-mad-2027-01-15' in {eng.display_path(del_client.trips_dir)}."
+    assert "NOT DELETABLE" not in r.text
+
+
 @pytest.mark.parametrize("trip_id", ["../trip_b_europe", "..%2f..%2fsrc%2fconfig",
                                      "trip_b_europe%00", "trip_b_europe.json", "x" * 121,
                                      "adir.json", "%2e%2e"])

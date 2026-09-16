@@ -551,7 +551,10 @@ class Engine:
         out = serialize.fixture_detail(
             trip_id, path, fx, _no_legs_note(path) if not fx.legs else None)
         # The page needs the reason before the click, in the refusal's own words.
-        reason = self.deletable_reason(path)
+        try:
+            reason = self.deletable_reason(path)
+        except FileNotFoundError:
+            raise self._no_trip(trip_id)
         out["deletable"] = reason is None
         out["not_deletable_reason"] = reason
         return out
@@ -569,7 +572,12 @@ class Engine:
         among the trip flags, no leg with a points_candidates key, and every
         cash option sourced by the builder. Provenance, not a checksum: a cash
         amount edited by hand keeps the file deletable, and the confirm names
-        the file and quotes its description for that reason."""
+        the file and quotes its description for that reason.
+
+        A file that is not there at all is not "unreadable": FileNotFoundError
+        propagates, and the route answers the 404 a second delete of the id
+        gets (`_deletable_or_404`). R1 would tell the user to remove by hand a
+        file this very page just deleted."""
         from src.trip_builder import LIVE_ONLY_FLAG
 
         file = link_display(path)
@@ -577,6 +585,8 @@ class Engine:
             return NOT_A_REGULAR_FILE_SYMLINK.format(file=file)
         try:
             d = json.loads(path.read_bytes())
+        except FileNotFoundError:
+            raise
         except (OSError, ValueError):
             return NOT_DELETABLE_UNREADABLE.format(file=file)
         if not isinstance(d, dict):
@@ -603,6 +613,17 @@ class Engine:
             return NOT_DELETABLE_EDITED.format(file=file)
         return None
 
+    def _deletable_or_404(self, trip_id: str, path: Path) -> None:
+        """`deletable_reason` as the routes use it: 409 with the reason, or
+        404 R4 when the file is gone (raced by another delete of the same id
+        between the listing and this check)."""
+        try:
+            reason = self.deletable_reason(path)
+        except FileNotFoundError:
+            raise self._no_trip(trip_id)
+        if reason:
+            raise ApiError(409, "not_deletable", reason)
+
     def _fixture_bytes(self, trip_id: str, path: Path) -> bytes:
         try:
             return path.read_bytes()
@@ -625,9 +646,7 @@ class Engine:
         if self._lock.locked():
             # Advisory here; the delete itself takes the lock.
             raise ApiError(409, "busy", DELETE_BUSY)
-        reason = self.deletable_reason(path)
-        if reason:
-            raise ApiError(409, "not_deletable", reason)
+        self._deletable_or_404(trip_id, path)
         raw = json.loads(self._fixture_bytes(trip_id, path))
         description = raw.get("description")
         file = display_path(path)
@@ -650,9 +669,7 @@ class Engine:
         if not self._lock.acquire(blocking=False):
             raise ApiError(409, "busy", DELETE_BUSY)
         try:
-            reason = self.deletable_reason(path)  # again, under the lock
-            if reason:
-                raise ApiError(409, "not_deletable", reason)
+            self._deletable_or_404(trip_id, path)  # again, under the lock
             if path.is_symlink():
                 raise ApiError(409, "not_a_regular_file",
                                NOT_A_REGULAR_FILE_SYMLINK.format(file=link_display(path)))
