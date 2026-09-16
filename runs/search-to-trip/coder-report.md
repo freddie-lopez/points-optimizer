@@ -204,3 +204,73 @@ Also the coder's own edit, as the plan allows: `tests/test_ui_static_rules.py::T
   `2027-13-45`, U+202E, 5,000 chars: the ISO guard leaves `nt-name` empty, the value goes
   into `input.value`, the P3/P4 notes are `textContent`. Not probed here beyond the code
   reading; the tester's §7 item.
+
+## Fix round 1
+
+Tester report `docs/test-reports/search-to-trip.md` at 622d914 (F1-F4, observation (b),
+C5 judgement). One commit per item, as Coder, on `feature/search-to-trip`.
+
+| Item | Commit | What | Check |
+|---|---|---|---|
+| F1 | d2a4473 | `deletable_reason` lets `FileNotFoundError` propagate (`except FileNotFoundError: raise` ahead of the `(OSError, ValueError)` → R1 arm); a new `_deletable_or_404(trip_id, path)` turns it into `_no_trip` (404 R4) and is what `trip_delete_preflight` and `trip_delete` (under the lock) call; `trip_detail` wraps its own call the same way. A dangling symlink is still R8 (`is_symlink` is checked first). +1 test `test_a_delete_whose_file_vanished_under_the_lock_is_the_404_not_R1` (the A15 interleaving: two confirms, #1 completes inside #2's redeem). | tester's A15 green; A10/A11 green; `tests/test_ui_api.py -k "delet …"` 36 → 37 passed |
+| F2 | 06a2f73 | app.css +1 rule `.funding > div { overflow-wrap: anywhere; min-width: 0; }` (+1 comment line). Covers `trip-deleted`, `nt-wrote` and `funding-banner`. No rule changed or removed. | D3b green (`scrollWidth <= clientWidth` at 400 with the 120-char name) |
+| F3 | 0a9b1f3 (+ 63d9499) | `openConfirm` and `openDialog` record `document.activeElement` in `S.dialogFrom`; `closeConfirm` (Cancel, Esc, scrim click) hides and refocuses the opener, found again by its testid (`byTestid`) or the element itself if it has no testid and is still connected. The go buttons call the new `hideDialog()` (hide only): their action decides where focus goes. After a successful delete `doDelete` sets `S.focusAfter = "trip-list-heading"` and `render()` consumes it once (`focusOnce`) after the hash-change render, so the focus lands on the rebuilt heading. The trip list's `h2.label` "Trips" gets testid `trip-list-heading` and `tabIndex = -1` (script-focusable, out of the Tab order). `TESTIDS` +1. 63d9499 restores `closeDrawer`'s original inline lookup loop, which `tests/test_drawer_returns_focus.py` reads verbatim. | D8 green: `FOCUS after cancel: BUTTON:trip-delete after delete: H2:trip-list-heading`; the spend dialog's Esc/Cancel go through the same `closeConfirm` |
+| F4 | 9e6a845 | `sendRun`'s 200 branch: `else if (S.view === "trips") { renderTrips(); }` when the run's trip is not the open one. Not on `new-trip` (a re-render would drop typed input); the search view has its own `q.busy`. | D5 now prints `run: 'Run'` (was `Running…`); its `delete: True` is Trip B's R2, correct |
+| obs. (b) | 394f51c | the `"2400"` placeholder argument removed from the cash `li(...)` call; label and hint untouched | static rules green; the prefilled form shows an empty cash field under the P5 hint |
+| C5 | 7eb65c2 | `drawer-to-trip` is `"btn"`; `search-add-trip` keeps `"btn btn-primary"`. ui.md §4.7's token sentence: `Add as trip` replaces `Score against a fare` in the `.btn-primary` list, with the reason. | restyle C5[search_ok] reads **2** (`search-run`, `search-add-trip`) with the drawer open or closed - its baseline count; still red against the probe's `<= 1`, as at the baseline |
+
+Spend-dialog Go (`run-confirm-go`) does not restore focus: `sendRun` re-renders and the
+`run-go` it came from is rebuilt disabled (`Running…`), so a `focus()` would not take; it is
+as before. Esc/Cancel on the spend dialog return to `run-go`.
+
+### Counts (head 63d9499)
+
+| Suite | Result | Expected |
+|---|---|---|
+| full suite `-O` | **3892 passed, 13 skipped** (331 s) | 3890/13 + 1 (F1 test) + 1 (`TESTIDS` +1, parametrised) |
+| search-to-trip-probes `-O -p no:randomly` | **154 passed, 2 failed** (284 s): E2, E3 | A15, D3b, D8 green (were the 3 reds); the two reds are pins, below |
+| ui-restyle-probes | **280 passed, 6 failed, 10 skipped** (340 s): C5[search_ok], E3, E5, H1, H7, J6 | C5 back to 2 (baseline red); E3 baseline; E5/H1/H7/J6 pins, below |
+| map-search-probes | **159 passed, 2 failed** (406 s): A6, F6 | F6 baseline; A6 pin, below |
+| ui-probes | **664 passed, 0 failed** (630 s) | 664/0 |
+
+### Pins this round moves (nothing else moved)
+
+Every one is a hash or literal pin to d6be134 that the requested fixes invalidate by
+construction, the class the tester re-pinned last round (docs/test-reports/ not edited by
+me):
+
+- search-to-trip **E2** `len(JS.splitlines()) == 2044` - app.js is 2,087 lines now (F3, F4
+  and C5 edits). Every other rule in E2 holds (no banned string; `.style.` still 2; the
+  CSS/HTML assertions).
+- search-to-trip **E3** and restyle **H7** - both read "testids" as every `"[a-z0-9-]+")`
+  literal in app.js and compare against the base; the only missing one is `"2400"`, the
+  placeholder removed by request (it was never a testid). All nine new testids exist;
+  `trip-list-heading` is new.
+- restyle **H1**, **E5**, map-search **A6** - `d6be134..HEAD` diff of `src/ui/engine.py`
+  is no longer empty (F1). `api.py`, `server.py`, `serialize.py`, the CSP, `Engine.state()`
+  and `calls_state()` are byte-identical to the pinned commits; main/formatter/goldens
+  untouched.
+- restyle **J6** - `56742af..HEAD` hunk count 17 → 22 (app.js hunks below).
+- map-search **A7** will need the same re-base as last round once the tester's re-pin
+  commit lands (it is green now).
+
+### app.js diff since 622d914 (9 hunks) - every string literal
+
+Added lines: `"trip-list-heading"` (testid, twice: the `tid(...)` and `S.focusAfter`),
+`"[data-testid]"` and `"data-testid"` (the `byTestid` lookup), `"trips"` (`S.view ===
+"trips"` in `sendRun`), `"btn"` (`drawer-to-trip`'s class), `"scrim"` (the `hideDialog` /
+`closeConfirm` split re-emits it), and re-emitted existing strings on moved/edited lines:
+`"Cash per person (USD)"`, `"Score against a fare →"`, `"Trips"`, `"h2"`, `"label"`,
+`"btn btn-primary"`, `"btn btn-warn"`, `"cash"`, `""`.
+
+Removed: `"2400"`. No user-facing sentence added or changed; no testid renamed or dropped.
+
+New state keys: `S.dialogFrom`, `S.focusAfter`. New functions: `focusOnce`, `byTestid`,
+`hideDialog`. Changed: `openConfirm`, `openDialog`, `closeConfirm`, `doDelete`,
+`sendRun`, `renderTripList`, `render`.
+
+Other files: `src/ui/engine.py` (F1: docstring, the `except` arm, `_deletable_or_404`,
+three call sites), `src/ui/static/app.css` (+1 rule, +1 comment), `tests/test_ui_api.py`
+(+1 test), `tests/test_ui_static_rules.py` (`TESTIDS` +`trip-list-heading`),
+`docs/plans/ui.md` (one sentence, §4.7 tokens). `server.py`, `serialize.py`, `api.py`,
+`index.html`, `map.js`, `tests/fixtures/` untouched.
