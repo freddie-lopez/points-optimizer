@@ -274,3 +274,78 @@ three call sites), `src/ui/static/app.css` (+1 rule, +1 comment), `tests/test_ui
 (+1 test), `tests/test_ui_static_rules.py` (`TESTIDS` +`trip-list-heading`),
 `docs/plans/ui.md` (one sentence, §4.7 tokens). `server.py`, `serialize.py`, `api.py`,
 `index.html`, `map.js`, `tests/fixtures/` untouched.
+
+## Fix round 2 + pin cleanup
+
+Two commits on `feature/search-to-trip` from `0d1e2fb`.
+
+### a022cf4 - F5: a run finishing elsewhere no longer wipes the new-trip form
+
+`sendRun` navigated to the run result whenever `S.tripId === id`. `S.tripId` survives on
+every other view, so a run returning while the user was typing in the new-trip form
+navigated the page away, and `+ New trip` then started a fresh `S.nt`: the typed name,
+origin, destination and cabin were gone. The F4 fix's `else if (S.view === "trips")` guard
+was on the branch below, so it never protected the form.
+
+One line, as the tester's Location note asks - `if (S.tripId === id && S.view === "trips")`
+- plus a five-line comment above it. A run that finishes while the user is anywhere but
+the trips view now lands as a chip, exactly as it already did when another trip was open;
+`S.nt` is untouched, and so is the search view's own state.
+
+`test_st_f_retest.py::test_F4b` green. `::test_F4a` still green (see the flake note below).
+No new string literal, no testid, no CSS, no server change.
+
+### 9dea889 - the brittle pins become behaviour assertions
+
+Agreed with Tsuki: pins on exact bytes, line counts, diff-hunk counts and literal lists
+went red on every unrelated change, cost a re-pin round each time, and have never caught a
+defect. Each is replaced in place, keeping its id and file; every converted probe carries
+the agreed docstring sentence.
+
+| Probe | Pin dropped | Behaviour asserted instead |
+|---|---|---|
+| st **E2** | `len(JS.splitlines()) == 2087` | unchanged: every banned construct, the `.style.` budget, the CSS/HTML rules |
+| st **E3** | `old - new == {"2400"}` | new `testids()` bracket-matches `tid()`/`btn()` argument lists and reads `setAttribute("data-testid")`, `[data-testid="…"]` and the `testid:`/`goid:` keys - 76 real testids in the base, all must survive; the new ones still asserted by name |
+| st **E5** | hunk count + "the report's bullet list equals the diff" | deleted (bookkeeping on a document, not on the product); E5b carries the rule |
+| st **E5b** | literal string-set for one frozen diff | no sentence-shaped literal exists in app.js that the plans do not write (comments excluded) |
+| restyle **H1** | api.py/engine.py bytes pinned to the last head | unchanged: server.py at 16f53b7, the CSP literal, serialize.py/main.py/formatter.py at 386b2fc |
+| restyle **E5** | same two byte pins | unchanged: serialize.py, server.py, and `state()`/`calls_state()` byte-identical to the base |
+| restyle **H7** | `old - new == {"2400"}` | same `testids()` conversion as E3 |
+| restyle **J6** | both app.js hunk counts (6 and 22) | no banned construct; no testid of the base lost; every string literal **new to the file** on an added line still inside the enumerated allow-lists (the left side of each range is subtracted, so a moved line re-emitting an existing literal is not read as new wording) |
+| map **A6** | api.py/engine.py byte pins | unchanged: the CLI, the engine's data sources, airports.csv, the goldens |
+| map **A7** | "the other probe trees are unchanged since `<commit>`" | dropped entirely - it pinned the tester's own future commits and no product change can touch those paths; the goldens half stays |
+
+Nothing that asserts behaviour, security, a refusal sentence, a marker, layout or data
+integrity was touched, and nothing protecting §2 of `docs/design/UI-BRIEF.md` was weakened.
+`tests/` was not edited at all.
+
+### Counts
+
+| Suite | Before (at 0d1e2fb + the F5 fix) | After |
+|---|---|---|
+| full `-O` | 3892 passed, 13 skipped | 3892 passed, 13 skipped |
+| full (no `-O`) | 3892 passed, 13 skipped | 3892 passed, 13 skipped |
+| search-to-trip-probes | 1 red (E2 line count) | 0 red except the F4a flake below |
+| ui-restyle-probes | 2 red (C5[search_ok], E3) + J6/H1/E5 would have gone red on the next commit | 2 red: C5[search_ok], E3 - both documented |
+| map-search-probes | 2 red (A7, F6) | 1 red: F6 - documented design limit |
+| ui-probes | 0 red (664 passed) | 0 red (664 passed) |
+
+### One red I cannot get green: `test_F4a` is flaky, and was before this round
+
+`test_st_f_retest.py::test_F4a` fails intermittently at line 284 - the first assert of its
+second half - with `delete_state(pg)["disabled"] is None`, i.e. `trip-delete` is gone from
+the DOM a moment after `wait_for_selector` found it. It is a probe race, not the F5 fix:
+
+- Run in isolation (`-k F4a`), 10 runs each: **3/10 red with `0d1e2fb`'s app.js, 3/10 red
+  with the fix.** Identical.
+- Run in file context (the whole `test_st_f_retest.py`), 4 runs each: red in both, if
+  anything more often on the unfixed app.js.
+- A standalone replay of just the second half (fresh page, same clicks) passes every time,
+  so what makes it race is the state the first half leaves behind, not the guard.
+
+The second half exercises a trip the run is *not* on, so the branch the F5 fix touched is
+not even taken there; the F5 fix only narrows when `go(...)` fires. The probe needs a
+settle (`wait_for_function` on `trip-delete` being present *and* disabled) rather than a
+single `wait_for_selector`, but that is the tester's file and I have not edited it.
+
+Everything else in that suite, including `F4b`, is green.
