@@ -694,6 +694,11 @@
         S.legSel = null; S.cameFrom = null;
         refreshState();
         if (S.tripId === id) { go("#trips/" + id + "/run/" + run.run_id); }
+        else if (S.view === "trips") {
+          // Another trip's page is open: its Run and Delete buttons follow
+          // S.busy, which just went false, so they must be rebuilt now.
+          renderTrips();
+        }
       } else {
         var m = (res.body && res.body.message) || ("HTTP " + res.status);
         if (res.body && res.body.error === "confirm_stale") { m = res.body.message; }
