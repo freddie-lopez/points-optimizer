@@ -11,7 +11,7 @@ against a live server rather than reading the tester's word for them.
 
 ## Verdict
 
-**Ship with fixes.** The feature is built as planned, the delete route is the tightest new
+**Ship with fixes.** (Superseded — see "Re-review: 8c87d6f" at the foot of this file: **Ship**.) The feature is built as planned, the delete route is the tightest new
 surface this project has added — I could not get it to touch anything outside its own
 directory — and every count claimed by both agents is real. One thing must not ship as it
 stands: the coder edited the design plan to make its own class choice legal, and the
@@ -219,3 +219,195 @@ enumeration of new strings, CSS rules and functions is the only remaining accoun
 changed, and E5's "the report's bullet list equals the diff" check is gone too. That check
 was bookkeeping on a document and I do not want it back, but it means the coder report is
 now trusted rather than verified. Keep the reports as good as this one has been.
+
+---
+
+# Re-review: 8c87d6f
+
+Manager, 2026-09-16. Head `8c87d6f`, four commits over my ef42d2e: **f8b9149** (the
+must-fix — the ui.md §4.7 revert), **f32b2d8** (`Add as trip` demoted to a ghost `.btn`),
+**2ca2693** (coder report), **8c87d6f** (the tester re-pins its F5 probe to my ruling and
+fixes a J6 false positive). Everything below I ran or diffed at this head.
+
+## Verdict
+
+**Ship.** The must-fix is done exactly right — the Architect's sentence is back
+byte-for-byte and the *page* changed to meet it rather than the bar moving to meet the
+page — and C5 is green for the first time since the restyle round. Nothing is blocking.
+
+## Must fix before ship
+
+None. The single item from ef42d2e is closed.
+
+## What I verified at this head
+
+- **The ui.md revert is byte-identical where it should be.** f8b9149 is one line changed.
+  The §4.7 **Tokens** paragraph is character-for-character 4f879d4's, including "the ONE
+  primary action" and `Score against a fare` in the `.btn-primary` list; only its line
+  number moved, because two route rows were added above it. What remains of the ui.md diff
+  against 4f879d4 is seven added lines, all descriptive of what was built: the `GET
+  /api/trips/{id}` shape with `deletable`, the two delete route rows, the S5 selection
+  bullet, the drawer's prefill sentence, and the T2 and T5 paragraphs. Nothing in it
+  re-decides anything.
+- **Exactly one coral on the search surface, proven two ways.** Statically: `btn-primary`
+  is constructed in exactly five places in `app.js` — `run-go` (trip detail), `search-run`
+  (search), `nt-write` (new-trip form), `wallet-apply` (wallet modal) and `openConfirm`'s
+  go button (the spend dialog). On the results screen that leaves `search-run` alone, in
+  every state, because `search-add-trip` and `drawer-to-trip` are now both plain `.btn`.
+  Dynamically: `C5[search_ok]` is **green**, and the tester's re-pinned F5 asserts
+  `prim() == ["search-run"]` with the class and the `disabled` flag checked in each
+  reachable state — no pick, picked with the drawer open, picked with the drawer closed.
+  (The docstring says "four states"; there are three reachable ones — the drawer cannot be
+  open before a pick. Harmless overcount in prose, the assertions are right.)
+- **Full suite `-O`: 3892 passed, 13 skipped.** Unchanged.
+- **All four probe suites**: search-to-trip **178/0**; ui-restyle **285 passed, 1 failed,
+  10 skipped** — `E3` alone, the documented baseline red, with `C5[search_ok]` green;
+  map-search **160/1** (`F6`, its own design limit); ui-probes **664/0**. Every claim exact.
+
+## Judgement: is the J6 literal scan now sound?
+
+**Sound today, and one line short of sound by construction. Keep the fix; tighten it next
+round rather than narrowing it now.**
+
+The fix is correct and, read carefully, it is mostly a *tightening*. `code_only` is applied
+to both sides of the subtraction: the added-line scan (which is what gets looser — a
+comment no longer counts as wording, which is right, since a comment says nothing to a
+user) and the base-file set that gets subtracted from it (which gets *smaller*, so fewer
+added strings are excused). No allow-list was widened — I diffed `allowed` and
+`map_allowed` and both are untouched. The tester counter-checked in a worktree that a
+genuinely new sentence and a lost testid both still go red. That is the right shape of fix
+and the right evidence for it.
+
+The residue is the reason I am not calling it finished. `code_only` strips comments by
+line, without tracking string state, so it is only correct while no string literal in
+`app.js` contains `//`, `/*` or `*/`. I checked that claim myself at HEAD and at all three
+commits J6 reads (386b2fc, 56742af, 4f879d4): true everywhere, single- and double-quoted.
+But it is true by luck of the current content, not by construction, and the day someone
+writes a URL or a date range into a user-facing string, `code_only` will truncate that line
+mid-literal, the regex will fail to match the now-unterminated string, and **a genuinely
+new sentence will go unnoticed** — the probe fails open, silently.
+
+This is the second literal-scan false positive this round: first `"2400"`, a placeholder
+read as a lost testid, then a comment read as new wording. The common cause is regexes
+reading JavaScript as text. Note that the team already owns the cure: the `testids()`
+extractor in the same file is string-aware — it tracks quotes while bracket-matching. So:
+
+- **Not narrowed now.** Narrowing today would mean reverting to a probe that goes red on
+  every comment, which is the tax we just abolished.
+- **Next round, two changes, neither urgent.** (1) Make the assumption an assertion rather
+  than a docstring claim — one line inside J6 and E5b asserting that no literal in `app.js`
+  contains a comment marker, so the day it stops being true the probe *says so* instead of
+  going blind. (2) Then replace the line-based `code_only` in both probes with a
+  string-aware pass, reusing the scanner `testids()` already has. Extract literals first,
+  discard the ones that were inside comments; that is sound by construction and cannot fail
+  open.
+
+The rule from ef42d2e's Process section holds and covers this: a probe may assert absence
+of an unplanned user-facing sentence. What it may not do is quietly stop being able to see
+one. **A probe that can fail open is worse than a probe that fails loudly**, and the fix
+for that is an assertion on its own precondition, not a narrower scope.
+
+## Still open (unchanged, none blocking)
+
+- **The Architect should reconcile ui.md §4.7's `.btn-primary` list.** It still names
+  `Score against a fare`, which is now a ghost `.btn`, and does not name `Add as trip`,
+  which is also ghost. The list is stale in the harmless direction — it over-promises
+  coral rather than authorising any — and the Coder correctly flagged it instead of editing
+  it, which is the flow working. One Architect line.
+- **The spend-confirm dialog is the one place two corals still share a screen**
+  (`search-run` behind the scrim plus `search-confirm-go`, and the same on the trip page
+  with `run-go`). Pre-existing on every surface that has a confirm, unchanged by this round,
+  and not a state C5 paints. Worth folding into the per-surface decision if it is ever taken up.
+- The `busy`-refused delete burning its confirm; the lifted cash field on the prefilled
+  form; the run page's three focus notes; the raced `GET /api/trips/{id}` answering 422
+  rather than 404. All as written above.
+- Tsuki's standing decisions: hard delete with no undo, and one award per search.
+
+## Trying it on your Mac
+
+From the repo root, with the interpreter you run the CLI with:
+
+```bash
+.venv/bin/python -m src.ui --wallet wallet.json
+```
+
+It prints `Points optimizer UI: http://127.0.0.1:8777/  (Ctrl-C to stop)` and opens your
+browser. Ctrl-C stops it.
+
+### Search → Add as trip
+
+**This half spends real Seats.aero calls.** A search is live — there is no REPLAY for it —
+and the confirm will tell you it can spend up to 25 calls before anything goes out. A
+repeat of the same search within six hours is answered from the disk cache for free, so do
+your clicking-around on one search rather than re-running it.
+
+1. **Search** tab. From, To, a date (or a date range), then **Run search** → the confirm →
+   **Spend up to 25 calls**.
+2. **Click any award cell** in the results grid — a cell with a price in it, not one that
+   says `no space`. Keyboard works too: Tab to a cell and press Space or Enter.
+   The detail drawer opens, **the cell stays highlighted**, and the box under the table
+   reads `Picked: SFO → MAD · 2027-01-15 · Air Canada Aeroplan · Y`.
+3. Press **Esc** if you like. The drawer closes, the pick survives, and focus goes back to
+   the cell. Switching to the Trips tab and back keeps it too. **Show map** or a new search
+   clears it.
+4. Press **Add as trip** under the table — or **Score against a fare →** inside the drawer;
+   they are the same function. The new-trip form opens with:
+   - a suggested name, `sfo-mad-2027-01-15` (left blank if the date is not `YYYY-MM-DD`);
+   - the cabin of the cell you picked, and leg 1's From / To / Date filled;
+   - **the cash field empty and already focused**, with the hint `required: the one thing a
+     search cannot know`;
+   - a note saying, in words, that the award price you just looked at is **not** written
+     into the trip.
+5. **Type the cash fare you actually found** — the real airline price for that flight, the
+   number the whole comparison hangs on. Then **Preview** → **Write**.
+6. The file lands in `tests/fixtures/trips/<name>.json`, written by the same builder
+   `--new-trip` uses. It is byte-identical to the same trip typed by hand or built from the
+   command line. It carries **no points price at all**: the miles and taxes from the search
+   are never copied in, because only a LIVE or REPLAY run may put a points price in a file.
+   Run the new trip LIVE or REPLAY to get one.
+
+### Delete a trip, safely
+
+**Nothing you did not make can be deleted from this page, and there is no undo.**
+
+The rule is provenance, read out of the file itself: deletable means the file's own
+contents say `--new-trip` or this page wrote it — `source` starting
+`user_entered_via_new_trip`, the "no points prices" flag still present, no
+`points_candidates` key on any leg, and every cash figure still sourced by the builder. In
+practice: **anything you just built with Add as trip or + New trip and have not hand-edited.**
+
+Refused, by name, with the reason printed under the greyed-out button:
+
+| Trip | What happens | Why |
+|---|---|---|
+| `trip_a_mry_nyc`, `trip_b_europe`, `trip_c_lon_mry_surcharge` | `NOT DELETABLE — … was not built by --new-trip or this page (source: "Google Flights + Marriott.com, captured 2026-09-07 by Tsuki. Transcribed verbatim.")` | your own captures, committed as test data — git removes those, not this page |
+| `trip_001`, `trip_002` | the same sentence with `(source: "")` | they have no `source` key at all, so nothing vouches for them |
+| `trip_001_answer`, `trip_002_answer` | never listed; a direct request 404s | answer files are not trips |
+| a trip you built here and then hand-edited | `NOT DELETABLE — … was built by --new-trip but has been edited since` | it may hold captures nobody can reproduce |
+| a symlink dropped into the trips folder | refused, naming the link, never following it | this page deletes only the regular files it wrote |
+
+To try it end to end without risking anything:
+
+1. **+ New trip**, name it `delete-me`, one leg (say `SFO` → `LHR`, a date, cabin, any
+   cash), **Preview**, **Write**. You are now on its page.
+2. **Delete trip** — a warn-coloured button, never the coral one. It opens a dialog that
+   names the exact file, says *there is no undo in this app*, adds that git can restore it
+   **if it was committed** and that it is gone if it was not, and quotes the file's own
+   description back to you.
+3. **Delete tests/fixtures/trips/delete-me.json**. The list re-renders without it, the page
+   lands on the Trips tab showing `Deleted tests/fixtures/trips/delete-me.json`, and that
+   trip's run chips are gone.
+4. Open one of Trip A/B/C to see the other side: the button is there but greyed, with the
+   refusal sentence printed underneath saying exactly why.
+
+Two things worth knowing while you play:
+
+- **Delete is blocked while any run is in flight**, whichever trip the run is on. The
+  button greys out, and if you get there anyway the server says `Nothing was deleted: a run
+  is in progress and may be reading this trip. Wait for it to finish, then delete.` Wait a
+  few seconds and try again.
+- **Trips you build here live in `tests/fixtures/trips/`**, the same folder as the
+  committed test data. That is exactly why the provenance gate exists: the page can only
+  ever remove its own files from that folder, and I re-attacked that this round — traversal
+  ids, symlinks pointing outside, and deletes raced against a running job — without getting
+  it to touch a single byte it did not write.
