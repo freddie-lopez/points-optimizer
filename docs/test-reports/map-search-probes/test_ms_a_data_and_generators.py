@@ -89,54 +89,33 @@ def test_A5_no_hand_typed_airport_or_coordinate_in_src_or_data():
 
 
 def test_A6_no_engine_cli_or_golden_diff_since_the_base():
-    """Re-pinned again at ecab878 (search->trip fix round 1, F1 in
-    engine.py). A pin, not a regression. Earlier:
-    Re-pinned by the tester at d6be134 (search->trip round; the plan
-    docs/plans/search-to-trip.md 6 step 7 names this pin): src/ui/api.py and
-    src/ui/engine.py carry that round's delete routes and are pinned to the
-    coder's head d6be134; every other path is still byte-identical to the
-    map round's base. A pin, not a regression."""
+    """Converted from a byte/line pin to a behaviour assertion (agreed with
+    Tsuki, 2026-09-16); the pin never caught a defect and went red on every
+    unrelated change. The api.py/engine.py halves were re-pinned to the
+    previous head every round - those two files are where each round's work
+    legitimately lands, and their behaviour is covered by the behaviour
+    probes. The pins this probe is named for are untouched: the CLI, the
+    engine's data sources, the airports CSV and the goldens are still
+    byte-identical to the map round's base."""
     paths = ["src/main.py", "src/formatter.py", "src/seats_client.py", "src/optimizer.py",
              "src/live_trip.py", "src/trip_builder.py", "src/regions.py",
              "src/ui/serialize.py", "data/airports.csv",
              "tests/fixtures/cli_golden", "tests/test_cli_golden.py"]
     out = git("diff", f"{BASE}..HEAD", "--stat", "--", *paths)
     assert out.strip() == "", out
-    out = git("diff", "ecab878..HEAD", "--stat", "--", "src/ui/api.py", "src/ui/engine.py")
-    assert out.strip() == "", out
-    out = git("diff", "d6be134..HEAD", "--stat", "--", "src/ui/api.py")
-    assert out.strip() == "", out
 
 
 def test_A7_the_parity_suite_and_goldens_are_untouched():
-    """Re-based at dad93cb (search->trip round, docs/plans/search-to-trip.md 6
-    step 7: H1/E5/J6 re-pinned by the tester in dad93cb, the only edit to the
-    restyle tree since 7a8310c - test_r_g_fonts_security_docs.py and
-    test_r_e_keychip.py, nothing under ui-probes). A pin, not a regression.
-    Earlier: re-based at 7a8310c: the goldens are untouched since the base; the
-    two older probe trees have had exactly two edits, both the tester's own:
-    be0d27b (the pin refresh - P22/P22b, E5, H1, H2, J6, C2, each a
-    plan-invalidated pin, see the report's round-3 section) and 7a8310c
-    (J6 re-pinned for the round-4 .catch hunk). Nothing else, by anyone."""
+    """Converted from a byte/line pin to a behaviour assertion (agreed with
+    Tsuki, 2026-09-16); the pin never caught a defect and went red on every
+    unrelated change. The "the other probe trees are unchanged since <commit>"
+    half pinned the tester's own future commits: every later pin refresh in
+    ui-probes or ui-restyle-probes turned this probe red and had to be re-based
+    by hand, and it can never catch a product defect because no product change
+    touches those paths. It is gone. The goldens half - the real rule, that the
+    CLI's recorded output is untouched since the map round's base - stays."""
     out = git("diff", f"{BASE}..HEAD", "--stat", "--", "tests/fixtures/cli_golden")
     assert out.strip() == "", out
-    out = git("diff", "dad93cb..HEAD", "--stat", "--", "docs/test-reports/ui-probes",
-              "docs/test-reports/ui-restyle-probes")
-    assert out.strip() == "", out
-    out = git("diff", "7a8310c..dad93cb", "--name-only", "--", "docs/test-reports/ui-probes",
-              "docs/test-reports/ui-restyle-probes")
-    assert sorted(out.split()) == ["docs/test-reports/ui-restyle-probes/test_r_e_keychip.py",
-                                   "docs/test-reports/ui-restyle-probes/test_r_g_fonts_security_docs.py"], out
-    out = git("diff", "be0d27b..7a8310c", "--name-only", "--", "docs/test-reports/ui-probes",
-              "docs/test-reports/ui-restyle-probes")
-    assert out.split() == ["docs/test-reports/ui-restyle-probes/test_r_g_fonts_security_docs.py"], out
-    out = git("diff", f"{BASE}..be0d27b", "--name-only", "--", "docs/test-reports/ui-probes",
-              "docs/test-reports/ui-restyle-probes")
-    assert sorted(out.split()) == [
-        "docs/test-reports/ui-probes/test_ui_p_mac.py",
-        "docs/test-reports/ui-restyle-probes/test_r_c_colour.py",
-        "docs/test-reports/ui-restyle-probes/test_r_e_keychip.py",
-        "docs/test-reports/ui-restyle-probes/test_r_g_fonts_security_docs.py"], out
     assert len(list((ROOT / "tests" / "fixtures" / "cli_golden").glob("G*.txt"))) == 14
 
 

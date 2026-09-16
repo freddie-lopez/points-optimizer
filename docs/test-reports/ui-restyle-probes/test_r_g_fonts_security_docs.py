@@ -24,6 +24,44 @@ def git(*args):
     return subprocess.run(["git", *args], cwd=str(ROOT), capture_output=True, text=True).stdout
 
 
+def testids(src):
+    """Every data-testid app.js actually registers or looks up.
+
+    Not "any quoted lowercase token": the helpers are `tid(node, "id")` and
+    `btn(cls, text, fn, "id")`, so the argument lists are bracket-matched and
+    only the testid position is read, plus `setAttribute("data-testid", ...)`,
+    `[data-testid="..."]` selectors and the `testid:`/`goid:` keys.
+    """
+    ids = set()
+    for m in re.finditer(r"\b(tid|btn)\(", src):
+        name, i, depth, args, cur = m.group(1), m.end(), 1, [], ""
+        while i < len(src) and depth > 0:
+            c = src[i]
+            if c in "\"'":
+                j = i + 1
+                while j < len(src) and src[j] != c:
+                    j += 2 if src[j] == "\\" else 1
+                cur += src[i:j + 1]; i = j + 1; continue
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                depth -= 1
+                if depth == 0:
+                    break
+            if c == "," and depth == 1:
+                args.append(cur); cur = ""; i += 1; continue
+            cur += c; i += 1
+        args.append(cur)
+        pick = args[-1] if name == "tid" else (args[3] if len(args) > 3 else "")
+        m2 = re.fullmatch(r'"([a-z0-9][a-z0-9-]*)"', pick.strip())
+        if m2:
+            ids.add(m2.group(1))
+    ids |= set(re.findall(r'setAttribute\(\s*"data-testid"\s*,\s*"([a-z0-9][a-z0-9-]*)"', src))
+    ids |= set(re.findall(r'\[data-testid="([a-z0-9][a-z0-9-]*)"\]', src))
+    ids |= set(re.findall(r'\b(?:testid|goid):\s*"([a-z0-9][a-z0-9-]*)"', src))
+    return ids
+
+
 # ------------------------------------------------------------------- G fonts
 
 
@@ -77,19 +115,15 @@ def test_G2_the_only_offsite_request_is_the_google_fonts_stylesheet_and_it_is_th
 
 
 def test_H1_server_and_csp_are_byte_identical_to_the_base():
-    """Re-pinned again at ecab878 (search->trip fix round 1, F1: engine.py's
-    `_deletable_or_404`; docs/test-reports/search-to-trip.md "Re-test"):
-    api.py/engine.py pinned to ecab878. A pin, not a regression. Earlier:
-    Re-pinned by the tester at d6be134 (search->trip round, plan
-    docs/plans/search-to-trip.md 6 step 7, which names this pin): api.py and
-    engine.py now carry that round's two POST routes and the delete engine
-    (4.2/4.3) and are pinned to the coder's head d6be134 instead of the
-    restyle base; serialize.py, main.py and formatter.py are still the bytes
-    of 386b2fc; server.py is still the bytes of 16f53b7 and the CSP is
-    byte-identical to the base. A pin, not a regression."""
+    """Converted from a byte/line pin to a behaviour assertion (agreed with
+    Tsuki, 2026-09-16); the pin never caught a defect and went red on every
+    unrelated change. The api.py/engine.py halves were re-pinned to whatever
+    the previous head happened to be, every round, because those two files are
+    where each round's work legitimately lands; their behaviour is covered by
+    the behaviour probes. What this probe is named for stays exactly as it
+    was: server.py byte-identical to 16f53b7, the CSP literal byte-identical
+    to the base, and serialize.py/main.py/formatter.py the bytes of 386b2fc."""
     assert git("diff", "386b2fc..HEAD", "--", "src/ui/serialize.py", "src/main.py", "src/formatter.py") == ""
-    assert git("diff", "ecab878..HEAD", "--", "src/ui/api.py", "src/ui/engine.py") == ""
-    assert git("diff", "d6be134..HEAD", "--", "src/ui/api.py") == ""
     assert git("diff", "16f53b7..HEAD", "--", "src/ui/server.py") == ""
     server = (ROOT / "src" / "ui" / "server.py").read_text(encoding="utf-8")
     base = git("show", "386b2fc:src/ui/server.py")
@@ -149,15 +183,17 @@ def test_H6_the_static_rules_and_security_suites_are_green():
 
 
 def test_H7_the_testids_of_the_base_commit_all_survive():
-    """Re-pinned by the tester at ecab878 (search->trip fix round 1): the one
-    base literal this regex no longer finds is `"2400"`, the cash field's
-    placeholder - never a testid - removed on the tester's observation (b)
-    (docs/test-reports/search-to-trip.md "Re-test"). A pin, not a regression:
-    every real testid of the base survives."""
-    old = set(re.findall(r'"([a-z0-9-]+)"\)', git("show", "386b2fc:src/ui/static/app.js")))
+    """Converted from a byte/line pin to a behaviour assertion (agreed with
+    Tsuki, 2026-09-16); the pin never caught a defect and went red on every
+    unrelated change. `old - new == {"2400"}` read any quoted lowercase token
+    as a testid, so a removed placeholder looked exactly like a lost testid
+    and the literal had to be re-pinned by hand. The rule stands unweakened:
+    every testid the base actually registers still exists."""
+    old = testids(git("show", "386b2fc:src/ui/static/app.js"))
     old |= set(re.findall(r'data-testid="([^"]+)"', git("show", "386b2fc:src/ui/static/index.html")))
-    new = set(re.findall(r'"([a-z0-9-]+)"\)', JS)) | set(re.findall(r'data-testid="([^"]+)"', HTML))
-    assert old - new == {"2400"}, old - new
+    new = testids(JS) | set(re.findall(r'data-testid="([^"]+)"', HTML))
+    assert old, "the extractor found no testid in the base - it is broken, not the code"
+    assert old - new == set(), f"testids of the base that no longer exist: {sorted(old - new)}"
     assert 'placeholder = "2400"' not in JS and '"2400"' not in JS
 
 
@@ -273,28 +309,32 @@ def test_J5_plan_compliance_greps():
 
 
 def test_J6_app_js_diff_is_exactly_the_three_enumerated_edits():
-    """Re-pinned again at ecab878 (search->trip fix round 1, F3/F4/C5 and the
-    placeholder: 22 hunks and the `fix_allowed` strings, the coder report's
-    "app.js diff since 622d914" list, checked against the diff by
-    search-to-trip-probes E5b). A pin, not a regression. Earlier:
-    Re-pinned by the tester at d6be134 (search->trip round): the 56742af..HEAD
-    half now counts 17 hunks and allows that round's enumerated strings (see
-    the second allowlist below; docs/plans/search-to-trip.md 6 step 7). A
-    pin, not a regression. The earlier history:
-    The restyle's own diff (386b2fc..56742af, 6 hunks) is unchanged; on top
-    of it the map round added its enumerated edits (docs/plans/map-search.md
-    4.7). Re-pinned by the tester at 91081c9: the strings the map round added
-    are the plan's 4.9 sentences (#9, #10, #13, #17, #18, the map.js-not-
-    loaded reason), its testids, class names, DOM/ARIA tokens and the strings
-    the restructured renderSearch re-emits verbatim. A pin, not a regression.
-    Re-pinned again at c68e3eb: coder fix round 4 (c5c52fb) added one hunk -
-    ensureMap's .catch, which shows string #2 with the error's message when
-    mount() throws (manager should-fix; plan 4.9 #2 / 8) - and its three
-    strings; git now groups the map round's diff into 7 hunks."""
+    """Converted from a byte/line pin to a behaviour assertion (agreed with
+    Tsuki, 2026-09-16); the pin never caught a defect and went red on every
+    unrelated change. The two hunk counts (6 for the restyle's own diff, 22
+    for everything since) had to be re-pinned by hand every round - git
+    regroups hunks when a line moves - and never found anything the rules
+    below did not. What the pin was guarding is asserted directly now: no
+    banned construct appears in app.js, no data-testid of the base has been
+    lost, and every string literal on an added line is still inside the
+    enumerated allow-lists (the restyle's, the map round's 4.9 and the
+    search->trip round's 4.4/4.5). "String on an added line" now means a
+    literal that is genuinely NEW to app.js, not one a moved line re-emits:
+    the left side of each range is subtracted, so re-indenting or moving an
+    existing line cannot make the page look like it started saying something
+    new. That is the rule; the allow-lists themselves are untouched."""
+    for banned in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(",
+                   "cssText", 'setAttribute("style"', "javascript:"):
+        assert banned not in JS, banned
+    base_js = git("show", "386b2fc:src/ui/static/app.js")
+    old = testids(base_js) | set(re.findall(r'data-testid="([^"]+)"', git("show", "386b2fc:src/ui/static/index.html")))
+    new = testids(JS) | set(re.findall(r'data-testid="([^"]+)"', HTML))
+    assert old, "the extractor found no testid in the base - it is broken, not the code"
+    assert old - new == set(), f"testids of the base that no longer exist: {sorted(old - new)}"
+    lits = lambda s: set(re.findall(r'"([^"]*)"', s))
     d = git("diff", "386b2fc..56742af", "--", "src/ui/static/app.js")
-    assert d.count("\n@@") == 6, d.count("\n@@")
     added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
-    strings = set(re.findall(r'"([^"]*)"', "\n".join(added)))
+    strings = set(re.findall(r'"([^"]*)"', "\n".join(added))) - lits(base_js)
     allowed = {"key-source", "", "keysrc", "key: not found", "keysrc warn", "trow-broken",
                "trow-search", "trow-trip", "div", "span", "runrow", "runacts", "note", " ", "run-busy",
                # fix E1: the base's three key lines, re-split, plus the source suffix
@@ -304,9 +344,8 @@ def test_J6_app_js_diff_is_exactly_the_three_enumerated_edits():
                "replay", "(source: X)"}  # `run.mode === "replay"` and the comment
     assert strings <= allowed, strings - allowed
     d = git("diff", "56742af..HEAD", "--", "src/ui/static/app.js")
-    assert d.count("\n@@") == 22, d.count("\n@@")   # 7 (map) + 14 (search->trip) + fix round 1, as git groups them at ecab878
     added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
-    strings = set(re.findall(r'"([^"]*)"', "\n".join(added)))
+    strings = set(re.findall(r'"([^"]*)"', "\n".join(added))) - lits(git("show", "56742af:src/ui/static/app.js"))
     map_allowed = {
         # plan 4.9 #9, #10, #13, #17, #18 and 8's map.js-not-loaded reason
         "Where are you flying?", "Type an airport or city, or pick it on the map.", "Type an airport or city.",

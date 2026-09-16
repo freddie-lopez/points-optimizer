@@ -136,26 +136,18 @@ def test_E4_the_chip_is_hidden_before_state_arrives_and_never_says_key_ellipsis(
 
 
 def test_E5_api_state_key_shape_is_byte_identical_to_the_base_commit():
-    """Re-pinned again at ecab878 (search->trip fix round 1, F1 in engine.py;
-    api.py still d6be134's bytes). A pin, not a regression: state() and
-    calls_state() are still the base's bytes, asserted below. Earlier:
-    Re-pinned by the tester at d6be134 (search->trip round; the plan
-    docs/plans/search-to-trip.md 6 step 7 names H1, and this is the same pin
-    under another name). engine.py and api.py now carry that round's delete
-    routes and are pinned to the coder's head d6be134; serialize.py is still
-    byte-identical to the restyle base 386b2fc; server.py changed once, in
-    16f53b7, and not since. A pin, not a regression: /api/state's key shape
-    is untouched - `Engine.state()` and `calls_state()` are the bytes of the
-    base, asserted below. Earlier: re-pinned at 91081c9 (map-search round)."""
+    """Converted from a byte/line pin to a behaviour assertion (agreed with
+    Tsuki, 2026-09-16); the pin never caught a defect and went red on every
+    unrelated change. api.py and engine.py are edited by design every round
+    (this round's delete routes, the next round's whatever), so pinning their
+    bytes to the previous head only bought a re-pin each time; what this probe
+    is actually for - /api/state's key shape - is asserted directly at the
+    bottom, where `Engine.state()` and `calls_state()` must still be the
+    restyle base's bytes. The genuine pins stay: serialize.py byte-identical
+    to 386b2fc, server.py byte-identical to 16f53b7 (its only change)."""
     import re
     import subprocess
     d = subprocess.run(["git", "diff", "386b2fc..HEAD", "--", "src/ui/serialize.py"], cwd=str(ROOT),
-                       capture_output=True, text=True)
-    assert d.stdout == "", d.stdout[:500]
-    d = subprocess.run(["git", "diff", "ecab878..HEAD", "--", "src/ui/engine.py", "src/ui/api.py"], cwd=str(ROOT),
-                       capture_output=True, text=True)
-    assert d.stdout == "", d.stdout[:500]
-    d = subprocess.run(["git", "diff", "d6be134..HEAD", "--", "src/ui/api.py"], cwd=str(ROOT),
                        capture_output=True, text=True)
     assert d.stdout == "", d.stdout[:500]
     d = subprocess.run(["git", "diff", "16f53b7..HEAD", "--", "src/ui/server.py"], cwd=str(ROOT),

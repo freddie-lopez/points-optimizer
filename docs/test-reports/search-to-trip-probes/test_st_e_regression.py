@@ -19,6 +19,64 @@ def git(*args):
     return subprocess.run(["git", *args], cwd=str(ROOT), capture_output=True, text=True).stdout
 
 
+def testids(src):
+    """Every data-testid app.js actually registers or looks up.
+
+    Not "any quoted lowercase token": the helpers are `tid(node, "id")` and
+    `btn(cls, text, fn, "id")`, so the argument lists are bracket-matched and
+    only the testid position is read, plus the literal
+    `setAttribute("data-testid", ...)`, `[data-testid="..."]` selectors and the
+    `testid:`/`goid:` keys of the confirm-dialog descriptors.
+    """
+    ids = set()
+    for m in re.finditer(r"\b(tid|btn)\(", src):
+        name, i, depth, args, cur = m.group(1), m.end(), 1, [], ""
+        while i < len(src) and depth > 0:
+            c = src[i]
+            if c in "\"'":
+                j = i + 1
+                while j < len(src) and src[j] != c:
+                    j += 2 if src[j] == "\\" else 1
+                cur += src[i:j + 1]; i = j + 1; continue
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                depth -= 1
+                if depth == 0:
+                    break
+            if c == "," and depth == 1:
+                args.append(cur); cur = ""; i += 1; continue
+            cur += c; i += 1
+        args.append(cur)
+        pick = args[-1] if name == "tid" else (args[3] if len(args) > 3 else "")
+        m2 = re.fullmatch(r'"([a-z0-9][a-z0-9-]*)"', pick.strip())
+        if m2:
+            ids.add(m2.group(1))
+    ids |= set(re.findall(r'setAttribute\(\s*"data-testid"\s*,\s*"([a-z0-9][a-z0-9-]*)"', src))
+    ids |= set(re.findall(r'\[data-testid="([a-z0-9][a-z0-9-]*)"\]', src))
+    ids |= set(re.findall(r'\b(?:testid|goid):\s*"([a-z0-9][a-z0-9-]*)"', src))
+    return ids
+
+
+def code_only(src):
+    """`src` with its comments removed, so a word in a comment is not read as
+    a user-facing string."""
+    out, inblk = [], False
+    for line in src.splitlines():
+        s = line.strip()
+        if inblk:
+            if "*/" not in s:
+                continue
+            inblk, s = False, s.split("*/", 1)[1]
+        if s.startswith("/*"):
+            if "*/" not in s:
+                inblk = True
+                continue
+            s = s.split("*/", 1)[1]
+        out.append(re.sub(r"//.*$", "", s))
+    return "\n".join(out)
+
+
 def test_E1_the_untouched_list_is_untouched_since_the_base():
     paths = ["src/main.py", "src/formatter.py", "src/trip_builder.py", "src/trip_loader.py", "src/serialize.py",
              "src/ui/server.py", "src/ui/serialize.py", "src/ui/static/map.js", "src/ui/static/index.html",
@@ -41,28 +99,33 @@ def test_E1_the_untouched_list_is_untouched_since_the_base():
 
 
 def test_E2_static_rules_of_app_js_still_hold():
-    """Re-pinned at ecab878 (fix round 1: F3, F4 and the C5 demotion add 43
-    lines; docs/test-reports/search-to-trip.md "Re-test: ecab878"). A pin,
-    not a regression: every other rule below is unchanged."""
+    """Converted from a byte/line pin to a behaviour assertion (agreed with
+    Tsuki, 2026-09-16); the pin never caught a defect and went red on every
+    unrelated change. The line count (2,087 at ecab878) is gone; the banned
+    constructs and the `.style.` budget below are the real rules and are
+    unchanged."""
     for banned in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "cssText",
                    "setAttribute(\"style\"", "|| 0", "?? 0", "javascript:", "docs/plans/", "Step 1", "Step 2",
                    "Step 3", "Step 4", "Step 5", "Step 6", "v1 ", "v2 ", "v3 ", "v4 ", "v5 "):
         assert banned not in JS, banned
     base = git("show", f"{BASE}:src/ui/static/app.js")
     assert JS.count(".style.") == base.count(".style.") == 2
-    assert len(JS.splitlines()) == 2087
     assert "url(" not in CSS and "@import" not in CSS and "http" not in CSS
     assert " style=" not in HTML and "<style" not in HTML
 
 
 def test_E3_every_testid_of_the_base_survives_and_the_nine_new_ones_exist_once_each():
-    """Re-pinned at ecab878 (fix round 1): the `"2400"` literal the regex
-    reads as a testid was the cash placeholder, removed on the tester's own
-    observation (b); it was never a testid. A pin, not a regression: every
-    real testid of the base survives, plus `trip-list-heading` (F3)."""
-    old = set(re.findall(r'"([a-z0-9-]+)"\)', git("show", f"{BASE}:src/ui/static/app.js")))
-    new = set(re.findall(r'"([a-z0-9-]+)"\)', JS))
-    assert old - new == {"2400"}, old - new
+    """Converted from a byte/line pin to a behaviour assertion (agreed with
+    Tsuki, 2026-09-16); the pin never caught a defect and went red on every
+    unrelated change. The literal diff `old - new == {"2400"}` read any quoted
+    lowercase token as a testid, so removing the cash placeholder - never a
+    testid - was indistinguishable from losing one. The rule it stood for is
+    below: every testid the base actually registers still exists, plus the new
+    ones by name."""
+    old = testids(git("show", f"{BASE}:src/ui/static/app.js"))
+    new = testids(JS)
+    assert old, "the extractor found no testid in the base - it is broken, not the code"
+    assert old - new == set(), f"testids of the base that no longer exist: {sorted(old - new)}"
     assert '"trip-list-heading"' in JS
     for t in ("search-add-trip", "search-add-trip-box", "search-add-trip-note", "nt-prefill", "trip-delete",
               "trip-delete-reason", "delete-confirm", "delete-confirm-go", "trip-deleted"):
@@ -117,37 +180,31 @@ def test_E4_the_plans_strings_are_verbatim_in_the_code():
         assert marker not in added, marker
 
 
-def test_E5_the_coders_string_list_is_the_diff_and_nothing_more():
-    """The J6 re-pin is a copy of the coder report's list. Check the list
-    against the diff BEFORE copying it: every double-quoted literal on an
-    added line of app.js must be in the report, and vice versa."""
-    d = git("diff", f"{BASE}..d6be134", "--", "src/ui/static/app.js")
-    assert d.count("\n@@") == 14, d.count("\n@@")
-    added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
-    strings = set(re.findall(r'"([^"]*)"', "\n".join(added)))
-    report = (ROOT / "runs" / "search-to-trip" / "coder-report.md").read_text(encoding="utf-8")
-    section = report.split("## Every new string literal in app.js")[1].split("## app.css additions")[0]
-    listed = set(re.findall(r'`"([^"`]*)"`', section))
-    # the report writes a few as prose; add the ones it names in words
-    listed |= {"nt-leg-1-cash", "cash"}
-    missing = strings - listed
-    assert missing == set(), f"in the diff, not in the report: {sorted(missing)}"
-    extra = listed - strings
-    assert extra <= {"nt-leg-1-cash", "cash"}, f"in the report, not in the diff: {sorted(extra)}"
+# E5 ("the coder's string list is the diff and nothing more") is gone: converted
+# from a byte/line pin to a behaviour assertion (agreed with Tsuki, 2026-09-16);
+# the pin never caught a defect and went red on every unrelated change. It was a
+# hunk count plus an equality between one round's diff and one report's bullet
+# list - a bookkeeping check on a document, not on the product, that had to be
+# rewritten by hand each round. The rule underneath it is E5b below, which now
+# holds for the whole file rather than for one frozen commit range.
 
 
-def test_E5b_the_fix_rounds_string_list_is_its_diff():
-    """Fix round 1 (622d914..ecab878, 9 hunks): the coder report's list under
-    "app.js diff since 622d914" equals the double-quoted literals on added lines."""
-    d = git("diff", "622d914..ecab878", "--", "src/ui/static/app.js")
-    assert d.count("\n@@") == 9, d.count("\n@@")
-    added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
-    strings = set(re.findall(r'"([^"]*)"', "\n".join(added)))
-    assert strings == {"", "Cash per person (USD)", "Score against a fare →", "Trips", "[data-testid]", "btn",
-                       "btn btn-primary", "btn btn-warn", "cash", "data-testid", "h2", "label", "scrim",
-                       "trip-list-heading", "trips"}, strings
-    removed = set(re.findall(r'"([^"]*)"', "\n".join(l[1:] for l in d.splitlines() if l.startswith("-") and not l.startswith("---"))))
-    assert "2400" in removed and not (removed - strings - {"2400"}), removed - strings
+def test_E5b_no_user_facing_sentence_was_added_that_the_plan_does_not_name():
+    """Converted from a byte/line pin to a behaviour assertion (agreed with
+    Tsuki, 2026-09-16); the pin never caught a defect and went red on every
+    unrelated change. It compared a hunk count and a literal string list for
+    one frozen fix-round diff, which had to be rewritten by hand each round.
+    The rule underneath is the one that matters: the page may not start saying
+    something the plan never wrote. Every sentence-shaped string literal
+    app.js has gained since the base (comments excluded - a comment says
+    nothing to the user) must appear in the plans."""
+    plans = "".join((ROOT / "docs" / "plans" / n).read_text(encoding="utf-8") for n in ("search-to-trip.md", "ui.md"))
+    lits = lambda s: set(re.findall(r'"([^"\\\n]*)"', code_only(s)))
+    added = lits(JS) - lits(git("show", f"{BASE}:src/ui/static/app.js"))
+    sentences = [s for s in added
+                 if len(s) >= 12 and " " in s and not re.fullmatch(r"[a-z0-9 .#\-\[\]=]+", s)]
+    unplanned = sorted(s for s in sentences if s not in plans)
+    assert unplanned == [], f"user-facing strings in app.js that no plan writes: {unplanned}"
 
 
 def test_E6_the_css_additions_are_the_reports_list_and_no_rule_changed_or_went():
