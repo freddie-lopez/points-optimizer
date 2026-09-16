@@ -360,3 +360,31 @@ fails only on its own line 254 `assert where == "BODY:null"` - the assertion tha
 defect, which I have not edited (the tester's file, the tester's call). Everything else green:
 `search-to-trip-probes` 175 passed / 1 failed (that line only), full suite `-O` 3892 passed /
 13 skipped.
+
+## Fix round 3 (manager review ef42d2e)
+
+**f8b9149 - docs/plans/ui.md §4.7 reverted.** The `**Tokens**` sentence and the
+`.btn-primary` list are byte-identical to `4f879d4` again ("the ONE primary action …
+Run, Run search, Spend up to N calls, Write, Apply, Score against a fare"). My rewrite of
+it to "one primary per surface", with `Add as trip` moved into the list, was a coder
+editing a plan in a fix round to make its own class choice legal, which is the Architect's
+call, not mine; the standing rule now is to flag it in this report instead. The §4.5 route
+rows and the §4.8 additions stay - those describe what this round built, as
+docs/plans/search-to-trip.md 6 step 7 asked.
+
+**f32b2d8 - `Add as trip` is a ghost `.btn`.** `Run search` spends the calls and is the
+search surface's one primary; `Add as trip` only opens the prefilled form, so it takes the
+same ghost form as the drawer's `Score against a fare`. The page moves to fit the plan
+rather than the bar moving. Visible `.btn-primary` on the results screen - picked or not,
+drawer open or closed - is now `search-run` alone.
+
+**For the tester, not edited by me:** `test_st_f_retest.py::test_F5_no_cash_placeholder_and_one_coral_per_surface`
+pins `Add as trip` as coral (lines 357, 359, 363: `assert prim() == ["search-run",
+"search-add-trip"]`, "the disabled Add as trip is coral too (C5 counts it)"). It records
+exactly the state this round reverses, so it is red on those three lines and nothing else.
+Everything else that probe checks - the empty cash placeholder, the other placeholders, the
+P5 hint, no `2400` - is green, as is `drawer-to-trip` being `btn`.
+
+**Counts:** `ui-restyle-probes` 285 passed / 1 failed (**C5[search_ok] now green**; E3 the
+key-chip race, documented, is the only red) · `search-to-trip-probes` 177 passed / 1 failed
+(the coral pin above; not 178/0 for that reason) · full suite `-O` 3892 passed / 13 skipped.
