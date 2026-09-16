@@ -489,3 +489,57 @@ C5's bar (a manager decision, not a defect I can pin), the spend dialog's focus 
 and after a refused Go (F3b/F3c, out of the delete round's scope - and F6 above is the same
 family, so the run page's focus story is now three notes long), and the raced
 `GET /api/trips/{id}` answering 422 `cannot_load` rather than 404 (not a delete route).
+
+## Final: 3232e95
+
+Coder fix round 3, one commit: **3232e95** - F6. `sendRun`'s non-200 branch now carries the
+same guard as the 200 branch (`if (S.view !== "new-trip") { renderTrips(); }`) plus a
+four-line comment. One line of product code; nothing else in `src/` moved.
+
+**F6: fixed.** A refused run no longer rebuilds the open new-trip form, so the caret stays
+where the user left it. The refusal is still said - `showBanner` runs before the guard and
+the banner lives in the shell, not in the re-rendered view - and nothing on the new-trip
+view follows `S.busy` (the only three readers are `trip-delete`, `run-go` and `run-busy`,
+all on the trip detail), so there is nothing the skipped re-render was needed for.
+
+`test_st_g_f5.py::test_G5` now ASSERTS the fixed behaviour instead of recording the old
+one: focus is still in `nt-leg-1-destination` after the 409, the banner is visible and
+says the engine's own busy sentence verbatim, and everything G5 already checked (hash,
+the four typed values, `S.nt` after leaving and re-entering by hash, no chip because
+nothing ran) is unchanged.
+
+Two new probes attack the fix:
+
+| id | attack | result |
+|---|---|---|
+| **G8** | a real refusal with the caret in **each of the seven fields** in turn - `nt-name`, `nt-cabin`, `nt-leg-1-origin`, `-destination`, `-date`, `-cabin`, `-cash`, the two `<select>`s included - against a form with a FULL leg typed | green: seven refusals, the caret stays in the field every time, all seven values re-checked after each one, the banner right each time, and nothing ever ran (no chip) |
+| **G9** | two refusals in a row with more typed in between; then, with the banner on screen, typing and changing a select in place | green: caret and values kept both times; and with the banner up the form still takes input without moving the caret or losing the banner; Preview afterwards still answers with the builder's own inline refusals for the half-typed leg, so the form is live, not frozen |
+
+One behaviour G9 pins in passing, which is correct and worth writing down: `onHash` calls
+`hideBanner()` on every hash change, so the banner from refusal 1 is cleared on the way
+back to the trip page to start refusal 2. Every route into the new-trip form is a hash
+change (`+ New trip` calls `go("#new-trip")`, and `go()` runs `onHash` even when the hash
+is unchanged), so a refusal always lands on a hidden banner and raises it itself. "A
+refusal arriving while a banner is already showing" is therefore not reachable in this
+app; the closest real thing - the user typing into the form while the refusal's banner is
+up - is what G9 exercises instead.
+
+Counter-check that the three probes measure the fix: with `3ffea9b`'s `app.js` restored in
+a detached scratch worktree, **G5, G8 and G9 all go red** and the other six stay green.
+
+No new finding. F6 was the last open item of this round's own findings; what remains open
+is unchanged from the section above (C5's bar - a manager call; the spend dialog's focus
+after Go and after a refused Go, F3b/F3c, a run-page question; and the raced
+`GET /api/trips/{id}` answering 422 `cannot_load` rather than 404, not a delete route).
+
+### Counts at 3232e95
+
+| Suite | Command | Result |
+|---|---|---|
+| full suite `-O` | `python3 -O -m pytest -q -p no:cacheprovider` | **3892 passed, 13 skipped** (179 s) |
+| search-to-trip-probes (mine) | `-O -p no:randomly docs/test-reports/search-to-trip-probes` | **178 passed, 0 failed** (370 s) - G8 and G9 are the two new ones |
+
+The other three trees were not re-run at this head and do not need to be: the commit
+touches `app.js` only, inside `sendRun`'s error branch. Their counts at 23eba49 stand -
+ui-probes 664/0, ui-restyle 284/2/10 (`C5[search_ok]`, `E3` - baseline), map-search 160/1
+(`F6` the map probe, unrelated to this round's F6 - baseline).

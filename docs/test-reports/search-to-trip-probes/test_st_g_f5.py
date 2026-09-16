@@ -8,7 +8,9 @@ opened after the run started, the form reached through the Search tab, a full
 leg typed before the run was even started, two runs in sequence, a run that is
 REFUSED with a non-200 (409 BUSY, the engine's own run-slot refusal) and a run
 that is REFUSED by the wallet (exit 2, a 200 the page must still not navigate
-on). Each asserts the same four things:
+on). G8/G9 then attack the F6 fix (3232e95), which put the same guard on the
+non-200 branch so a refusal no longer rebuilds the form under the caret.
+Each asserts the same four things:
 
   * the hash is still `#new-trip`;
   * the typed values are still in the inputs;
@@ -25,9 +27,12 @@ waited for on the response itself (`expect_response`), not on a sleep.
 """
 import json
 
-from conftest import (go_trip, nt_values, patched_page, q, run_search, st_server, text)  # noqa: F401
+from conftest import (go_trip, nt_errors, nt_values, patched_page, preview, q, run_search, st_server,
+                      text)  # noqa: F401
 
 UI = "sfo-mad-2027-01-15"
+BUSY_BANNER = ("Another run is in progress. One run at a time: the call counter and "
+               "caches are shared.")
 RUN_URL = f"/api/trips/{UI}/run"
 
 
@@ -37,6 +42,11 @@ def _hash(pg):
 
 def _focused(pg):
     return pg.evaluate("() => document.activeElement.getAttribute('data-testid')")
+
+
+def _where(pg):
+    return pg.evaluate("() => document.activeElement.tagName + ':' + "
+                       "document.activeElement.getAttribute('data-testid')")
 
 
 def _goto(pg, hash_):
@@ -224,10 +234,11 @@ def test_G4_two_runs_in_sequence_while_the_form_is_open(browser):
 def test_G5_a_run_refused_with_a_non_200_while_the_form_is_open(browser):
     """The engine's own run-slot refusal: the slow run sleeps first and takes
     the lock after, so holding the lock from stdin turns THIS run into a real
-    409 `busy` while the user is typing. The non-200 branch of `sendRun` calls
-    `renderTrips()` unconditionally, which on the new-trip view rebuilds the
-    form from S.nt - so the values must survive; where FOCUS goes is recorded
-    below."""
+    409 `busy` while the user is typing. The non-200 branch of `sendRun` used
+    to call `renderTrips()` unconditionally, which on the new-trip view
+    rebuilt the form from S.nt: the values survived, the caret did not (F6).
+    Fixed at 3232e95 with `if (S.view !== "new-trip") { renderTrips(); }`,
+    mirroring the 200 branch - so focus is ASSERTED here now, not recorded."""
     with st_server("slow_run") as srv:
         with patched_page(browser, srv.port) as pg:
             go_trip(pg, UI)
@@ -244,14 +255,11 @@ def test_G5_a_run_refused_with_a_non_200_while_the_form_is_open(browser):
             pg.wait_for_timeout(700)
             assert _hash(pg) == "#new-trip", _hash(pg)
             _assert_form(pg, want)
-            where = pg.evaluate("() => document.activeElement.tagName + ':' + "
-                                "document.activeElement.getAttribute('data-testid')")
-            print("NON-200 ON THE FORM: banner", repr(text(pg, q("banner-error"))), "focus", where)
-            # RECORDED, not a red: the values survive, the caret does not. The
-            # non-200 branch re-renders unconditionally, so on the new-trip view
-            # the form is rebuilt from S.nt and focus falls to <body>. The 200
-            # branch does not re-render the form and keeps focus (G1, G6).
-            assert where == "BODY:null", where
+            # F6 fixed: the caret is where the user left it, as on the 200
+            # path (G1, G6) - and the refusal is still SAID, in the banner.
+            assert _where(pg) == "INPUT:nt-leg-1-destination", _where(pg)
+            assert text(pg, q("banner-error")) == BUSY_BANNER, repr(text(pg, q("banner-error")))
+            assert pg.evaluate("() => document.querySelector('[data-testid=banner-error]').hidden") is False
             _goto(pg, "#trips/" + UI)
             _goto(pg, "#new-trip")
             _assert_form(pg, want)
@@ -338,4 +346,119 @@ def test_G7_on_the_trips_view_a_finished_run_still_lands_on_its_result(browser):
             pg.wait_for_timeout(700)
             assert _hash(pg) == "#search", _hash(pg)
             assert pg.evaluate("() => document.querySelectorAll('td.cab.sel').length") == 1
+            assert pg.facts["errors"] == []
+
+
+# ------------------------- 8/9. the F6 fix (3232e95) under attack
+
+
+def _refuse_a_run(pg, srv, focus_testid, then=None):
+    """One REAL refusal while the new-trip form is open, with the caret in
+    `focus_testid`: leave the form by hash (S.nt intact), start the slow run,
+    take the engine's run slot from stdin so the run is refused when it asks
+    for it, come back to the form by hash, put the caret where the user would
+    have it, and wait for the 409 to land."""
+    _goto(pg, "#trips/" + UI)
+    pg.wait_for_selector(q("run-go"), timeout=10000)
+    with _run_finished(pg) as ri:
+        _start_run(pg)
+        assert srv.cmd("lock")["locked"] is True
+        _goto(pg, "#new-trip")
+        pg.wait_for_selector(q("nt-name"), timeout=10000)
+        if then is not None:
+            then()
+        pg.focus(q(focus_testid))
+    res = ri.value
+    srv.cmd("unlock")
+    assert res.status == 409 and json.loads(res.text())["error"] == "busy", res.status
+    pg.wait_for_timeout(700)
+
+
+FIELDS = ["nt-name", "nt-cabin", "nt-leg-1-origin", "nt-leg-1-destination",
+          "nt-leg-1-date", "nt-leg-1-cabin", "nt-leg-1-cash"]
+
+
+def test_G8_a_refused_run_keeps_the_caret_in_every_field_of_the_form(browser):
+    """Every field of the form in turn - the two selects included - takes a
+    refusal with the caret in it. The values are re-checked each time, so a
+    fix that kept focus by not re-rendering at all would still have to keep
+    the form correct."""
+    with st_server("slow_run") as srv:
+        with patched_page(browser, srv.port) as pg:
+            go_trip(pg, UI)
+            pg.click(q("new-trip"))
+            pg.wait_for_selector(q("nt-name"), timeout=10000)
+            want = _type_full_leg(pg, name="caret-per-field")
+            for field in FIELDS:
+                _refuse_a_run(pg, srv, field)
+                assert _hash(pg) == "#new-trip", (field, _hash(pg))
+                assert _focused(pg) == field, (field, _where(pg))
+                _assert_form(pg, want)
+                assert text(pg, q("banner-error")) == BUSY_BANNER, field
+            # nothing ever ran
+            go_trip(pg, UI)
+            assert [c for c in _chips(pg) if not c.startswith("run-chip-fixture")] == []
+            assert pg.facts["errors"] == []
+
+
+def test_G9_two_refusals_in_a_row_and_one_that_lands_on_a_banner_already_showing(browser):
+    """Twice in a row, and the second one with the first one's banner already
+    on screen: the refusal must not be the thing that wipes the form, and the
+    banner must still say what happened (the hash navigation in between calls
+    hideBanner, so the second refusal has to put it back)."""
+    with st_server("slow_run") as srv:
+        with patched_page(browser, srv.port) as pg:
+            go_trip(pg, UI)
+            pg.click(q("new-trip"))
+            pg.wait_for_selector(q("nt-name"), timeout=10000)
+            want = _type_partial(pg, name="twice-refused")
+            _refuse_a_run(pg, srv, "nt-leg-1-origin")
+            assert _hash(pg) == "#new-trip" and _focused(pg) == "nt-leg-1-origin", _where(pg)
+            _assert_form(pg, want)
+            assert text(pg, q("banner-error")) == BUSY_BANNER
+            # Second refusal, with more typed in between. Note what the first
+            # one's banner does: `onHash` calls `hideBanner()` on every hash
+            # change, so the trip page and back clears it - by design, and
+            # asserted rather than assumed. A refusal therefore always lands
+            # on a HIDDEN banner in this app; every route into the form is a
+            # hash change (`+ New trip` calls go("#new-trip") too, and go()
+            # runs onHash even when the hash is unchanged). "The banner is
+            # already showing" is instead exercised below, after the second
+            # refusal, where the form is typed into with the banner up.
+            def more():
+                assert text(pg, q("banner-error")) is None, "the banner survived a hash change"
+                assert pg.evaluate("() => document.querySelector('[data-testid=banner-error]').hidden") is True
+                pg.fill(q("nt-leg-1-cash"), "1999")
+                want["cash"] = "1999"
+            _refuse_a_run(pg, srv, "nt-leg-1-cash", then=more)
+            assert _hash(pg) == "#new-trip", _hash(pg)
+            assert _focused(pg) == "nt-leg-1-cash", _where(pg)
+            _assert_form(pg, want)
+            assert text(pg, q("banner-error")) == BUSY_BANNER
+            assert pg.evaluate("() => document.querySelector('[data-testid=banner-error]').hidden") is False
+            # ... and with that banner ON SCREEN the form still takes input, in
+            # place, without a re-render: the caret does not move, the banner
+            # does not go, nothing else on the page changes.
+            pg.focus(q("nt-leg-1-destination"))
+            pg.keyboard.type("O")
+            want["destination"] = "SFO"
+            pg.select_option(q("nt-leg-1-cabin"), "F")
+            want["legcabin"] = "F"
+            # the caret never left the field the user was in (a <select> change
+            # does not take focus, and nothing re-rendered to move it)
+            assert _focused(pg) == "nt-leg-1-destination", _where(pg)
+            assert text(pg, q("banner-error")) == BUSY_BANNER
+            _assert_form(pg, want)
+            # and the form still works: leave by hash, come back, Preview echoes it
+            _goto(pg, "#trips/" + UI)
+            _goto(pg, "#new-trip")
+            _assert_form(pg, want)
+            preview(pg)
+            # the leg is deliberately half-typed, so Preview answers with the
+            # BUILDER's own inline refusals under the fields - which is the
+            # proof the form is still live after two refusals, not a red
+            ids = [e[0] for e in nt_errors(pg)]
+            assert ids == ["nt-error-1-origin", "nt-error-1-date"], nt_errors(pg)
+            assert pg.query_selector(q("nt-echo")) is None
+            _assert_form(pg, want)
             assert pg.facts["errors"] == []
