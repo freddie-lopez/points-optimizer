@@ -343,6 +343,45 @@ def delete_state(pg):
                  color: b ? getComputedStyle(b).color : null }; }""")
 
 
+def wait_delete_settled(pg, trip_name, timeout=25000):
+    """Wait until `trip-delete` is present AND has stopped moving.
+
+    A bare `wait_for_selector(q("trip-delete"))` after clicking a trip row is
+    a PROBE RACE, not a product defect: `hashchange` is delivered
+    asynchronously, so at the moment the click returns the page is still
+    showing the PREVIOUS trip's detail - including its `trip-delete`. The
+    selector matches that stale button, and a moment later `onHash` sets
+    `S.trip = null`, renders `Loading…` and the button is gone; the next read
+    then sees `present: false, disabled: None`. (This is what made F4a fail
+    about 3 runs in 10, with and without the F5 fix alike.)
+
+    The settle is three things at once: the detail on screen is the one that
+    was asked for (its `h1` is `trip_name`), `trip-delete` exists, and its
+    `disabled` is the same across two animation frames - so the value the
+    caller then asserts is the button's final state, not a frame of a render
+    still in flight.
+    """
+    pg.evaluate("() => { window.__settle = null; }")
+    pg.wait_for_function(
+        # Synchronous on purpose: wait_for_function polls on requestAnimationFrame
+        # and reads a returned Promise as a truthy value, so a promise-based
+        # settle resolves on the first poll and is no better than the bare
+        # selector. The counter below IS the settle: three consecutive frames
+        # with the asked-for trip's own detail on screen and `trip-delete` at
+        # the same `disabled` value.
+        """([name]) => {
+            const d = document.querySelector('[data-testid="trip-detail"]');
+            const h = d && d.querySelector('h1');
+            const b = document.querySelector('[data-testid="trip-delete"]');
+            const key = (h && h.textContent === name && b) ? (name + '|' + b.disabled) : null;
+            if (key === null) { window.__settle = null; return false; }
+            if (window.__settle && window.__settle.key === key) { window.__settle.n += 1; }
+            else { window.__settle = { key: key, n: 1 }; }
+            return window.__settle.n >= 3;
+        }""",
+        arg=[trip_name], timeout=timeout)
+
+
 def dialog(pg):
     return pg.evaluate("""() => { const d = document.querySelector('[data-testid="delete-confirm"]');
         if (!d) return null;

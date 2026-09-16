@@ -330,3 +330,162 @@ commit.
 ### Counts at ecab878 + this commit
 
 See the table appended below by the run.
+
+## Final: 23eba49
+
+Coder fix round 2: **a022cf4** (F5, one line in `sendRun`) and **9dea889** (the pin
+cleanup, four probe files). Diff `0d1e2fb..23eba49` read in full: `src/ui/static/app.js`
+one line plus a five-line comment, four probe files of mine, the coder report. No engine,
+no server, no CSS, no HTML, no fixture, no golden.
+
+**Verdict: F5 is fixed and I cannot break it. The pin cleanup weakened nothing that is a
+defect.** One new Low observation (F6, below), recorded rather than filed as a blocker.
+My own F4a flake is fixed and was my probe's race, not a product defect.
+
+### F5 - fixed, attacked in seven arrangements (`test_st_g_f5.py`, new)
+
+`if (S.tripId === id && S.view === "trips")`. Every case asserts the same four things: the
+hash is still `#new-trip`, the typed values are still in the inputs, **`S.nt` itself
+survived** - checked by leaving the form and returning BY HASH, never with `+ New trip`,
+which resets `S.nt` by design and would hide the defect - and the finished run is still
+reachable as a chip on its own trip (clicked; it opens its result). The run is the
+`slow_run` scenario's four-second one and its completion is waited for on the response
+itself (`expect_response`), not on a sleep.
+
+| id | arrangement | result |
+|---|---|---|
+| **G1** | run on X, then `+ New trip` and type (name, cabin J, half-typed origin, two chars typed into destination) | green; hash `#new-trip`, all four values, focus still in `nt-leg-1-destination`, chip on X |
+| **G2** | run on X, to the Search tab, then to `#new-trip` and type | green; and Search-and-back keeps the form |
+| **G3** | a FULL leg typed first (name, trip cabin, SFO/LHR, date, leg cabin F, cash 3150), then the run started from X's page and the form re-entered by hash | green; all seven fields, still one leg, the form still works afterwards |
+| **G4** | two runs in sequence with the form open, typing more between them | green; both chips on X, nothing lost either time |
+| **G5** | a run that FAILS with a non-200 while the form is open - the engine's own 409 `busy` (the slow run sleeps first and takes the run slot after, so holding the lock from stdin makes THIS run a real refusal) | green on the form; **focus is dropped - F6 below** |
+| **G6** | a run REFUSED by the wallet (the probe server's tmp wallet clobbered mid-run): exit 2 WALLET ERROR, which comes back as a **200**, the same branch a good run takes | green; the guard, not the exit code, is what keeps the form; chip reads `exit 2` |
+| **G7** | the normal case, unchanged: on the trips view showing that trip | green; still navigates straight to `#trips/<id>/run/<rid>`, chip `aria-pressed=true`; another trip's page still only re-renders (F4) with Delete re-enabled; the search view keeps its picked cell |
+
+Counter-check that the suite is measuring the fix and not itself: with `0d1e2fb`'s
+`app.js` restored in a scratch worktree, **six of the seven go red** (G1, G2, G3, G4, G6,
+G7 - the pre-fix line also threw the user off the SEARCH view, which is why G7's third
+part fails there too). G5 passes either way, correctly: the non-200 branch never
+navigated.
+
+### F6 - Low (new, recorded in G5) - a REFUSED run rebuilds the open new-trip form and drops focus
+
+- **Repro** (`test_st_g_f5.py::test_G5`, asserted): start a run on X, open `+ New trip`,
+  type; the run comes back non-200 (409 `busy`).
+- **Actual**: the values survive (`S.nt` is the source of truth and the inputs write to it
+  on `input`), the banner shows the refusal - but `document.activeElement` is `<body>`.
+  `sendRun`'s non-200 branch calls `renderTrips()` unconditionally, and on the new-trip
+  view that rebuilds the whole form; only the prefilled form's one-shot `nt.focus === "cash"`
+  ever refocuses anything.
+- **Expected**: the caret stays where the user left it, as it does on the 200 path (G1,
+  G6 assert `nt-leg-1-destination` is still focused).
+- **Location**: `app.js` `sendRun`, else branch. Same family as F3 and the same fix shape
+  (`closeDrawer`'s `cameFrom`): remember the focused testid before the re-render and
+  restore it, or skip the re-render when `S.view === "new-trip"` as the 200 branch now does.
+- Text is never lost, so this is cosmetic-plus-keyboard, not data loss. Low.
+
+### F4a - my probe's race, fixed in my file (not a product defect)
+
+`test_st_f_retest.py::test_F4a` failed about 3 runs in 10 at `assert
+delete_state(pg)["disabled"] is True`, with `None` - the button absent. The coder measured
+3/10 red with AND without the F5 fix and left it to me. It is mine, and here is the
+mechanism, which I traced with a `MutationObserver` in the page:
+
+`hashchange` is delivered asynchronously. `pg.click(q("trip-row-other-trip"))` returns
+while the page is still showing the PREVIOUS trip's detail, `trip-delete` and all - and
+`tab-trips` goes to `"#trips/" + S.tripId`, so the previous page is a trip detail, not the
+empty list. The bare `wait_for_selector(q("trip-delete"))` matched that stale button and
+returned immediately; a few milliseconds later `onHash` set `S.trip = null`, rendered
+`Loading…`, and the next read found nothing. The product was correct throughout.
+
+Fixed with `wait_delete_settled(pg, trip_name)` in `conftest.py`, used at both waits in
+F4a: the detail on screen must be the one that was asked for (its `h1` is that trip's
+name), `trip-delete` must exist, and its `disabled` must be identical across **three
+consecutive animation frames**. One trap worth recording for the next round: the obvious
+`wait_for_function` returning a Promise does NOT work - `wait_for_function` reads the
+returned Promise object as a truthy value and returns on the first poll, which is no
+better than the bare selector (my first attempt did exactly that and made the flake
+worse, 9/10 red). The settle is therefore a synchronous frame counter on `window`.
+
+**Pass rate after the fix: 10/10** (`-k F4a`, isolated, ten separate pytest invocations),
+against 1/10 for the promise version and 7/10 for the original. Green in file context as
+well, in the full-suite run below. Nothing about what F4a asserts changed.
+
+### Pin-cleanup audit (9dea889)
+
+Method: a detached scratch worktree at 23eba49, one change at a time, committed there when
+the assertion reads `git diff <base>..HEAD` (a working-tree edit is invisible to those),
+then the converted probe run against it and the worktree reset. Nothing was committed to
+the branch and no committed fixture was touched.
+
+| Probe | Pin dropped | A change the OLD pin caught | Does the NEW assertion catch it? |
+|---|---|---|---|
+| st **E2** | `len(JS.splitlines()) == 2087` | 100 blank lines appended to app.js | **No - and it is not a defect.** A line count is not a rule. The rules E2 is named for all still bite: `innerHTML` added -> RED; a third `.style.` -> RED (`assert 3 == 2`); `url(...)` in app.css -> RED; `style=` on `<body>` -> RED. |
+| st **E3** | `old - new == {"2400"}` (regex read any quoted lowercase token as a testid) | a `data-testid` dropped | **Yes.** `"trip-delete"` removed from its `btn(...)` -> RED; `"trip-delete-reason"` removed from its `tid(...)` -> RED; `"run-go"` removed -> RED. The old regex's 226 "testids" in the base were 150 CSS class names and DOM tokens plus 76 real ones; the new extractor finds 80 and every one is real. Nothing genuine is missing from it: the only app.js literals the old regex had and the new one does not are `$("...")` element ids (`page`, `scrim`, `trip-main`, `view-trips`, ...), which are **not** testids - they carry no `data-testid` in index.html - and whose loss breaks behaviour the D probes assert. |
+| st **E5** | hunk count (14) on a frozen range + "the coder report's bullet list equals the diff" | a bullet missing from a document, or git regrouping a historical diff | **No, and nothing is lost.** Both halves were bookkeeping on a report, over a commit range that can never change again. The product-side rule moved to E5b. |
+| st **E5b** | a literal string-set for one frozen diff | a user-facing sentence added that no plan writes | **Yes.** An invented note (`"Your points balance looks low…"`) -> RED with the sentence named, working-tree or committed. |
+| restyle **H1** | api.py/engine.py bytes pinned to the last head | server.py or the CSP changed | **Yes.** `default-src 'none'` -> `'self'` in the CSP (working tree) -> RED; any other server.py edit, committed -> RED; `src/main.py` touched -> RED. The api.py/engine.py half is gone - see the engine row below. |
+| restyle **E5** | the same two byte pins | `/api/state`'s key shape moved | **Yes.** A key added to `Engine.state()` -> RED (`AssertionError: state`); serialize.py and server.py pins both still RED on a change. |
+| restyle **H7** | `old - new == {"2400"}` | a `data-testid` dropped | **Yes**, on both halves: `"run-go"` removed from app.js -> RED; `data-testid="banner-error"` removed from index.html -> RED. (A testid this round INVENTED, e.g. `trip-delete`, is not in the restyle base and never was in this probe's scope - unchanged, and st E3 covers it.) |
+| restyle **J6** | both app.js hunk counts (6 and 22) | git regrouping hunks after a line moved | **Mostly yes, and it is now stronger than it was.** New sentence added on an added line, committed -> RED; `innerHTML` -> RED; a base testid lost -> RED (the old J6 did not check testids at all). **One thing it no longer catches:** a literal that already exists elsewhere in app.js re-emitted on an added line - I re-used the base's own `"Running…"` as a new note and J6 stayed green (the old J6 would have gone red). See the judgement below. |
+| map **A6** | api.py/engine.py byte pins | the CLI, the data or a golden moved | **Yes.** A golden edited -> RED; a golden deleted -> RED; `src/main.py` touched -> RED. |
+| map **A7** | "the other probe trees are unchanged since `<commit>`" | one of MY probe files edited | **No - and that is the point.** It pinned the tester's own future commits; an edit under `ui-probes` now leaves it green, as it should. The goldens half, which is the real rule, still bites: a golden edited -> RED; a golden deleted -> RED; the `14 x G*.txt` count still asserted. |
+
+**The api.py/engine.py byte pins (H1, E5, A6): no protection lost.** I put a real defect in
+`engine.py` - one word added to the R2 refusal sentence (`"Nothing was deleted yet."`),
+committed - and confirmed the three converted pins stay green while **`test_st_b_delete_policy.py`
+goes red six times** (`B2[source_null|source_int|source_list|source_case|source_leading_space]`
+and the fixture case), naming the sentence. That is the right place for it to be caught: the
+behaviour probes own the sentence, the byte pins only owned the bytes.
+
+**The one genuine loss, and my judgement on it.** J6's subtraction of the left-hand side
+means an existing literal re-emitted on a new line is no longer read as new wording. The
+old pin caught that; the new one does not. I do not think it should be restored, and I have
+not restored it: the literal in question is by construction a sentence the plans already
+write, so the rule the pin stands for - *the page may not start saying something no plan
+wrote* - is intact; what changes is only WHERE a planned sentence appears, which is a
+placement bug and is caught, if it matters at all, by the behaviour probes that assert what
+each panel says. Restoring the old form would re-introduce exactly the false positive Tsuki
+authorised removing: every re-indented or moved line re-triggers it. I also checked whether
+E5b could be strengthened to the whole file rather than to added literals only - it cannot
+usefully: 67 of app.js's 148 sentence-shaped literals are earlier rounds' wording whose
+plans are not in the two files E5b reads, so the strict form would be a wall of noise, not a
+rule. Recorded here so the next round knows the gap exists.
+
+Nothing else moved: no probe lost a security, refusal-sentence, marker, layout or
+data-integrity assertion, and `tests/` was not edited by the coder at all (verified:
+`git diff 0d1e2fb..23eba49 --stat` lists four probe files, one report and `app.js`).
+
+### Probe changes of mine in this commit
+
+- `conftest.py`: `wait_delete_settled(pg, trip_name)` (above). Nothing else in the harness
+  changed; no existing helper's behaviour moved.
+- `test_st_f_retest.py`: F4a's two waits, with the race written into the docstring; F4b's
+  docstring rewritten - it described F5 as present and F5 is fixed. Its assertions are
+  untouched and it is the original repro.
+- `test_st_g_f5.py`: new, seven probes (above).
+
+### Counts at 23eba49
+
+| Suite | Command | Result |
+|---|---|---|
+| full suite `-O` | `python3 -O -m pytest -q -p no:cacheprovider` | **3892 passed, 13 skipped** (178 s) |
+| full suite | `python3 -m pytest -q -p no:cacheprovider` | **3892 passed, 13 skipped** (177 s) |
+| ui-probes | `-O -p no:randomly` | **664 passed, 0 failed** (622 s) |
+| ui-restyle-probes | `-O -p no:randomly` | **284 passed, 2 failed, 10 skipped** (246 s): `C5[search_ok]`, `E3` - both documented baseline reds |
+| map-search-probes | `-O -p no:randomly` | **160 passed, 1 failed** (306 s): `F6` - the documented design limit |
+| search-to-trip-probes (mine) | `-O -p no:randomly docs/test-reports/search-to-trip-probes` | **176 passed, 0 failed** (323 s) - no red; the three reds of the first round (A15/F1, D3b/F2, D8/F3) stayed fixed, F4b/F5 is green, G1-G7 new |
+| `test_F4a` alone, ten invocations | `-O -p no:randomly -k F4a` | **10 / 10 green** |
+
+Both full-suite counts are the coder's (3892/13). The four probe-tree reds are the same
+four as at `0d1e2fb` minus the ones the cleanup retired: `C5[search_ok]` and restyle `E3`
+(baseline, unrelated) and map `F6` (baseline). **The pin refresh round is gone:** H1, E5,
+J6, A6 and A7 are green at a head they were never re-pinned to, which is what the
+conversion was for.
+
+### Still open, unchanged from the re-test
+
+C5's bar (a manager decision, not a defect I can pin), the spend dialog's focus after Go
+and after a refused Go (F3b/F3c, out of the delete round's scope - and F6 above is the same
+family, so the run page's focus story is now three notes long), and the raced
+`GET /api/trips/{id}` answering 422 `cannot_load` rather than 404 (not a delete route).

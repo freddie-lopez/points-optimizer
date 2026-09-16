@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 
 from conftest import (SHOTS, delete_state, dialog, doc_widths, eng, go_trip, http_server, nt_values, patched_page,
-                      pick_first_cell, preview, q, run_search, st_server, text, trip_ids, ui_built, write_trip, pinned)  # noqa: F401
+                      pick_first_cell, preview, q, run_search, st_server, text, trip_ids, ui_built,
+                      wait_delete_settled, write_trip, pinned)  # noqa: F401
 
 UI = "sfo-mad-2027-01-15"
 
@@ -262,13 +263,26 @@ def test_F3c_a_dialog_opened_by_mouse_still_returns_focus_to_the_button(browser)
 
 
 def test_F4a_a_run_finishing_while_another_trips_detail_is_open_re_enables_its_buttons(browser):
+    """The two `wait_for_selector(trip-delete)` waits below are now
+    `wait_delete_settled`: MY PROBE had a race, not the product. `hashchange`
+    is asynchronous, so when `click(trip-row-…)` returns the page still shows
+    the previous trip's detail and its `trip-delete`; the bare selector
+    matched that stale button, then `onHash` cleared `S.trip`, rendered
+    `Loading…` and the next read saw no button at all (`disabled is None`).
+    It failed ~3 runs in 10, identically with and without the F5 fix - the
+    coder measured both. `wait_delete_settled` waits for the detail of the
+    trip that was asked for AND for `trip-delete`'s disabled state to be the
+    same across two animation frames, so the assertions below read a settled
+    button. Nothing about what is asserted changed."""
     with st_server("slow_run") as srv:
         srv.cmd("mk other-trip MAD:AMS:2027-01-19:120 J")
         with patched_page(browser, srv.port) as pg:
             go_trip(pg, UI)
             pg.click(q("mode-offline")); pg.wait_for_timeout(100)
             pg.click(q("run-go")); pg.wait_for_selector(q("run-busy"), timeout=10000)
-            pg.click(q("trip-row-trip_b_europe")); pg.wait_for_selector(q("trip-delete-reason"), timeout=10000)
+            pg.click(q("trip-row-trip_b_europe"))
+            wait_delete_settled(pg, "TRIP B - Europe multi-city, Jan 15-27 2027")
+            pg.wait_for_selector(q("trip-delete-reason"), timeout=10000)
             assert delete_state(pg)["disabled"] is True
             assert pg.evaluate("() => document.querySelector('[data-testid=run-go]').textContent") == "Running…"
             pg.wait_for_function("""() => document.querySelector('[data-testid=run-go]').textContent === 'Run'""", timeout=20000)
@@ -280,7 +294,8 @@ def test_F4a_a_run_finishing_while_another_trips_detail_is_open_re_enables_its_b
             go_trip(pg, UI)
             pg.click(q("run-go")); pg.wait_for_selector(q("run-busy"), timeout=10000)
             pg.click(q("tab-trips")); pg.wait_for_timeout(100)
-            pg.click(q("trip-row-other-trip")); pg.wait_for_selector(q("trip-delete"), timeout=10000)
+            pg.click(q("trip-row-other-trip"))
+            wait_delete_settled(pg, "other-trip")
             assert delete_state(pg)["disabled"] is True
             pg.wait_for_function("""() => { const b = document.querySelector('[data-testid=trip-delete]'); return b && !b.disabled; }""", timeout=20000)
             assert pg.evaluate("() => location.hash") == "#trips/other-trip"
@@ -291,12 +306,11 @@ def test_F4a_a_run_finishing_while_another_trips_detail_is_open_re_enables_its_b
 
 
 def test_F4b_a_run_finishing_while_the_new_trip_form_has_typed_input_wipes_nothing(browser):
-    """The F4 fix exempts the new-trip view from the re-render so typed input
-    survives - but the line above it, `if (S.tripId === id) go(...)`, still
-    fires: the new-trip view keeps S.tripId, so when the run's trip is the
-    selected one (the usual case) the page is navigated to the run result and
-    the form is gone; `+ New trip` then starts a fresh S.nt. The input IS
-    wiped. Pre-existing line (622d914:673), surfaced by this re-test."""
+    """F5, now FIXED at a022cf4 (`if (S.tripId === id && S.view === "trips")`).
+    Red before that commit: the new-trip view keeps S.tripId, so a run on the
+    selected trip navigated the page to the run result and `+ New trip` then
+    started a fresh S.nt - the typed input was wiped. Kept as the original
+    repro; `test_st_g_f5.py` attacks the fix in every other arrangement."""
     with st_server("slow_run") as srv:
         with patched_page(browser, srv.port) as pg:
             go_trip(pg, UI)
