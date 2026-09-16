@@ -1835,7 +1835,7 @@
 
     var nv = section("No verdict");
     add(nv, p("A single-route search has no cash price to compare against, so it cannot say POINTS or PAY CASH. Add it to a trip with the fare you found."));
-    var goBtn = btn("btn btn-primary", "Score against a fare →", function () {
+    var goBtn = btn("btn", "Score against a fare →", function () {
       prefillFromSearch(q.sel);
     }, "drawer-to-trip");
     var wrap = el("div"); add(wrap, goBtn); add(nv, wrap);
