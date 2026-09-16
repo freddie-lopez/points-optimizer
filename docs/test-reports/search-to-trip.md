@@ -543,3 +543,23 @@ The other three trees were not re-run at this head and do not need to be: the co
 touches `app.js` only, inside `sendRun`'s error branch. Their counts at 23eba49 stand -
 ui-probes 664/0, ui-restyle 284/2/10 (`C5[search_ok]`, `E3` - baseline), map-search 160/1
 (`F6` the map probe, unrelated to this round's F6 - baseline).
+
+## Final: 2ca2693
+
+**C5 is green, and the page is what changed.** The manager upheld my refusal to raise the
+bar (ef42d2e decision 1, option (a)), reverted the coder's edit to `docs/plans/ui.md` 4.7
+(f8b9149) and made `Add as trip` a ghost `.btn` (f32b2d8); my
+`test_st_f_retest.py::test_F5_no_cash_placeholder_and_one_coral_per_surface` is re-pinned
+to that ruling - exactly one `.btn-primary` on the search surface, `search-run`, in all
+four states (before a pick, after a pick, drawer open, drawer closed), with both to-trip
+buttons ghost and everything else the probe checks unchanged; red against `6c89c5a`'s
+`app.js`, so it measures the ruling and not itself. Restyle **J6** went red on f32b2d8 for
+a false positive - its literal scan read `"the ONE primary action"` inside the new
+comment as new wording - and now reads added lines through `code_only`, the same
+comment-stripping E5b has used since the conversion; re-verified that it still catches a
+genuine new sentence and a lost testid.
+
+| Suite | Command | Result |
+|---|---|---|
+| search-to-trip-probes (mine) | `-O -p no:randomly docs/test-reports/search-to-trip-probes` | **178 passed, 0 failed** (370 s) |
+| ui-restyle-probes | `-O -p no:randomly docs/test-reports/ui-restyle-probes` | **285 passed, 1 failed, 10 skipped** (248 s): `E3` only - the documented baseline red. `C5[search_ok]` is GREEN for the first time since the restyle. |

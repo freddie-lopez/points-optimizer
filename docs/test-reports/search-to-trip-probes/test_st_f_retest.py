@@ -348,19 +348,40 @@ def test_F4b_a_run_finishing_while_the_new_trip_form_has_typed_input_wipes_nothi
 
 
 def test_F5_no_cash_placeholder_and_one_coral_per_surface(browser):
+    """Re-pinned at f32b2d8 to the MANAGER'S RULING (ef42d2e, decision 1,
+    option (a)): the search surface carries exactly ONE primary action,
+    `Run search` - the button that spends calls - and `Add as trip` is a ghost
+    `.btn`, as `drawer-to-trip` already was. The manager upheld my refusal to
+    raise C5's bar and reverted the coder's edit to docs/plans/ui.md 4.7
+    (f8b9149), so restyle C5[search_ok] goes green because THE PAGE changed,
+    not because a bar moved. This probe recorded the reversed state (two coral
+    on the search surface); it now asserts the ruled one. A re-pin to a
+    decision, not a regression: the count is checked in all four states the
+    surface has - before a pick, after a pick, with the drawer open and with
+    it closed - and everything else the probe checks is unchanged."""
     with st_server("ui_built") as srv:
         with patched_page(browser, srv.port) as pg:
             run_search(pg)
             def prim():
                 return pg.evaluate("""() => Array.from(document.querySelectorAll('.btn-primary'))
                     .filter((b) => b.offsetParent !== null).map((b) => b.getAttribute('data-testid'))""")
-            assert prim() == ["search-run", "search-add-trip"], "the disabled Add as trip is coral too (C5 counts it)"
+            def cls(testid):
+                return pg.evaluate("(t) => { const b = document.querySelector('[data-testid=\"' + t + '\"]');"
+                                   " return b ? b.className : null; }", testid)
+            # no pick yet: Add as trip is present, disabled AND a ghost
+            assert prim() == ["search-run"], prim()
+            assert cls("search-add-trip") == "btn", cls("search-add-trip")
+            assert pg.evaluate("() => document.querySelector('[data-testid=search-add-trip]').disabled") is True
             pick_first_cell(pg)
-            assert sorted(prim()) == ["search-add-trip", "search-run"], prim()
-            cls = pg.evaluate("() => document.querySelector('[data-testid=drawer-to-trip]').className")
-            assert cls == "btn"
+            # picked, drawer open: still one coral, and both to-trip buttons ghost
+            assert prim() == ["search-run"], prim()
+            assert cls("search-add-trip") == "btn" and cls("drawer-to-trip") == "btn"
+            assert pg.evaluate("() => document.querySelector('[data-testid=search-add-trip]').disabled") is False
             pg.keyboard.press("Escape"); pg.wait_for_timeout(100)
-            assert sorted(prim()) == ["search-add-trip", "search-run"]
+            # picked, drawer closed: unchanged
+            assert prim() == ["search-run"], prim()
+            assert cls("search-add-trip") == "btn"
+            # and the ghost still WORKS: it is the button the prefill hangs on
             pg.click(q("search-add-trip")); pg.wait_for_timeout(300)
             ph = pg.evaluate("() => Array.from(document.querySelectorAll('[data-testid=new-trip-form] input')).map((i) => [i.getAttribute('data-testid'), i.placeholder])")
             assert ("nt-leg-1-cash", "") in [tuple(x) for x in ph], ph

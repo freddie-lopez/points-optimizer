@@ -62,6 +62,27 @@ def testids(src):
     return ids
 
 
+def code_only(src):
+    """`src` with its comments removed. A word in a comment says nothing to
+    the user, so it is not wording; the search->trip probes' E5b has read the
+    file this way since the conversion and J6 now does the same. (Checked: no
+    string literal in app.js contains `//`, so nothing real is cut.)"""
+    out, inblk = [], False
+    for line in src.splitlines():
+        t = line.strip()
+        if inblk:
+            if "*/" not in t:
+                continue
+            inblk, t = False, t.split("*/", 1)[1]
+        if t.startswith("/*"):
+            if "*/" not in t:
+                inblk = True
+                continue
+            t = t.split("*/", 1)[1]
+        out.append(re.sub(r"//.*$", "", t))
+    return "\n".join(out)
+
+
 # ------------------------------------------------------------------- G fonts
 
 
@@ -331,10 +352,10 @@ def test_J6_app_js_diff_is_exactly_the_three_enumerated_edits():
     new = testids(JS) | set(re.findall(r'data-testid="([^"]+)"', HTML))
     assert old, "the extractor found no testid in the base - it is broken, not the code"
     assert old - new == set(), f"testids of the base that no longer exist: {sorted(old - new)}"
-    lits = lambda s: set(re.findall(r'"([^"]*)"', s))
+    lits = lambda s: set(re.findall(r'"([^"]*)"', code_only(s)))
     d = git("diff", "386b2fc..56742af", "--", "src/ui/static/app.js")
     added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
-    strings = set(re.findall(r'"([^"]*)"', "\n".join(added))) - lits(base_js)
+    strings = lits("\n".join(added)) - lits(base_js)
     allowed = {"key-source", "", "keysrc", "key: not found", "keysrc warn", "trow-broken",
                "trow-search", "trow-trip", "div", "span", "runrow", "runacts", "note", " ", "run-busy",
                # fix E1: the base's three key lines, re-split, plus the source suffix
@@ -345,7 +366,7 @@ def test_J6_app_js_diff_is_exactly_the_three_enumerated_edits():
     assert strings <= allowed, strings - allowed
     d = git("diff", "56742af..HEAD", "--", "src/ui/static/app.js")
     added = [l[1:] for l in d.splitlines() if l.startswith("+") and not l.startswith("+++")]
-    strings = set(re.findall(r'"([^"]*)"', "\n".join(added))) - lits(git("show", "56742af:src/ui/static/app.js"))
+    strings = lits("\n".join(added)) - lits(git("show", "56742af:src/ui/static/app.js"))
     map_allowed = {
         # plan 4.9 #9, #10, #13, #17, #18 and 8's map.js-not-loaded reason
         "Where are you flying?", "Type an airport or city, or pick it on the map.", "Type an airport or city.",
