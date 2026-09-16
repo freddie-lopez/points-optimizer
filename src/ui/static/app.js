@@ -1901,7 +1901,7 @@
       add(cw, el("span", "label", "Cabin"), cs);
       var rm = btn("btn btn-small", "Remove", function () { nt.legs.splice(i, 1); invalidate(); renderTrips(); });
       rm.disabled = nt.legs.length === 1;
-      var cashF = li("Cash per person (USD)", "cash", "", "2400");
+      var cashF = li("Cash per person (USD)", "cash", "");
       if (nt.from_search && i === 0) {
         add(cashF, el("span", "hint", "required: the one thing a search cannot know"));
       }
