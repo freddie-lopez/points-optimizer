@@ -693,7 +693,12 @@
         (S.runs[id] = S.runs[id] || []).push(run);
         S.legSel = null; S.cameFrom = null;
         refreshState();
-        if (S.tripId === id) { go("#trips/" + id + "/run/" + run.run_id); }
+        // Navigate to the result only when the trips view is actually showing
+        // this trip. S.tripId survives on every other view (new-trip, search),
+        // so testing it alone threw the user off a half-typed form (F5); a run
+        // that finishes elsewhere lands as a chip, as it already does when
+        // another trip is open.
+        if (S.tripId === id && S.view === "trips") { go("#trips/" + id + "/run/" + run.run_id); }
         else if (S.view === "trips") {
           // Another trip's page is open: its Run and Delete buttons follow
           // S.busy, which just went false, so they must be rebuilt now.
