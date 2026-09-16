@@ -99,7 +99,7 @@ TESTIDS = [
     "search-ran",
     # search -> trip, and delete (docs/plans/search-to-trip.md 4.5)
     "search-add-trip", "search-add-trip-box", "search-add-trip-note", "nt-prefill",
-    "trip-delete", "trip-delete-reason", "delete-confirm", "delete-confirm-go", "trip-deleted",
+    "trip-delete", "trip-delete-reason", "delete-confirm", "delete-confirm-go", "trip-deleted", "trip-list-heading",
 ]
 
 

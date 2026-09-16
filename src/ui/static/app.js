@@ -32,6 +32,8 @@
     legSel: null,
     // The testid of the element a drawer was opened from.
     cameFrom: null,
+    dialogFrom: null,  // the element the open dialog was opened from (focus goes back there)
+    focusAfter: null,  // a testid to focus once the next render is done
     busy: false,
     busyStart: 0,
     busyText: "",
@@ -304,6 +306,25 @@
     renderTopbar();
     if (S.view === "search") { renderSearch(); } else { renderTrips(); }
     setDrawerClass();
+    focusOnce();
+  }
+
+  // A one-shot focus target for the render that follows a hash change, which
+  // the browser delivers after the caller's turn: after a delete, the trip
+  // list's heading, so a keyboard user is left at the list the trip left.
+  function focusOnce() {
+    var testid = S.focusAfter;
+    if (!testid) { return; }
+    S.focusAfter = null;
+    var x = byTestid(testid);
+    if (x && x.focus) { x.focus({ preventScroll: true }); }
+  }
+  function byTestid(testid) {
+    var all = document.querySelectorAll("[data-testid]");
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].getAttribute("data-testid") === testid) { return all[i]; }
+    }
+    return null;
   }
 
   function setDrawerClass() {
@@ -370,7 +391,9 @@
 
   function renderTripList() {
     var nav = clear($("trip-list"));
-    add(nav, el("h2", "label", "Trips"));
+    var heading = tid(el("h2", "label", "Trips"), "trip-list-heading");
+    heading.tabIndex = -1;  // focusable by script only: where focus lands after a delete
+    add(nav, heading);
     (S.trips || []).forEach(function (t) {
       var b = btn("trow", null, function () { S.view = "trips"; go("#trips/" + t.id); }, "trip-row-" + t.id);
       b.setAttribute("aria-current", String(S.view === "trips" && S.tripId === t.id));
@@ -999,11 +1022,7 @@
     S.cameFrom = null;
     render();
     if (!testid) { return; }
-    var back = null;
-    var all = document.querySelectorAll("[data-testid]");
-    for (var i = 0; i < all.length; i++) {
-      if (all[i].getAttribute("data-testid") === testid) { back = all[i]; break; }
-    }
+    var back = byTestid(testid);
     if (back && back.focus) { back.focus({ preventScroll: true }); }
   }
   function closeLegDrawer() {
@@ -1214,8 +1233,13 @@
 
   /* -------------------------------------------------------------- confirm */
 
+  // Both dialogs record the element they were opened from; Cancel, Esc and a
+  // click on the scrim put focus back there (the same reason as the drawers:
+  // a dropped focus is 18 Tab presses back). The go button does not: its
+  // action decides where focus goes next.
   function openConfirm(c, onGo) {
     var sc = clear($("scrim"));
+    S.dialogFrom = document.activeElement;
     var m = tid(el("div", "modal"), c.testid);
     m.setAttribute("role", "dialog"); m.setAttribute("aria-modal", "true");
     var h = el("h3");
@@ -1225,24 +1249,33 @@
     add(m, el("div", "cmd", "Equivalent command: " + c.cmd));
     var acts = el("div", "acts");
     var cancel = btn("btn", "Cancel", closeConfirm, "confirm-cancel");
-    var goBtn = btn("btn btn-primary", c.go, function () { closeConfirm(); onGo(); }, c.goid);
+    var goBtn = btn("btn btn-primary", c.go, function () { hideDialog(); onGo(); }, c.goid);
     add(acts, cancel, goBtn); add(m, acts); add(sc, m);
     sc.hidden = false;
     cancel.focus();
   }
-  function closeConfirm() { $("scrim").hidden = true; clear($("scrim")); }
+  function hideDialog() { $("scrim").hidden = true; clear($("scrim")); S.dialogFrom = null; }
+  function closeConfirm() {
+    var from = S.dialogFrom;
+    hideDialog();
+    // The opener is rebuilt when the page re-renders; find it again by its testid.
+    var testid = from && from.getAttribute && from.getAttribute("data-testid");
+    var back = testid ? byTestid(testid) : (from && from.isConnected ? from : null);
+    if (back && back.focus) { back.focus({ preventScroll: true }); }
+  }
 
   // A plain dialog: a label, a heading, lines, Cancel and one warn-form action.
   // Its own builder because openConfirm's heading is the spend sentence.
   function openDialog(c, onGo) {
     var sc = clear($("scrim"));
+    S.dialogFrom = document.activeElement;
     var m = tid(el("div", "modal"), c.testid);
     m.setAttribute("role", "dialog"); m.setAttribute("aria-modal", "true");
     add(m, el("div", "label", c.label), el("h3", "", c.heading));
     c.lines.forEach(function (x) { add(m, p(x, "note")); });
     var acts = el("div", "acts");
     var cancel = btn("btn", "Cancel", closeConfirm, "confirm-cancel");
-    var goBtn = btn("btn btn-warn", c.go, function () { closeConfirm(); onGo(); }, c.goid);
+    var goBtn = btn("btn btn-warn", c.go, function () { hideDialog(); onGo(); }, c.goid);
     add(acts, cancel, goBtn); add(m, acts); add(sc, m);
     sc.hidden = false;
     cancel.focus();
@@ -1270,6 +1303,7 @@
         delete S.runs[id];
         S.lastDelete = res.body.lines;
         if (S.tripId === id) { S.trip = null; S.runId = null; S.legSel = null; S.cameFrom = null; }
+        S.focusAfter = "trip-list-heading";
         loadTrips().then(function () { go("#trips"); });
       } else {
         showBanner((res.body && res.body.message) || ("HTTP " + res.status));
