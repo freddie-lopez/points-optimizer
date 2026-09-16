@@ -1027,7 +1027,11 @@
     S.cameFrom = null;
     render();
     if (!testid) { return; }
-    var back = byTestid(testid);
+    var back = null;
+    var all = document.querySelectorAll("[data-testid]");
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].getAttribute("data-testid") === testid) { back = all[i]; break; }
+    }
     if (back && back.focus) { back.focus({ preventScroll: true }); }
   }
   function closeLegDrawer() {
