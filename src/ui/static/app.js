@@ -708,7 +708,11 @@
         var m = (res.body && res.body.message) || ("HTTP " + res.status);
         if (res.body && res.body.error === "confirm_stale") { m = res.body.message; }
         showBanner(m);
-        renderTrips();
+        // A refusal must not rebuild the new-trip form under the user: the
+        // typed values survive (they live in S.nt) but the caret does not
+        // (F6). Same shape as the 200 branch above, and nothing this view
+        // renders follows S.busy, so there is nothing here to rebuild.
+        if (S.view !== "new-trip") { renderTrips(); }
       }
     });
   }

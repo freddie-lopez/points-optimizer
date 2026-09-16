@@ -349,3 +349,14 @@ settle (`wait_for_function` on `trip-delete` being present *and* disabled) rathe
 single `wait_for_selector`, but that is the tester's file and I have not edited it.
 
 Everything else in that suite, including `F4b`, is green.
+
+**F6 (fix round 2b, `sendRun` non-200 branch).** Smaller of the two shapes the tester
+offered: `if (S.view !== "new-trip") { renderTrips(); }` - one line, the same guard shape as
+the 200 branch, rather than a `cameFrom`-style save-and-restore, because nothing the
+new-trip view renders follows `S.busy`, so skipping the rebuild loses nothing; the banner is
+written straight to `#banner-error` by `showBanner` and still shows. `test_st_g_f5.py::test_G5`
+now reports `focus INPUT:nt-leg-1-destination` with the 409 banner and all values intact, and
+fails only on its own line 254 `assert where == "BODY:null"` - the assertion that RECORDS the
+defect, which I have not edited (the tester's file, the tester's call). Everything else green:
+`search-to-trip-probes` 175 passed / 1 failed (that line only), full suite `-O` 3892 passed /
+13 skipped.
