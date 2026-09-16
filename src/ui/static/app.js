@@ -1707,7 +1707,9 @@
     var note = tid(el("p", "note"), "search-add-trip-note");
     if (pk) { add(note, "Picked: "); awardWords(note, run, pk); }
     else { add(note, "Pick an award in the results first."); }
-    var goBtn = btn("btn btn-primary", "Add as trip", function () { prefillFromSearch(q.picked); }, "search-add-trip");
+    // Ghost `.btn`, not the coral: `Run search` is the call-spending action and
+    // is this surface's one primary (ui.md 4.7, "the ONE primary action").
+    var goBtn = btn("btn", "Add as trip", function () { prefillFromSearch(q.picked); }, "search-add-trip");
     goBtn.disabled = !pk;
     add(box, note, goBtn);
     return box;
